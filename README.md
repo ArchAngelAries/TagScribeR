@@ -1,7 +1,7 @@
 # TagScribeR
 Proof of concept for a UI to streamline AI image captioning
 
-Introducing TagScribeR, the ultimate toolset designed to revolutionize the way you prepare datasets for AI-driven image generation. Our cutting-edge platform not only streamlines the tagging and captioning process but also brings a new level of precision and personalization to your Stable Diffusion models. Say goodbye to the tedious manual tagging and hello to seamless, AI-powered auto-captioning and intuitive, user-defined tagging. With [Selected Tool Name], crafting your perfect dataset is only a few clicks away, saving you time and unleashing your creative potential like never before.
+Introducing TagScribeR, the ultimate toolset designed to revolutionize the way you prepare datasets for AI-driven image generation. Our cutting-edge platform not only streamlines the tagging and captioning process but also brings a new level of precision and personalization to your Stable Diffusion models. Say goodbye to the tedious manual tagging and hello to seamless, AI-powered auto-captioning and intuitive, user-defined tagging. With TagScribeR, crafting your perfect dataset is only a few clicks away, saving you time and unleashing your creative potential like never before.
 
 TagScribeR: Redefining AI-Driven Image Dataset Preparation
 

@@ -55,3 +55,7 @@ Reach Out Now!
 Whether you have a question, suggestion, or ready to jump in — we're here to listen. Connect with us at archangelariesart@gmail.com, or jump straight into our issues and pull requests. Let's create, innovate, and elevate together.
 
 TagScribeR is waiting for you. Let's tag the future, together.
+
+
+## License
+This project is licensed under the AGPL-3.0 license - see the AGPL-3.0 License file for details.

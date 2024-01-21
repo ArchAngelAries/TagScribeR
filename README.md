@@ -13,12 +13,12 @@ Auto-Captioning with BLIP-2: Harness the power of AI to generate accurate, conte
 Custom Tagging Made Easy: With our intuitive interface, add personal touches to your dataset by appending custom tags, ensuring your model's output aligns perfectly with your vision.
 Seamless Dataset Organization: Sort and manage your images effortlessly, turning the chaotic sea of files into a well-organized library tailored to your needs.
 Community Collaboration: Share and utilize tag sets within the TagScribeR community, fostering collaboration, and standardizing tagging practices across projects.
-Why [Selected Tool Name]?
+Why TagScribeR?
 
 Save Time, Amplify Creativity: Reduce the hours spent on dataset preparation and invest more time in what truly matters - your creative and innovative outputs.
 Precision at Your Fingertips: With AI-powered captioning and personalized tagging, your datasets will reach new heights of relevance and precision.
 Community and Support: Join a growing community of professionals and enthusiasts. Share, learn, and grow together with shared resources and support.
-TagScribeR is not just a tool; it's your next step towards mastering AI-driven image generation. We're seeking supporters, backers, and investors who share our vision to transform the landscape of AI model training. Be part of this revolutionary journey with TagScribeR – where your creativity meets AI efficiency.
+TagScribeR is not just a tool; it's your next step towards mastering AI-driven image generation. We're seeking supporters, backers, and collaborators who share our vision to transform the landscape of AI model training. Be part of this revolutionary journey with TagScribeR – where your creativity meets AI efficiency.
 
 ![Untitled-1](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/203dc1a4-6b78-4a83-b7af-3ba67010104c)
 

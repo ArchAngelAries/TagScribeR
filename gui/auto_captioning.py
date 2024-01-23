@@ -4,12 +4,12 @@ from PyQt5.QtWidgets import (
     QTextEdit, QGridLayout, QScrollArea, QSlider, QMessageBox
 )
 from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 import os
 from PIL import Image, ImageOps
 
 # Add this constant near the top of your script
-MAX_DISPLAY_SIZE = 8096  # maximum size (in pixels) for the longest side of the displayed image
+MAX_DISPLAY_SIZE = 809600  # maximum size (in pixels) for the longest side of the displayed image
 
 # Setup basic configuration for logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s:%(levelname)s:%(message)s')
@@ -22,13 +22,26 @@ def pil2pixmap(image):
     pixmap = QPixmap.fromImage(qimage)
     return pixmap
 
+class SelectableImageLabel(QLabel):
+    clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super(SelectableImageLabel, self).__init__(parent)
+        self.selected = False
+        self.setStyleSheet("border: 2px solid black;")  # Default style
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()  # Emit clicked signal
+        super(SelectableImageLabel, self).mousePressEvent(event)
+
 class AutoCaptioningWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TagScribeR - Auto Captioning")
         self.setGeometry(100, 100, 800, 600)
-        self.imageTextEdits = {}
-        self.imageLabels = {}
+        self.imageTextEdits = {}  # Dictionary to map image paths to their QTextEdits
+        self.imageLabels = {}  # Dictionary to map image paths to their QLabel widgets
+        self.selectedImages = {}  # Dictionary to track selected images
         self.setupUI()
 
     def setupUI(self):
@@ -81,10 +94,11 @@ class AutoCaptioningWindow(QMainWindow):
                         if max(image.size) > MAX_DISPLAY_SIZE:
                             image = ImageOps.exif_transpose(image)
                             image.thumbnail((MAX_DISPLAY_SIZE, MAX_DISPLAY_SIZE), Image.Resampling.LANCZOS)
-                        label = QLabel(self)
-                        pixmap = pil2pixmap(image)
-                        label.setPixmap(pixmap.scaled(self.sizeSlider.value(), self.sizeSlider.value(), Qt.KeepAspectRatio))
+                        label = SelectableImageLabel(self)
+                        label.setPixmap(pil2pixmap(image).scaled(self.sizeSlider.value(), self.sizeSlider.value(), Qt.KeepAspectRatio))
+                        label.clicked.connect(lambda path=image_path: self.toggleImageSelection(path))
                         self.imageLabels[image_path] = label
+                        self.selectedImages[image_path] = label  # Add to selectedImages dict
                         textEdit = QTextEdit(self)
                         textEdit.setText("")
                         self.imageTextEdits[image_path] = textEdit
@@ -114,13 +128,25 @@ class AutoCaptioningWindow(QMainWindow):
         except Exception as e:
             logging.critical("Failed to update thumbnails: {e}")
 
+    def toggleImageSelection(self, image_path):
+        if image_path in self.selectedImages:
+            label = self.selectedImages[image_path]
+            if label.selected:
+                label.setStyleSheet("border: 2px solid black;")
+                label.selected = False
+            else:
+                label.setStyleSheet("border: 2px solid blue;")  # Change border color to indicate selection
+                label.selected = True
+        else:
+            logging.error(f"Image path not found in selectedImages: {image_path}")
+
     def autoCaptionImages(self):
         # This function should implement the auto-captioning feature
         logging.info("Auto-captioning started.")
         QMessageBox.information(self, "Info", "Auto Captioning will be implemented here.")
 
     def getSelectedImages(self):
-        return list(self.imageTextEdits.keys())
+        return [path for path, label in self.selectedImages.items() if label.selected]
 
     def updateCaption(self, image_path, caption):
         try:

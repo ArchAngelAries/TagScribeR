@@ -1,0 +1,16 @@
+TagScribeR/
+│
+├── main.py                 # Main application entry point
+├── gui/
+│   ├── __init__.py
+│   ├── gallery.py          # Gallery display code
+│   ├── auto_captioning.py  # BLIP-2 Auto Captioning
+│   ├── tag_management.py   # Tag Saving/Sharing
+│   ├── image_editing.py    # Image Cropping/Resizing
+│   └── settings.py         # Settings
+├── utils/
+│   ├── __init__.py
+│   ├── file_operations.py  # File operations like load/save directory
+│   └── image_processing.py # Image processing utilities
+├── resources/              # Icons, images, and other resources
+└── requirements.txt        # Project dependencies

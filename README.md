@@ -63,7 +63,8 @@ TagScribeR is waiting for you. Let's tag the future, together.
 This is the current build I have going for TagScribeR the UI does not match my mock up image at the moment and I'm slowly fleshing out all the features bit by bit. Currently this build is bare bones and does not have BLIP-2 Auto Captioning implemented, nor does it have the tags panel or collections/category panel. This release is to further my proof of concept and to show that I am currently developing things the best I can on my own. I'm determined to do this whether on my own or with help, but I would really love any help that any skilled/learned people may be willing to offer.
 
 Current Build is meant for Windows OS and Python as that is what I am working with.
-![Screenshot 2024-01-23 053504](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/e0e62c7c-6951-4d3a-9462-1f0ad504b407)
+![Screenshot 2024-01-23 081600](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/17f4fc6b-a83b-491c-a059-bd91f8c02bd2)
+
 
 ![Screenshot 2024-01-23 053535](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/f64a0b86-011b-489c-8a8d-d9264968e914)
 
@@ -71,18 +72,22 @@ Current Build is meant for Windows OS and Python as that is what I am working wi
 **Current features:**
 
 - Load Directories and display/edit associated text files in Gallery tab/widget
-- 
+
 - Load Directories with blank text fields meant for populating with Auto-Captions once BLIP-2 is integrated
+
+- Image selection (Multi-Select images functionality)
+
+- Tag panel (collapsible tag panel with text field to add/create new tag buttons and also delete tag buttons if needed)
+
+- Tag Buttons (functions to create tag buttons and functions to append current text/captions to selected images when clicking a tag button)
 
 **To do list:**
 
-- [ ] **Image selection** (Multi-Select images functionality)
-
-- [ ] **Tag panel** (collapsible tag panel with text field to add/create new tag buttons)
-
-- [ ] **Tag Buttons** (functions to create tag buttons and functions to append current text/captions to selected images when clicking a tag button)
+- [ ] **Persistent Tag buttons** (user created tags persist from session to session unless deleted)
 
 - [ ] **Sort/Filter function** (Sort/Filter by tags with displayed images & text being updated in the window to display only the images/texts associated with the tag being searched/filtered for)
+
+- [ ] - [ ] **Category/Collections Pane/Panel & Functions** (Custom categories/collections pane to create new directories/dataset folders to copy selected files into for an easy way to mix n match and create new datasets)
 
 - [ ] **BLIP-2 integration** (Integrate Blip-2 and Blip-2 settings to auto generate captions to text fields and save generated captions to new text files named after target images)
 

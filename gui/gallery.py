@@ -57,10 +57,24 @@ class GalleryWindow(QMainWindow):
         self.setupCollectionsPanel()
         self.loadCollections()
 
+        self.editButtonsLayout = QHBoxLayout()  # Layout to hold edit-related buttons
+
         # Add a Save Edits button
         self.saveEditsButton = QPushButton("Save Edits", self)
+        self.saveEditsButton.setFixedSize(100, 30)  # Make the button smaller
         self.saveEditsButton.clicked.connect(self.saveAllEdits)
-        self.mainLayout.addWidget(self.saveEditsButton)
+        self.editButtonsLayout.addWidget(self.saveEditsButton)
+        
+        # Undo Button
+        self.undoButton = QPushButton("Undo", self)
+        self.undoButton.setFixedSize(100, 30)  # Make the button smaller
+        self.undoButton.clicked.connect(self.undoLastAction)
+        self.undoButton.clicked.connect(self.undoLastEdit)
+        self.editButtonsLayout.addWidget(self.undoButton)
+        
+        self.mainLayout.addLayout(self.editButtonsLayout)
+        
+        self.editHistory = {image_path: [] for image_path in self.imageTextEdits.keys()}
 
         self.loadCollections()
         
@@ -310,11 +324,20 @@ class GalleryWindow(QMainWindow):
                 currentText = textEdit.toPlainText()
                 newText = f"{currentText}, {tagText}" if currentText else tagText
                 textEdit.setText(newText)
+
+                # Update the edit history for undo functionality
+                if image_path not in self.editHistory:
+                    self.editHistory[image_path] = [currentText]  # Initialize with a list containing the current text
+                else:
+                    self.editHistory[image_path].append(currentText)  # Append the current text to the history list
+
                 # Update text file
                 txt_file_path = os.path.splitext(image_path)[0] + '.txt'
                 with open(txt_file_path, 'w') as file:
                     file.write(newText)
-        self.saveTags()  # Optional: Save tags after modification, if needed
+
+        # Optionally, save tags after modification, if needed
+        self.saveTags()
 
     def setupUI(self):
         self.central_widget = QWidget(self)
@@ -336,8 +359,8 @@ class GalleryWindow(QMainWindow):
         self.sizeSlider.valueChanged.connect(self.updateThumbnails)
         self.mainLayout.addWidget(self.sizeSlider)
         
-        self.selectAllButton = QPushButton("Select All", self)
-        self.selectAllButton.clicked.connect(self.selectAllImages)
+        self.selectAllButton = QPushButton("Select/Deselect All", self)
+        self.selectAllButton.clicked.connect(self.toggleSelectDeselectAll)
         self.mainLayout.addWidget(self.selectAllButton)
         self.loadDirButton = QPushButton("Load Directory")
         self.loadDirButton.clicked.connect(self.loadDirectory)
@@ -354,6 +377,20 @@ class GalleryWindow(QMainWindow):
         for label in self.imageLabels.values():
             label.selected = True
             label.setStyleSheet("border: 2px solid blue;")
+            
+    def toggleSelectDeselectAll(self):
+        # Check if any image is selected
+        any_selected = any(label.selected for label in self.imageLabels.values())
+    
+        # If any image is selected, deselect all, else select all
+        if any_selected:
+            for label in self.imageLabels.values():
+                label.selected = False
+                label.setStyleSheet("border: 2px solid black;")
+        else:
+            for label in self.imageLabels.values():
+                label.selected = True
+                label.setStyleSheet("border: 2px solid blue;")        
 
     def filterImages(self):
         query = self.searchBox.text().lower().strip()
@@ -424,6 +461,23 @@ class GalleryWindow(QMainWindow):
         except Exception as e:
             logging.error(f"Failed to process image {image_path}: {e}")
             QMessageBox.critical(self, "Error", f"Could not process the image: {os.path.basename(image_path)}")
+
+    def undoLastAction(self):
+        # Get the currently selected image(s)
+        selected_images = [path for path, label in self.selectedImages.items() if label.selected]
+    
+        # If there's a selected image, call its undo method
+        for image_path in selected_images:
+            text_edit_widget = self.imageTextEdits.get(image_path)
+            if text_edit_widget:
+                text_edit_widget.undo()
+                
+    def undoLastEdit(self):
+        for image_path, textEdit in self.imageTextEdits.items():
+            if self.selectedImages[image_path].selected and self.editHistory[image_path]:
+                # Pop the last state from the stack and set it as the current text
+                lastState = self.editHistory[image_path].pop()
+                textEdit.setText(lastState)                
 
     def loadDirectory(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Directory")

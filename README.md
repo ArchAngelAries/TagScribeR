@@ -63,7 +63,8 @@ TagScribeR is waiting for you. Let's tag the future, together.
 This is the current build I have going for TagScribeR the UI does not match my mock up image at the moment and I'm slowly fleshing out all the features bit by bit. Currently this build is bare bones and does not have BLIP-2 Auto Captioning implemented, nor does it have the tags panel or collections/category panel. This release is to further my proof of concept and to show that I am currently developing things the best I can on my own. I'm determined to do this whether on my own or with help, but I would really love any help that any skilled/learned people may be willing to offer.
 
 Current Build is meant for Windows OS and Python as that is what I am working with.
-![Screenshot 2024-01-23 081600](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/17f4fc6b-a83b-491c-a059-bd91f8c02bd2)
+![Screenshot 2024-01-24 081201](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/6ff0a07d-b84f-403f-873a-57ec4b3d5220)
+
 
 
 ![Screenshot 2024-01-23 053535](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/f64a0b86-011b-489c-8a8d-d9264968e914)
@@ -81,19 +82,19 @@ Current Build is meant for Windows OS and Python as that is what I am working wi
 
 - Tag Buttons (functions to create tag buttons and functions to append current text/captions to selected images when clicking a tag button)
 
+- Persistent Tag buttons (user created tags persist from session to session unless deleted)
+
+- Sort/Filter function (Sort/Filter by tags with displayed images & text being updated in the window to display only the images/texts associated with the tag being searched/filtered for)
+
+- Category/Collections Pane/Panel & Functions (Custom categories/collections pane to create new directories/dataset folders to copy selected files into for an easy way to mix n match and create new datasets)
+
+- Tag Sharing (a text file is created in your root folder housing all user custom tags, this text file acts as your tag button database but also allows easy sharing of user made tags)
+
 **To do list:**
-
-- [ ] **Persistent Tag buttons** (user created tags persist from session to session unless deleted)
-
-- [ ] **Sort/Filter function** (Sort/Filter by tags with displayed images & text being updated in the window to display only the images/texts associated with the tag being searched/filtered for)
-
-- [ ] - [ ] **Category/Collections Pane/Panel & Functions** (Custom categories/collections pane to create new directories/dataset folders to copy selected files into for an easy way to mix n match and create new datasets)
 
 - [ ] **BLIP-2 integration** (Integrate Blip-2 and Blip-2 settings to auto generate captions to text fields and save generated captions to new text files named after target images)
 
 - [ ] **Image Croppping/Resizing** (Add image Cropping/Resizing widget and functions to crop images based on pixel dimensions and/or  standard ratios, and resizing images based on pixel dimensions and/or ratios
-
-- [ ] **Tag Sharing** (a tag database creation widget that allows you to save new tags to a json/database, load shared jsons into your already established database of tags and by extension load/hooking them to the tags panel in gallery so that new functional tag buttons are created from the shared tags you've loaded, collection/organization and overall management of tags databases/jsons) (Note: I'm unsure if json is the best approach, it's just the method I assume would be easiest to implement at first)
 
 - [ ] **Settings** (A widget/tab for users to customize the look/style/feel of the UI, theme/color/etc, and hardware settings where the user can choose what backend settings the program will use for their Blip-2 functions CPU Only/Nvidia CUDA/AMD Directml, other settings as necessarry or as things evolve) (Note: I am on a Win 11 AMD 7900xt machine, so I might not have the hardware to develop the CUDA backend on my own)
 

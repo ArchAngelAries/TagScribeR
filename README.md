@@ -63,7 +63,8 @@ TagScribeR is waiting for you. Let's tag the future, together.
 This is the current build I have going for TagScribeR the UI does not match my mock up image at the moment and I'm slowly fleshing out all the features bit by bit. Currently this build is bare bones and does not have BLIP-2 Auto Captioning implemented, nor does it have the tags panel or collections/category panel. This release is to further my proof of concept and to show that I am currently developing things the best I can on my own. I'm determined to do this whether on my own or with help, but I would really love any help that any skilled/learned people may be willing to offer.
 
 Current Build is meant for Windows OS and Python as that is what I am working with.
-![Screenshot 2024-01-24 081201](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/6ff0a07d-b84f-403f-873a-57ec4b3d5220)
+![Screenshot 2024-01-24 093937](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/77de9a06-90a2-4e18-a4cf-1c3cf0460e77)
+
 
 
 

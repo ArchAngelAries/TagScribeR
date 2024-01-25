@@ -1,0 +1,16 @@
+pyqt5
+Pillow
+numpy
+python-magic-bin==0.4.14; platform_system=="Windows"
+python-magic; platform_system!="Windows"
+pandas
+accelerate
+bitsandbytes
+torch>=2.0.0
+torchdiffeq
+torchsde
+transformers>=4.28.1
+salesforce-lavis
+pywintypes
+pywin32; platform_system=="Windows"
+fairscale==0.4.4

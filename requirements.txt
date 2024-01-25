@@ -11,6 +11,11 @@ torchdiffeq
 torchsde
 transformers>=4.28.1
 salesforce-lavis
-pywintypes
 pywin32; platform_system=="Windows"
 fairscale==0.4.4
+open_clip_torch
+safetensors
+tqdm
+requests
+torchvision
+clip-interrogator==0.6.0

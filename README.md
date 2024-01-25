@@ -88,13 +88,13 @@ Current Build is meant for Windows OS and Python as that is what I am working wi
 
 - Tag Sharing (a text file is created in your root folder housing all user custom tags, this text file acts as your tag button database but also allows easy sharing of user made tags)
 
+- BLIP-2 integration (Integrate Blip-2 and Blip-2 settings to auto generate captions to text fields and save generated captions to new text files named after target images) (CPU Only based currently)
+
 **To do list:**
 
-- [ ] **BLIP-2 integration** (Integrate Blip-2 and Blip-2 settings to auto generate captions to text fields and save generated captions to new text files named after target images)
+- [ ] **Image Editing suite** (Add Image Editing widget with batch functions to edit/manage/delete/crop/resize/adjust brightness/contrast/hue/color/etc)
 
-- [ ] **Image Croppping/Resizing** (Add image Cropping/Resizing widget and functions to crop images based on pixel dimensions and/or  standard ratios, and resizing images based on pixel dimensions and/or ratios
-
-- [ ] **Settings** (A widget/tab for users to customize the look/style/feel of the UI, theme/color/etc, and hardware settings where the user can choose what backend settings the program will use for their Blip-2 functions CPU Only/Nvidia CUDA/AMD Directml, other settings as necessarry or as things evolve) (Note: I am on a Win 11 AMD 7900xt machine, so I might not have the hardware to develop the CUDA backend on my own)
+- [ ] **Settings** (A widget/tab for users to customize the look/style/feel of the UI/UX, theme/color/etc, and hardware settings where the user can choose what backend settings the program will use for their Blip-2 functions CPU Only/Nvidia CUDA/AMD Directml, other settings as necessarry or as things evolve) (Note: I am on a Win 11 AMD 7900xt machine, so I might not have the hardware to develop the CUDA backend on my own)
 
 **Installation:**
 

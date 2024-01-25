@@ -354,7 +354,7 @@ class GalleryWindow(QMainWindow):
 
         self.sizeSlider = QSlider(Qt.Horizontal, self)
         self.sizeSlider.setMinimum(50)
-        self.sizeSlider.setMaximum(256)
+        self.sizeSlider.setMaximum(353)
         self.sizeSlider.setValue(100)
         self.sizeSlider.valueChanged.connect(self.updateThumbnails)
         self.mainLayout.addWidget(self.sizeSlider)

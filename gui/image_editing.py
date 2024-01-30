@@ -90,7 +90,7 @@ class ImageEditingWindow(QWidget):
         self.layout.addWidget(self.toggleSelectButton)
         
         # Resize Button
-        self.resizeButton = QPushButton("Resize Image(s)")
+        self.resizeButton = QPushButton("Resize Selected Image(s)")
         self.resizeButton.clicked.connect(self.openResizeDialog)
         self.layout.addWidget(self.resizeButton)
         

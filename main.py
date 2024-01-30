@@ -2,8 +2,7 @@ import sys
 from PyQt5.QtWidgets import QApplication, QTabWidget, QMainWindow
 from gui.gallery import GalleryWindow  # Make sure these paths are correct
 from gui.auto_captioning import AutoCaptioningWindow
-# from gui.tag_management import TagManagementWindow  # As an example, add imports for your other windows
-# from gui.image_editing import ImageEditingWindow
+from gui.image_editing import ImageEditingWindow
 # from gui.settings import SettingsWindow
 
 class MainApplicationWindow(QMainWindow):
@@ -19,8 +18,7 @@ class MainApplicationWindow(QMainWindow):
         # Add tabs
         self.tabs.addTab(GalleryWindow(), "Gallery")
         self.tabs.addTab(AutoCaptioningWindow(), "Blip-2 Auto Captioning")
-        # self.tabs.addTab(TagManagementWindow(), "Tag Saving/Sharing")  # Add these as you implement each window
-        # self.tabs.addTab(ImageEditingWindow(), "Image Cropping/Resizing")
+        self.tabs.addTab(ImageEditingWindow(), "Image Editing")  # Add the Image Editing tab
         # self.tabs.addTab(SettingsWindow(), "Settings")
 
 def main():

@@ -5,7 +5,7 @@ Introducing TagScribeR, the ultimate toolset designed to revolutionize the way y
 
 TagScribeR: Redefining AI-Driven Image Dataset Preparation
 
-In the burgeoning field of AI and machine learning, the quality and detail of training datasets are paramount. TagScribeR is a pioneering platform designed to address the challenges of dataset preparation for Stable Diffusion models. Our innovative tool leverages the power of AI, specifically BLIP-2, to auto-caption images, while providing a user-friendly interface for custom tagging.
+In the burgeoning field of AI and machine learning, the quality and detail of training datasets are paramount. TagScribeR is a pioneering platform designed to address the challenges of dataset preparation for Stable Diffusion models. Our innovative tool leverages the power of AI, specifically BLIP-2 utilizing [CLIP Interrogator](https://github.com/pharmapsychotic/clip-interrogator), **BIG THANKS Mr.Pebble in Discord and an EVEN BIGGER THANKS to the CLIP Interrogator team for making the implementation of auto captioning possible**, to auto-caption images, while providing a user-friendly interface for custom tagging.
 
 Key Features:
 
@@ -20,7 +20,7 @@ Precision at Your Fingertips: With AI-powered captioning and personalized taggin
 Community and Support: Join a growing community of professionals and enthusiasts. Share, learn, and grow together with shared resources and support.
 TagScribeR is not just a tool; it's your next step towards mastering AI-driven image generation. We're seeking supporters, backers, and collaborators who share our vision to transform the landscape of AI model training. Be part of this revolutionary journey with TagScribeR – where your creativity meets AI efficiency.
 
-![Untitled-1](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/203dc1a4-6b78-4a83-b7af-3ba67010104c)
+![a_clean_polished_and_modern_logo_for_TagScrib_upscayl_4x_realesrgan-x4plus-anime](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/52c6f8a5-34b8-4b4b-bcd5-99515dbcfe17)
 
 
 Join Our Mission: Collaborate, Back, Code!
@@ -65,8 +65,7 @@ This is the current build I have going for TagScribeR the UI does not match my m
 Current Build is meant for Windows OS and Python as that is what I am working with.
 ![Screenshot 2024-01-24 093937](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/77de9a06-90a2-4e18-a4cf-1c3cf0460e77)
 
-![Screenshot 2024-01-24 150336](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/0655e97c-c359-4670-9c3d-22a5753d6a67)
-
+![Screenshot 2024-01-25 152735](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/775e4bda-fb43-4e1a-a09d-616b554f132f)
 
 **Current features:**
 

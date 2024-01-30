@@ -436,7 +436,7 @@ class GalleryWindow(QMainWindow):
             label = SelectableImageLabel(self)
             label.clicked.connect(lambda path=image_path: self.toggleImageSelection(path))
             pixmap = pil2pixmap(image)
-            label.setPixmap(pixmap.scaled(self.sizeSlider.value(), self.sizeSlider.value(), Qt.KeepAspectRatio))
+            label.setPixmap(pixmap.scaled(self.sizeSlider.value(), self.sizeSlider.value(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
             self.imageLabels[image_path] = label
             self.selectedImages[image_path] = label
 
@@ -528,7 +528,7 @@ class GalleryWindow(QMainWindow):
                 # Downscale the image for display if it's too large
                 if max(image.size) > MAX_DISPLAY_SIZE:
                     image.thumbnail((MAX_DISPLAY_SIZE, MAX_DISPLAY_SIZE), Image.Resampling.LANCZOS)
-                label.setPixmap(pil2pixmap(image).scaled(size, size, Qt.KeepAspectRatio))
+                label.setPixmap(pil2pixmap(image).scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             except Exception as e:
                 logging.error(f"Failed to update thumbnail for image {image_path}: {e}")
                 QMessageBox.critical(self, "Error", f"Could not process the image: {os.path.basename(image_path)}")

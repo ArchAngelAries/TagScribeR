@@ -67,6 +67,8 @@ Current Build is meant for Windows OS and Python as that is what I am working wi
 
 ![Screenshot 2024-01-25 152735](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/775e4bda-fb43-4e1a-a09d-616b554f132f)
 
+![Screenshot 2024-01-30 062223](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/621caa16-2cb6-4f1b-aa12-f0315ef495aa)
+
 **Current features:**
 
 - Load Directories and display/edit associated text files in Gallery tab/widget
@@ -89,9 +91,12 @@ Current Build is meant for Windows OS and Python as that is what I am working wi
 
 - BLIP-2 integration (Integrate Blip-2 and Blip-2 settings to auto generate captions to text fields and save generated captions to new text files named after target images) (CPU Only based currently)
 
+- Image Editing (Added an Image Editing Widget powered by OpenCV/cv2 for image editing, current image editing features are rotation and resizing, plan to add more soon)
+
+
 **To do list:**
 
-- [ ] **Image Editing suite** (Add Image Editing widget with batch functions to edit/manage/delete/crop/resize/adjust brightness/contrast/hue/color/etc)
+- [ ] **Image Editing suite** (complete Image Editing widget with batch functions to edit/manage/delete/crop/resize/adjust brightness/contrast/hue/color/etc)
 
 - [ ] **Settings** (A widget/tab for users to customize the look/style/feel of the UI/UX, theme/color/etc, and hardware settings where the user can choose what backend settings the program will use for their Blip-2 functions CPU Only/Nvidia CUDA/AMD Directml, other settings as necessarry or as things evolve) (Note: I am on a Win 11 AMD 7900xt machine, so I might not have the hardware to develop the CUDA backend on my own)
 

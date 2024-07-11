@@ -1,47 +1,98 @@
 import logging
 import os
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, QLabel,
-    QTextEdit, QGridLayout, QScrollArea, QSlider, QMessageBox, QLineEdit, QDockWidget, QProgressDialog, QComboBox
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+    QFileDialog, QLabel, QTextEdit, QGridLayout, QScrollArea, QSlider, 
+    QMessageBox, QLineEdit, QDockWidget, QProgressDialog, QComboBox
 )
 from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal, QRunnable, QThreadPool, QObject
 from PIL import Image, ImageOps
-import clip_interrogator  # Ensure you have clip_interrogator properly installed and imported
+import clip_interrogator
+import io
+import torch
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s:%(levelname)s:%(message)s')
+def detect_gpu_acceleration():
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.backends, 'directml') and torch.backends.directml.is_available():
+        return "directml"
+    elif hasattr(torch.backends, 'zluda') and torch.backends.zluda.is_available():
+        return "zluda"
+    else:
+        return "cpu"
 
-MAX_DISPLAY_SIZE = 809600  # maximum size (in pixels) for the longest side of the displayed image
+def get_device(acceleration_method):
+    if acceleration_method == "cuda":
+        return torch.device("cuda")
+    elif acceleration_method == "directml":
+        return torch.device("directml")
+    elif acceleration_method == "zluda":
+        return torch.device("zluda")
+    else:
+        return torch.device("cpu")
 
-def pil2pixmap(image):
-    image_rgb = image.convert('RGB')
-    data = image_rgb.tobytes('raw', 'RGB')
-    qimage = QImage(data, image.size[0], image.size[1], QImage.Format_RGB888)
-    pixmap = QPixmap.fromImage(qimage)
-    return pixmap
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s',
+                    filename='auto_captioning_log.txt', filemode='w')
+
+MAX_DISPLAY_SIZE = 809600
+THUMBNAIL_SIZE = (200, 200)
+
+class ThumbnailLoader(QRunnable):
+    class Signals(QObject):
+        finished = pyqtSignal(str, QPixmap)
+
+    def __init__(self, image_path):
+        super().__init__()
+        self.image_path = image_path
+        self.signals = self.Signals()
+
+    def run(self):
+        try:
+            with Image.open(self.image_path) as img:
+                img.thumbnail(THUMBNAIL_SIZE)
+                byte_array = io.BytesIO()
+                img.save(byte_array, format='PNG')
+                pixmap = QPixmap()
+                pixmap.loadFromData(byte_array.getvalue())
+                self.signals.finished.emit(self.image_path, pixmap)
+        except Exception as e:
+            logging.error(f"Failed to load thumbnail for {self.image_path}: {e}")
 
 class SelectableImageLabel(QLabel):
-    def __init__(self, parent=None):
+    clicked = pyqtSignal(str)
+
+    def __init__(self, imagePath='', parent=None):
         super(SelectableImageLabel, self).__init__(parent)
         self.selected = False
+        self.imagePath = imagePath
         self.setStyleSheet("border: 2px solid black;")
+        self.setAlignment(Qt.AlignCenter)
+        self.setWordWrap(True)
 
     def mousePressEvent(self, event):
-        self.selected = not self.selected
-        self.setStyleSheet("border: 2px solid blue;" if self.selected else "border: 2px solid black;")
+        self.clicked.emit(self.imagePath)
         super(SelectableImageLabel, self).mousePressEvent(event)
 
 class AutoCaptioningWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.acceleration_method = detect_gpu_acceleration()
+        self.device = get_device(self.acceleration_method)
+        
+        if self.acceleration_method == "cpu":
+            logging.warning("No GPU acceleration found. Using CPU.")
+            QMessageBox.warning(self, "GPU Not Found", "No GPU acceleration found. The program will run on CPU, which may be slower.")
+        else:
+            logging.info(f"Using GPU acceleration: {self.acceleration_method}")
         self.setWindowTitle("TagScribeR - Auto Captioning")
         self.setGeometry(100, 100, 800, 600)
         self.imageTextEdits = {}
         self.imageLabels = {}
         self.selectedImages = {}
-        self.allSelected = False
-        self.originalCaptions = {}  # To store original captions for undo functionality
-        self.thumbnailSize = 150  # Default thumbnail size
+        self.thumbnail_cache = {}
+        self.thread_pool = QThreadPool()
+        self.thread_pool.setMaxThreadCount(4)
         self.setupUI()
         self.interrogator = None
 
@@ -58,7 +109,7 @@ class AutoCaptioningWindow(QMainWindow):
         self.mainLayout.addWidget(self.captionMethodLabel)
         
         self.captionMethodDropdown = QComboBox()
-        self.captionMethodDropdown.addItems(["BLIP-2", "Other Method 1", "Other Method 2"])  # Add other methods as needed
+        self.captionMethodDropdown.addItems(["BLIP-2", "Other Method 1", "Other Method 2"])
         self.mainLayout.addWidget(self.captionMethodDropdown)
 
         self.captionModelLabel = QLabel("Caption Model:")
@@ -108,10 +159,6 @@ class AutoCaptioningWindow(QMainWindow):
         self.saveEditsButton = QPushButton("Save Edits")
         self.saveEditsButton.clicked.connect(self.saveEdits)
         self.mainLayout.addWidget(self.saveEditsButton)
-        
-        self.undoButton = QPushButton("Undo")
-        self.undoButton.clicked.connect(self.undoLastEdit)
-        self.mainLayout.addWidget(self.undoButton)
 
     def loadDirectory(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Directory")
@@ -122,108 +169,113 @@ class AutoCaptioningWindow(QMainWindow):
             logging.warning("No directory was selected.")
 
     def displayImagesFromDirectory(self, dir_path):
-        progress = QProgressDialog("Loading images...", "Abort", 0, len(os.listdir(dir_path)), self)
-        progress.setWindowTitle("Loading...")
+        self.clearLayout(self.gridLayout)
+        self.imageLabels.clear()
+        self.imageTextEdits.clear()
+        self.selectedImages.clear()
+        self.thumbnail_cache.clear()
+
+        image_files = [f for f in os.listdir(dir_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
+        
+        progress = QProgressDialog("Loading images...", "Abort", 0, len(image_files), self)
         progress.setWindowModality(Qt.WindowModal)
         progress.show()
 
-        # Clear existing widgets from the layout and dictionaries
-        self.clearLayout(self.gridLayout)
-        self.imageTextEdits.clear()
-        self.imageLabels.clear()
-        self.selectedImages.clear()
-
-        for index, filename in enumerate(os.listdir(dir_path)):
+        for index, filename in enumerate(image_files):
             if progress.wasCanceled():
                 break
             progress.setValue(index)
             QApplication.processEvents()
 
             image_path = os.path.join(dir_path, filename)
-            self.loadImageAndSetupUI(image_path, filename, index)
+            self.createImagePlaceholder(image_path, index)
+            self.queueThumbnailLoad(image_path)
 
-        progress.setValue(len(os.listdir(dir_path)))
-        
+        progress.setValue(len(image_files))
+
     def clearLayout(self, layout):
         while layout.count():
             child = layout.takeAt(0)
             if child.widget():
-                child.widget().deleteLater()    
+                child.widget().deleteLater()
+
+    def createImagePlaceholder(self, image_path, index):
+        label = SelectableImageLabel(imagePath=image_path)
+        label.setFixedSize(THUMBNAIL_SIZE[0], THUMBNAIL_SIZE[1])
+        label.setText("Loading...")
+        label.clicked.connect(self.toggleImageSelection)
         
-    def updateThumbnails(self):
-        try:
-            size = self.sizeSlider.value()
-            for image_path, label in self.imageLabels.items():
-                try:
-                    image = Image.open(image_path)
-                    # Downscale the image for display if it's too large
-                    if max(image.size) > MAX_DISPLAY_SIZE:
-                        image.thumbnail((MAX_DISPLAY_SIZE, MAX_DISPLAY_SIZE), Image.Resampling.LANCZOS)
-                    label.setPixmap(pil2pixmap(image).scaled(size, size, Qt.KeepAspectRatio))
-                except Exception as e:
-                    logging.error(f"Failed to update thumbnail for image {image_path}: {e}")
-        except Exception as e:
-            logging.critical("Failed to update thumbnails: {e}")    
+        row = index // 4
+        col = index % 4
+        self.gridLayout.addWidget(label, row * 2, col)
+        
+        self.imageLabels[image_path] = label
+        self.selectedImages[image_path] = label
+        
+        textEdit = QTextEdit(self)
+        self.imageTextEdits[image_path] = textEdit
+        self.gridLayout.addWidget(textEdit, row * 2 + 1, col)
 
-    def loadImageAndSetupUI(self, image_path, filename, index):
-        try:
-            image = Image.open(image_path)
-            if max(image.size) > MAX_DISPLAY_SIZE:
-                image = ImageOps.exif_transpose(image)
-                image.thumbnail((MAX_DISPLAY_SIZE, MAX_DISPLAY_SIZE), Image.Resampling.LANCZOS)
+    def queueThumbnailLoad(self, image_path):
+        loader = ThumbnailLoader(image_path)
+        loader.signals.finished.connect(self.onThumbnailLoaded)
+        self.thread_pool.start(loader)
 
-            # Convert PIL image to QPixmap
-            pixmap = pil2pixmap(image)
-
-            # Maintain aspect ratio
-            pixmap = pixmap.scaled(self.thumbnailSize, self.thumbnailSize, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-
-            label = SelectableImageLabel(self)
+    def onThumbnailLoaded(self, image_path, pixmap):
+        if image_path in self.imageLabels:
+            label = self.imageLabels[image_path]
             label.setPixmap(pixmap)
-            self.imageLabels[image_path] = label
-            self.selectedImages[image_path] = label
+            label.setText("")
+            self.thumbnail_cache[image_path] = pixmap
 
-            textEdit = QTextEdit(self)
-            self.imageTextEdits[image_path] = textEdit
-
-            row = index // 4
-            col = index % 4
-            self.gridLayout.addWidget(label, row * 2, col)
-            self.gridLayout.addWidget(textEdit, row * 2 + 1, col)
-        except Exception as e:
-            logging.error(f"Failed to process image {image_path}: {e}")
-            QMessageBox.critical(self, "Error", f"Could not process the image: {os.path.basename(image_path)}")
+    def toggleImageSelection(self, image_path):
+        if image_path in self.selectedImages:
+            label = self.selectedImages[image_path]
+            label.selected = not label.selected
+            label.setStyleSheet("border: 2px solid blue;" if label.selected else "border: 2px solid black;")
+            logging.info(f"Image selection toggled: {image_path}, Selected: {label.selected}")
+        else:
+            logging.error(f"Image path not found in selectedImages: {image_path}")
 
     def toggleSelectAllImages(self):
-        self.allSelected = not self.allSelected  # Toggle the selection state
+        any_selected = any(label.selected for label in self.selectedImages.values())
         for label in self.selectedImages.values():
-            label.selected = self.allSelected
-            label.setStyleSheet("border: 2px solid blue;" if self.allSelected else "border: 2px solid black;")
-        # Update the button text based on the current state
-        self.toggleSelectButton.setText("Deselect All" if self.allSelected else "Select All")
+            label.selected = not any_selected
+            label.setStyleSheet("border: 2px solid blue;" if not any_selected else "border: 2px solid black;")
+        self.toggleSelectButton.setText("Deselect All" if not any_selected else "Select All")
+
+    def updateThumbnails(self):
+        size = self.sizeSlider.value()
+        for image_path, label in self.imageLabels.items():
+            if image_path in self.thumbnail_cache:
+                pixmap = self.thumbnail_cache[image_path]
+                scaled_pixmap = pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                label.setPixmap(scaled_pixmap)
 
     def saveEdits(self):
         for image_path, textEdit in self.imageTextEdits.items():
-            with open(image_path.replace('.png', '.txt').replace('.jpg', '.txt').replace('.jpeg', '.txt'), 'w') as file:
-                file.write(textEdit.toPlainText())
-            logging.info(f"Saved edits for {image_path}")
+            self.saveTextToFile(image_path, textEdit)
+        QMessageBox.information(self, "Save Complete", "All edits have been saved successfully.")
 
-    def undoLastEdit(self):
-        # Implement the functionality to undo the last edit in the active QTextEdit
-        # You might need to keep track of the edits or leverage the undo functionality of QTextEdit
-        activeTextEdit = self.central_widget.focusWidget()
-        if isinstance(activeTextEdit, QTextEdit):
-            activeTextEdit.undo()
+    def saveTextToFile(self, image_path, textEdit):
+        txt_file_path = os.path.splitext(image_path)[0] + '.txt'
+        try:
+            with open(txt_file_path, 'w') as file:
+                file.write(textEdit.toPlainText())
+            logging.info(f"Saved text for {image_path}")
+        except Exception as e:
+            logging.error(f"Failed to save text for {image_path}: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to save text for {os.path.basename(image_path)}: {str(e)}")
+
 
     def initialize_interrogator(self):
         config = clip_interrogator.Config(
-            # Set the model names based on the UI selection
             caption_model_name=self.captionModelDropdown.currentText(),
             clip_model_name=self.clipModelDropdown.currentText(),
-            # Other config settings
-            # ...
+            device=self.device
         )
         self.interrogator = clip_interrogator.Interrogator(config)
+        logging.info(f"Interrogator initialized with device: {self.device}")
 
     def captionImages(self):
         if not self.interrogator:
@@ -240,29 +292,28 @@ class AutoCaptioningWindow(QMainWindow):
             if progress.wasCanceled():
                 break
             progress.setValue(idx)
-            QApplication.processEvents()  # Process events to keep the UI responsive
+            QApplication.processEvents()
 
-            pil_image = Image.open(image_path).convert("RGB")
-            caption = self.interrogator.generate_caption(pil_image)
-            self.imageTextEdits[image_path].setText(caption)
-
-            # Save the caption to a text file
-            self.save_caption_to_file(image_path, caption)
+            try:
+                pil_image = Image.open(image_path).convert("RGB")
+                caption = self.interrogator.generate_caption(pil_image)
+                self.imageTextEdits[image_path].setText(caption)
+                logging.info(f"Caption generated for {image_path}")
+                
+                if self.acceleration_method != "cpu":
+                    if self.acceleration_method == "cuda":
+                        print(f"CUDA memory allocated: {torch.cuda.memory_allocated() / 1e6:.2f} MB")
+                    elif self.acceleration_method == "directml":
+                        print("DirectML acceleration in use")
+                    elif self.acceleration_method == "zluda":
+                        print("ZLUDA acceleration in use")
+                
+            except Exception as e:
+                logging.error(f"Error captioning image {image_path}: {str(e)}")
+                QMessageBox.warning(self, "Captioning Error", f"Failed to caption {os.path.basename(image_path)}: {str(e)}")
 
         progress.setValue(len(selected_images))
-
-    def save_caption_to_file(self, image_path, caption):
-        # Create the .txt filename based on the image filename
-        txt_filename = os.path.splitext(image_path)[0] + '.txt'
-
-        try:
-            # Write the caption to the .txt file
-            with open(txt_filename, 'w') as txt_file:
-                txt_file.write(caption)
-            logging.info(f"Caption saved to {txt_filename}")
-        except Exception as e:
-            logging.error(f"Error saving caption to file {txt_filename}: {e}")
-            QMessageBox.critical(self, "Error", f"Could not save caption to file: {os.path.basename(txt_filename)}")
+        QMessageBox.information(self, "Captioning Complete", "Selected images have been captioned.")
 
 if __name__ == "__main__":
     app = QApplication([])

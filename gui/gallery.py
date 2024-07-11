@@ -2,6 +2,7 @@ import shutil
 import json
 import logging
 import sys
+from functools import lru_cache
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
     QFileDialog, QLabel, QTextEdit, QGridLayout, QScrollArea, QSlider, 
@@ -9,15 +10,35 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import pyqtSlot
 import os
 from PIL import Image, ImageOps
 import subprocess
+import gc
+from PyQt5.QtCore import QRunnable, QThreadPool, pyqtSignal, QObject
+import io
+
+@lru_cache(maxsize=100)
+def load_image(image_path):
+    try:
+        image = Image.open(image_path)
+        if max(image.size) > MAX_DISPLAY_SIZE:
+            image = ImageOps.exif_transpose(image)
+            image.thumbnail((MAX_DISPLAY_SIZE, MAX_DISPLAY_SIZE), Image.Resampling.LANCZOS)
+        return image
+    except Exception as e:
+        logging.error(f"Failed to load image {image_path}: {e}")
+        return None
 
 # Add this constant near the top of your script
 MAX_DISPLAY_SIZE = 809600  # maximum size (in pixels) for the longest side of the displayed image
+THUMBNAIL_SIZE = (200, 200)  # Adjust as needed
 
 # Setup basic configuration for logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s:%(levelname)s:%(message)s')
+logging.basicConfig(level=logging.DEBUG, 
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    filename='gallery_log.txt',
+                    filemode='w')
 
 def pil2pixmap(image):
     """Convert a PIL image to a QPixmap"""
@@ -26,18 +47,51 @@ def pil2pixmap(image):
     qimage = QImage(data, image.size[0], image.size[1], QImage.Format_RGB888)
     pixmap = QPixmap.fromImage(qimage)
     return pixmap
+    
+class ThumbnailLoader(QRunnable):
+    class Signals(QObject):
+        finished = pyqtSignal(str, QPixmap)
+
+    def __init__(self, image_path):
+        super().__init__()
+        self.image_path = image_path
+        self.signals = self.Signals()
+
+    def run(self):
+        try:
+            with Image.open(self.image_path) as img:
+                img.thumbnail(THUMBNAIL_SIZE)
+                byte_array = io.BytesIO()
+                img.save(byte_array, format='PNG')
+                pixmap = QPixmap()
+                pixmap.loadFromData(byte_array.getvalue())
+                self.signals.finished.emit(self.image_path, pixmap)
+        except Exception as e:
+            logging.error(f"Failed to load thumbnail for {self.image_path}: {e}")
 
 class SelectableImageLabel(QLabel):
-    clicked = pyqtSignal()
+    clicked = pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, imagePath='', parent=None):
         super(SelectableImageLabel, self).__init__(parent)
         self.selected = False
-        self.setStyleSheet("border: 2px solid black;")  # Default style
+        self.imagePath = imagePath
+        self.setStyleSheet("border: 2px solid black;")
+        self.setAlignment(Qt.AlignCenter)
+        self.setWordWrap(True)
 
+    def setPixmap(self, pixmap):
+        super().setPixmap(pixmap)
+        self.setText("")  # Clear any existing text when setting a pixmap
+
+    def setText(self, text):
+        super().setText(text)
+        if text:
+            self.setPixmap(QPixmap())  # Clear any existing pixmap when setting text
+            
     def mousePressEvent(self, event):
-        self.clicked.emit()  # Emit clicked signal
-        super(SelectableImageLabel, self).mousePressEvent(event)
+        self.clicked.emit(self.imagePath)
+        super(SelectableImageLabel, self).mousePressEvent(event)       
 
 class GalleryWindow(QMainWindow):
     def __init__(self):
@@ -77,6 +131,9 @@ class GalleryWindow(QMainWindow):
         self.editHistory = {image_path: [] for image_path in self.imageTextEdits.keys()}
 
         self.loadCollections()
+        self.thumbnail_cache = {}
+        self.thread_pool = QThreadPool()
+        self.thread_pool.setMaxThreadCount(4)  # Adjust based on your system
         
         if os.path.exists(self.collectionsFilePath):
             with open(self.collectionsFilePath, 'r') as file:
@@ -86,6 +143,41 @@ class GalleryWindow(QMainWindow):
         else:
             with open(self.collectionsFilePath, 'w') as file:
                 json.dump([], file)
+                
+    def createImagePlaceholder(self, image_path, index):
+        label = SelectableImageLabel(imagePath=image_path)
+        label.setFixedSize(THUMBNAIL_SIZE[0], THUMBNAIL_SIZE[1])
+        label.setText("Loading...")
+        label.clicked.connect(self.toggleImageSelection)
+        
+        row = index // 4
+        col = index % 4
+        self.gridLayout.addWidget(label, row * 2, col)
+        
+        self.imageLabels[image_path] = label
+        self.selectedImages[image_path] = label
+        
+        textEdit = QTextEdit(self)
+        self.imageTextEdits[image_path] = textEdit
+        self.gridLayout.addWidget(textEdit, row * 2 + 1, col)
+    
+    def queueThumbnailLoad(self, image_path):
+        loader = ThumbnailLoader(image_path)
+        loader.signals.finished.connect(self.onThumbnailLoaded)
+        self.thread_pool.start(loader)
+    
+    def onThumbnailLoaded(self, image_path, pixmap):
+        if image_path in self.imageLabels:
+            label = self.imageLabels[image_path]
+            label.setPixmap(pixmap)
+            label.setText("")  # Clear the "Loading..." text
+            self.thumbnail_cache[image_path] = pixmap
+    
+    def clearLayout(self, layout):
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()                
 
     def saveCollections(self):
         collections = [self.collectionsList.item(i).text() for i in range(self.collectionsList.count())]
@@ -319,24 +411,20 @@ class GalleryWindow(QMainWindow):
             self.saveTags()  # Update tags file after deletion
 
     def tagButtonClicked(self, tagText):
-        for image_path, textEdit in self.imageTextEdits.items():
-            if self.selectedImages[image_path].selected:
+        for image_path, label in self.imageLabels.items():
+            if label.selected:
+                textEdit = self.imageTextEdits[image_path]
                 currentText = textEdit.toPlainText()
                 newText = f"{currentText}, {tagText}" if currentText else tagText
                 textEdit.setText(newText)
-
+    
                 # Update the edit history for undo functionality
                 if image_path not in self.editHistory:
-                    self.editHistory[image_path] = [currentText]  # Initialize with a list containing the current text
+                    self.editHistory[image_path] = [currentText]
                 else:
-                    self.editHistory[image_path].append(currentText)  # Append the current text to the history list
-
-                # Update text file
-                txt_file_path = os.path.splitext(image_path)[0] + '.txt'
-                with open(txt_file_path, 'w') as file:
-                    file.write(newText)
-
-        # Optionally, save tags after modification, if needed
+                    self.editHistory[image_path].append(currentText)
+    
+        # Optionally, save tags after modification
         self.saveTags()
 
     def setupUI(self):
@@ -420,21 +508,49 @@ class GalleryWindow(QMainWindow):
     def saveAllEdits(self):
         for image_path, textEdit in self.imageTextEdits.items():
             self.saveTextToFile(image_path, textEdit)
+        QMessageBox.information(self, "Save Complete", "All edits have been saved successfully.")
 
     def saveTextToFile(self, image_path, textEdit):
         txt_file_path = os.path.splitext(image_path)[0] + '.txt'
-        with open(txt_file_path, 'w') as file:
-            file.write(textEdit.toPlainText())
+        try:
+            with open(txt_file_path, 'w') as file:
+                file.write(textEdit.toPlainText())
+            logging.info(f"Saved text for {image_path}")
+        except Exception as e:
+            logging.error(f"Failed to save text for {image_path}: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to save text for {os.path.basename(image_path)}: {str(e)}")
+            
     def loadImageAndSetupUI(self, dir_path, filename, index, file_count):
         image_path = os.path.join(dir_path, filename)
         try:
-            image = Image.open(image_path)
+            # Check if the file exists
+            if not os.path.exists(image_path):
+                raise FileNotFoundError(f"File not found: {image_path}")
+
+            # Check file size
+            file_size = os.path.getsize(image_path)
+            if file_size == 0:
+                raise ValueError(f"File is empty: {image_path}")
+
+            # Attempt to open the image
+            try:
+                image = Image.open(image_path)
+            except Image.UnidentifiedImageError:
+                raise ValueError(f"Unidentified image format: {image_path}")
+
+            # Check if the image can be read
+            try:
+                image.verify()
+                image = Image.open(image_path)  # Reopen the image after verify
+            except Exception as e:
+                raise ValueError(f"Corrupt image file: {image_path}. Error: {str(e)}")
+
             if max(image.size) > MAX_DISPLAY_SIZE:
                 image = ImageOps.exif_transpose(image)
                 image.thumbnail((MAX_DISPLAY_SIZE, MAX_DISPLAY_SIZE), Image.Resampling.LANCZOS)
 
-            label = SelectableImageLabel(self)
-            label.clicked.connect(lambda path=image_path: self.toggleImageSelection(path))
+            label = SelectableImageLabel(imagePath=image_path)
+            label.clicked.connect(self.toggleImageSelection)
             pixmap = pil2pixmap(image)
             label.setPixmap(pixmap.scaled(self.sizeSlider.value(), self.sizeSlider.value(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
             self.imageLabels[image_path] = label
@@ -448,7 +564,7 @@ class GalleryWindow(QMainWindow):
                     with open(txt_file_path, 'r') as file:
                         description = file.read()
             except Exception as e:
-                logging.error(f"Error reading text file {txt_file_path}: {e}")
+                logging.error(f"Error reading text file {txt_file_path}: {str(e)}")
 
             textEdit = QTextEdit(self)
             textEdit.setText(description)
@@ -458,9 +574,23 @@ class GalleryWindow(QMainWindow):
             col = index % 4
             self.gridLayout.addWidget(label, row * 2, col)
             self.gridLayout.addWidget(textEdit, row * 2 + 1, col)
+        
+            logging.info(f"Successfully loaded image: {image_path}")
         except Exception as e:
-            logging.error(f"Failed to process image {image_path}: {e}")
-            QMessageBox.critical(self, "Error", f"Could not process the image: {os.path.basename(image_path)}")
+            logging.error(f"Failed to process image {image_path}: {str(e)}")
+            QMessageBox.warning(self, "Image Loading Error", f"Could not process the image: {os.path.basename(image_path)}\nError: {str(e)}")
+            # Continue with the next image instead of crashing
+            return False
+        return True
+        
+    def load_description(self, txt_file_path):
+        try:
+            if os.path.isfile(txt_file_path):
+                with open(txt_file_path, 'r') as file:
+                    return file.read()
+        except Exception as e:
+            logging.error(f"Error reading text file {txt_file_path}: {e}")
+        return ""    
 
     def undoLastAction(self):
         # Get the currently selected image(s)
@@ -483,29 +613,31 @@ class GalleryWindow(QMainWindow):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Directory")
         if dir_path:
             logging.info(f"Directory loaded: {dir_path}")
-            
-            # Get the count of image files for progress indication
-            image_files = [f for f in os.listdir(dir_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-            file_count = len(image_files)
-            
-            # Setup progress dialog
-            progress = QProgressDialog("Loading images...", "Abort", 0, file_count, self)
-            progress.setWindowTitle("Loading...")
-            progress.setCancelButton(None)  # Disable the cancel button
+        
+            self.clearLayout(self.gridLayout)
+            self.thumbnail_cache.clear()
+            self.imageLabels.clear()
+            self.imageTextEdits.clear()
+            self.selectedImages.clear()
+            gc.collect()  # Force garbage collection
+
+            image_files = [f for f in os.listdir(dir_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
+        
+            progress = QProgressDialog("Loading images...", "Abort", 0, len(image_files), self)
             progress.setWindowModality(Qt.WindowModal)
             progress.show()
-            
+
             for index, filename in enumerate(image_files):
                 if progress.wasCanceled():
-                    break  # Break the loop if the operation was canceled
+                    break
                 progress.setValue(index)
-                QApplication.processEvents()  # Process UI events
-                
-                # Proceed with loading the image and setting up UI
-                self.loadImageAndSetupUI(dir_path, filename, index, file_count)
-                
-            progress.setValue(file_count)  # Complete the progress
+                QApplication.processEvents()
             
+                image_path = os.path.join(dir_path, filename)
+                self.createImagePlaceholder(image_path, index)
+                self.queueThumbnailLoad(image_path)
+
+            progress.setValue(len(image_files))
         else:
             logging.warning("No directory was selected.")
 
@@ -521,27 +653,40 @@ class GalleryWindow(QMainWindow):
         self.selectedImages.clear()  # Clear previously selected images
 
     def updateThumbnails(self):
-        size = self.sizeSlider.value()
-        for image_path, label in self.imageLabels.items():
-            try:
-                image = Image.open(image_path)
-                # Downscale the image for display if it's too large
-                if max(image.size) > MAX_DISPLAY_SIZE:
-                    image.thumbnail((MAX_DISPLAY_SIZE, MAX_DISPLAY_SIZE), Image.Resampling.LANCZOS)
-                label.setPixmap(pil2pixmap(image).scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            except Exception as e:
-                logging.error(f"Failed to update thumbnail for image {image_path}: {e}")
-                QMessageBox.critical(self, "Error", f"Could not process the image: {os.path.basename(image_path)}")
+        try:
+            size = self.sizeSlider.value()
+            for image_path, label in self.imageLabels.items():
+                if image_path in self.thumbnail_cache:
+                    pixmap = self.thumbnail_cache[image_path]
+                else:
+                    try:
+                        image = load_image(image_path)
+                        if image is not None:
+                            pixmap = pil2pixmap(image)
+                            self.thumbnail_cache[image_path] = pixmap
+                        else:
+                            continue  # Skip this image if it couldn't be loaded
+                    except Exception as e:
+                        logging.error(f"Error loading image {image_path}: {str(e)}")
+                        continue  # Skip this image if there was an error
+                
+                scaled_pixmap = pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                label.setPixmap(scaled_pixmap)
+        except Exception as e:
+            logging.error(f"Error in updateThumbnails: {str(e)}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Failed to update thumbnails: {str(e)}")
 
     def toggleImageSelection(self, image_path):
         if image_path in self.selectedImages:
             label = self.selectedImages[image_path]
-            if label.selected:
-                label.setStyleSheet("border: 2px solid black;")
-                label.selected = False
-            else:
-                label.setStyleSheet("border: 2px solid blue;")  # Change border color to indicate selection
-                label.selected = True
+            label.selected = not label.selected
+            label.setStyleSheet("border: 2px solid blue;" if label.selected else "border: 2px solid black;")
+            logging.info(f"Image selection toggled: {image_path}, Selected: {label.selected}")
         else:
             logging.error(f"Image path not found in selectedImages: {image_path}")
+            
+    def closeEvent(self, event):
+        self.thumbnail_cache.clear()
+        gc.collect()
+        super().closeEvent(event)            
 

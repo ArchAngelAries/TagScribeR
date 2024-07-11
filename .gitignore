@@ -1,7 +1,6 @@
 __pycache__/
 /Dataset Collections
 /models
-/resources
 /venv
 /utils
 .venvScriptsactivate.txt
@@ -10,3 +9,4 @@ TagScribeR Directory.txt
 AGPL-3.0 license
 README.md
 cache
+gallery_log.txt

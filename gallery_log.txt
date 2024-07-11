@@ -1,0 +1,6 @@
+2024-07-11 11:10:29,237 - WARNING - No GPU acceleration found. Using CPU.
+2024-07-11 11:10:30,849 - DEBUG - Reading QSS file in: :qdarkstyle\dark\darkstyle.qss
+2024-07-11 11:10:30,849 - INFO - QSS file successfully loaded.
+2024-07-11 11:10:30,849 - DEBUG - Checking patches for being applied.
+2024-07-11 11:10:30,849 - INFO - Found version patches to be applied.
+2024-07-11 11:10:30,849 - INFO - Found application patches to be applied.

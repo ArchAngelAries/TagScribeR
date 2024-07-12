@@ -6,9 +6,9 @@ from functools import lru_cache
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
     QFileDialog, QLabel, QTextEdit, QGridLayout, QScrollArea, QSlider, 
-    QMessageBox, QLineEdit, QDockWidget, QProgressDialog, QMenu, QListWidget, QListWidgetItem
+    QMessageBox, QLineEdit, QDockWidget, QSizePolicy, QProgressDialog, QMenu, QListWidget, QListWidgetItem, QShortcut, QInputDialog
 )
-from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtGui import QPixmap, QImage, QKeySequence
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtCore import pyqtSlot
 import os
@@ -106,6 +106,7 @@ class GalleryWindow(QMainWindow):
         self.collectionsFilePath = os.path.join(self.collectionFolderPath, "collections.json")
 
         self.setupUI()
+        self.setupShortcuts()
         self.setupTagsPanel()
         self.loadTags()
         self.setupCollectionsPanel()
@@ -126,6 +127,12 @@ class GalleryWindow(QMainWindow):
         self.undoButton.clicked.connect(self.undoLastEdit)
         self.editButtonsLayout.addWidget(self.undoButton)
         
+        # Add the new Clear Captions button
+        self.clearCaptionsButton = QPushButton("Clear Selected Captions", self)
+        self.clearCaptionsButton.setFixedSize(120, 40)  # Make the button smaller
+        self.clearCaptionsButton.clicked.connect(self.clearSelectedCaptions)
+        self.editButtonsLayout.addWidget(self.clearCaptionsButton)     
+        
         self.mainLayout.addLayout(self.editButtonsLayout)
         
         self.editHistory = {image_path: [] for image_path in self.imageTextEdits.keys()}
@@ -144,6 +151,21 @@ class GalleryWindow(QMainWindow):
             with open(self.collectionsFilePath, 'w') as file:
                 json.dump([], file)
                 
+    def setupShortcuts(self):
+        self.shortcuts = {
+            "Ctrl+S": (self.saveAllEdits, "Save all edits"),
+            "Ctrl+Z": (self.undoLastEdit, "Undo last action"),
+            "Ctrl+A": (self.selectAllImages, "Select all images"),
+            "Ctrl+D": (self.deselectAllImages, "Deselect all images"),
+            "Ctrl+F": (self.focusSearchBar, "Focus on search bar"),
+            "Del": (self.clearSelectedCaptions, "Clear selected captions"),
+            "Ctrl+L": (self.loadDirectory, "Load directory"),
+            "Ctrl+C": (self.copySelectedToCollection, "Copy selected images to collection")
+        }            
+        
+        for key, (func, _) in self.shortcuts.items():
+            QShortcut(QKeySequence(key), self).activated.connect(func)
+                
     def createImagePlaceholder(self, image_path, index):
         label = SelectableImageLabel(imagePath=image_path)
         label.setFixedSize(THUMBNAIL_SIZE[0], THUMBNAIL_SIZE[1])
@@ -158,6 +180,10 @@ class GalleryWindow(QMainWindow):
         self.selectedImages[image_path] = label
         
         textEdit = QTextEdit(self)
+        # Load existing caption text if available
+        txt_file_path = os.path.splitext(image_path)[0] + '.txt'
+        description = self.load_description(txt_file_path)
+        textEdit.setText(description)
         self.imageTextEdits[image_path] = textEdit
         self.gridLayout.addWidget(textEdit, row * 2 + 1, col)
     
@@ -177,7 +203,42 @@ class GalleryWindow(QMainWindow):
         while layout.count():
             child = layout.takeAt(0)
             if child.widget():
-                child.widget().deleteLater()                
+                child.widget().deleteLater()    
+        
+    def deselectAllImages(self):
+        for label in self.imageLabels.values():
+            label.selected = False
+            label.setStyleSheet("border: 2px solid black;")
+    
+    def focusSearchBar(self):
+        self.searchBox.setFocus()
+    
+    def copySelectedToCollection(self):
+        selected_images = [path for path, label in self.selectedImages.items() if label.selected]
+        if not selected_images:
+            QMessageBox.warning(self, "Warning", "No images selected.")
+            return
+    
+        # Get list of collections
+        collections = [self.collectionsList.item(i).text() for i in range(self.collectionsList.count())]
+        
+        # Let user choose a collection
+        collection, ok = QInputDialog.getItem(self, "Select Collection", 
+                                            "Choose a collection to copy to:", 
+                                            collections, 0, False)
+        if ok and collection:
+            collection_path = os.path.join(self.collectionFolderPath, collection)
+            for image_path in selected_images:
+                try:
+                    shutil.copy(image_path, collection_path)
+                    # If you also want to copy associated text files:
+                    txt_file_path = os.path.splitext(image_path)[0] + '.txt'
+                    if os.path.exists(txt_file_path):
+                        shutil.copy(txt_file_path, collection_path)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to copy {os.path.basename(image_path)} to the collection {collection}: {str(e)}")
+            
+            QMessageBox.information(self, "Success", f"Selected images have been copied to the collection: {collection}")               
 
     def saveCollections(self):
         collections = [self.collectionsList.item(i).text() for i in range(self.collectionsList.count())]
@@ -200,6 +261,7 @@ class GalleryWindow(QMainWindow):
 
     def setupCollectionsPanel(self):
         self.collectionsDockWidget = QDockWidget("Collections", self)
+        self.collectionsDockWidget.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.collectionsPanel = QWidget()
         self.collectionsPanelLayout = QVBoxLayout()
         self.collectionsPanel.setLayout(self.collectionsPanelLayout)
@@ -212,19 +274,18 @@ class GalleryWindow(QMainWindow):
         self.collectionsPanelLayout.addWidget(self.addCollectionButton)
         
         self.collectionsList = QListWidget(self)
-        self.collectionsList.setSelectionMode(QListWidget.ExtendedSelection)  # Enable multiple selection
-        self.collectionsList.itemClicked.connect(self.onCollectionClicked)  # Connect the item clicked signal
-        self.collectionsList.setContextMenuPolicy(Qt.CustomContextMenu)  # Enable custom context menu
-        self.collectionsList.customContextMenuRequested.connect(self.onCustomContextMenuRequested)  # Connect the context menu signal
+        self.collectionsList.setSelectionMode(QListWidget.ExtendedSelection)
+        self.collectionsList.itemClicked.connect(self.onCollectionClicked)
+        self.collectionsList.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.collectionsList.customContextMenuRequested.connect(self.onCustomContextMenuRequested)
         self.collectionsPanelLayout.addWidget(self.collectionsList)
-
+    
         self.openCollectionsFolderButton = QPushButton("Open Dataset Collection Folder", self)
         self.openCollectionsFolderButton.clicked.connect(self.open_dataset_collection_folder)
         self.collectionsPanelLayout.addWidget(self.openCollectionsFolderButton)
         
         self.collectionsDockWidget.setWidget(self.collectionsPanel)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.collectionsDockWidget)
-        self.collectionsList.itemClicked.connect(self.onCollectionClicked)
 
     def onCollectionClicked(self, item):
         # Toggle the selection state of the clicked item
@@ -344,8 +405,9 @@ class GalleryWindow(QMainWindow):
         subprocess.Popen(f'explorer "{self.collectionFolderPath}"')
 
     def setupTagsPanel(self):
-        self.tagsDockWidget = QDockWidget("Tags", self)  # Dockable tags panel
-        self.tagsPanel = QWidget()  # This is the main panel for tags
+        self.tagsDockWidget = QDockWidget("Tags", self)
+        self.tagsDockWidget.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.tagsPanel = QWidget()
         self.tagsPanelLayout = QVBoxLayout()
         self.tagsPanel.setLayout(self.tagsPanelLayout)
         
@@ -357,14 +419,19 @@ class GalleryWindow(QMainWindow):
         self.addTagButton = QPushButton("Add Tag", self)
         self.addTagButton.clicked.connect(self.addTag)
         self.tagsPanelLayout.addWidget(self.addTagButton)
-
+    
         # Scrollable area for tag buttons
         self.tagsScrollArea = QScrollArea()
+        self.tagsScrollArea.setWidgetResizable(True)
+        self.tagsScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.tagsScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    
         self.tagsContainer = QWidget()
         self.tagsContainerLayout = QVBoxLayout()
+        self.tagsContainerLayout.setAlignment(Qt.AlignTop)
         self.tagsContainer.setLayout(self.tagsContainerLayout)
+    
         self.tagsScrollArea.setWidget(self.tagsContainer)
-        self.tagsScrollArea.setWidgetResizable(True)
         self.tagsPanelLayout.addWidget(self.tagsScrollArea)
         
         self.tagsDockWidget.setWidget(self.tagsPanel)
@@ -388,6 +455,8 @@ class GalleryWindow(QMainWindow):
 
     def createTagButton(self, tagText):
         tagButton = QPushButton(tagText)
+        tagButton.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        tagButton.setFixedHeight(30)  # Set a fixed height for the button
         tagButton.clicked.connect(lambda: self.tagButtonClicked(tagText))
         tagButton.setContextMenuPolicy(Qt.CustomContextMenu)
         tagButton.customContextMenuRequested.connect(lambda pos, btn=tagButton: self.tagButtonContextMenu(pos, btn))
@@ -411,21 +480,21 @@ class GalleryWindow(QMainWindow):
             self.saveTags()  # Update tags file after deletion
 
     def tagButtonClicked(self, tagText):
-        for image_path, label in self.imageLabels.items():
-            if label.selected:
-                textEdit = self.imageTextEdits[image_path]
-                currentText = textEdit.toPlainText()
-                newText = f"{currentText}, {tagText}" if currentText else tagText
-                textEdit.setText(newText)
-    
-                # Update the edit history for undo functionality
-                if image_path not in self.editHistory:
-                    self.editHistory[image_path] = [currentText]
-                else:
-                    self.editHistory[image_path].append(currentText)
-    
-        # Optionally, save tags after modification
-        self.saveTags()
+            for image_path, label in self.selectedImages.items():
+                if label.selected:
+                    textEdit = self.imageTextEdits[image_path]
+                    currentText = textEdit.toPlainText()
+                    newText = f"{currentText}, {tagText}" if currentText else tagText
+                    textEdit.setText(newText)
+        
+                    # Update the edit history for undo functionality
+                    if image_path not in self.editHistory:
+                        self.editHistory[image_path] = [currentText]
+                    else:
+                        self.editHistory[image_path].append(currentText)
+        
+            # Optionally, save tags after modification
+            self.saveTags()
 
     def setupUI(self):
         self.central_widget = QWidget(self)
@@ -513,7 +582,7 @@ class GalleryWindow(QMainWindow):
     def saveTextToFile(self, image_path, textEdit):
         txt_file_path = os.path.splitext(image_path)[0] + '.txt'
         try:
-            with open(txt_file_path, 'w') as file:
+            with open(txt_file_path, 'w', encoding='utf-8') as file:
                 file.write(textEdit.toPlainText())
             logging.info(f"Saved text for {image_path}")
         except Exception as e:
@@ -551,20 +620,15 @@ class GalleryWindow(QMainWindow):
 
             label = SelectableImageLabel(imagePath=image_path)
             label.clicked.connect(self.toggleImageSelection)
-            pixmap = pil2pixmap(image)
+            pixmap = self.pil2pixmap(image)
             label.setPixmap(pixmap.scaled(self.sizeSlider.value(), self.sizeSlider.value(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
             self.imageLabels[image_path] = label
             self.selectedImages[image_path] = label
 
+            # Load existing caption text if available
             txt_filename = os.path.splitext(filename)[0] + '.txt'
             txt_file_path = os.path.join(dir_path, txt_filename)
-            description = ""
-            try:
-                if os.path.isfile(txt_file_path):
-                    with open(txt_file_path, 'r') as file:
-                        description = file.read()
-            except Exception as e:
-                logging.error(f"Error reading text file {txt_file_path}: {str(e)}")
+            description = self.load_description(txt_file_path)
 
             textEdit = QTextEdit(self)
             textEdit.setText(description)
@@ -575,22 +639,21 @@ class GalleryWindow(QMainWindow):
             self.gridLayout.addWidget(label, row * 2, col)
             self.gridLayout.addWidget(textEdit, row * 2 + 1, col)
         
-            logging.info(f"Successfully loaded image: {image_path}")
+            logging.info(f"Successfully loaded image and caption: {image_path}")
         except Exception as e:
             logging.error(f"Failed to process image {image_path}: {str(e)}")
             QMessageBox.warning(self, "Image Loading Error", f"Could not process the image: {os.path.basename(image_path)}\nError: {str(e)}")
-            # Continue with the next image instead of crashing
             return False
         return True
-        
+
     def load_description(self, txt_file_path):
         try:
             if os.path.isfile(txt_file_path):
-                with open(txt_file_path, 'r') as file:
-                    return file.read()
+                with open(txt_file_path, 'r', encoding='utf-8') as file:
+                    return file.read().strip()
         except Exception as e:
             logging.error(f"Error reading text file {txt_file_path}: {e}")
-        return ""    
+        return "" 
 
     def undoLastAction(self):
         # Get the currently selected image(s)
@@ -607,7 +670,34 @@ class GalleryWindow(QMainWindow):
             if self.selectedImages[image_path].selected and self.editHistory[image_path]:
                 # Pop the last state from the stack and set it as the current text
                 lastState = self.editHistory[image_path].pop()
-                textEdit.setText(lastState)                
+                textEdit.setText(lastState)    
+
+    def clearSelectedCaptions(self):
+        selected_images = [path for path, label in self.selectedImages.items() if label.selected]
+        
+        if not selected_images:
+            QMessageBox.warning(self, "Warning", "No images selected. Please select images to clear captions.")
+            return
+    
+        reply = QMessageBox.question(self, 'Clear Selected Captions', 
+                                    f"Are you sure you want to clear captions for {len(selected_images)} selected image(s)?",
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+    
+        if reply == QMessageBox.Yes:
+            for image_path in selected_images:
+                textEdit = self.imageTextEdits[image_path]
+                current_text = textEdit.toPlainText()
+                
+                # Update edit history
+                if image_path not in self.editHistory:
+                    self.editHistory[image_path] = [current_text]
+                else:
+                    self.editHistory[image_path].append(current_text)
+                
+                # Clear the text
+                textEdit.clear()
+            
+            QMessageBox.information(self, "Captions Cleared", f"Captions for {len(selected_images)} image(s) have been cleared.")                
 
     def loadDirectory(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Directory")
@@ -619,14 +709,15 @@ class GalleryWindow(QMainWindow):
             self.imageLabels.clear()
             self.imageTextEdits.clear()
             self.selectedImages.clear()
+            self.editHistory.clear()  # Clear edit history
             gc.collect()  # Force garbage collection
-
+    
             image_files = [f for f in os.listdir(dir_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
         
             progress = QProgressDialog("Loading images...", "Abort", 0, len(image_files), self)
             progress.setWindowModality(Qt.WindowModal)
             progress.show()
-
+    
             for index, filename in enumerate(image_files):
                 if progress.wasCanceled():
                     break
@@ -636,7 +727,7 @@ class GalleryWindow(QMainWindow):
                 image_path = os.path.join(dir_path, filename)
                 self.createImagePlaceholder(image_path, index)
                 self.queueThumbnailLoad(image_path)
-
+    
             progress.setValue(len(image_files))
         else:
             logging.warning("No directory was selected.")

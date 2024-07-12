@@ -58,9 +58,8 @@ TagScribeR is waiting for you. Let's tag the future, together.
 
 
 
-**TagScriber v0.01.0-alpha**
+**TagScriber v0.03.0-alpha**
 
-This is the current build I have going for TagScribeR the UI does not match my mock up image at the moment and I'm slowly fleshing out all the features bit by bit. Currently this build is bare bones and does not have BLIP-2 Auto Captioning implemented, nor does it have the tags panel or collections/category panel. This release is to further my proof of concept and to show that I am currently developing things the best I can on my own. I'm determined to do this whether on my own or with help, but I would really love any help that any skilled/learned people may be willing to offer.
 
 Current Build is meant for Windows OS and Python as that is what I am working with.
 ![Screenshot 2024-01-24 093937](https://github.com/ArchAngelAries/TagScribeR/assets/64102013/77de9a06-90a2-4e18-a4cf-1c3cf0460e77)
@@ -101,19 +100,27 @@ Current Build is meant for Windows OS and Python as that is what I am working wi
 - [ ] **Image Editing suite** (complete Image Editing widget with batch functions to edit/manage/delete/crop/resize/adjust brightness/contrast/hue/color/etc)
 
 
-**Installation:**
+## Installation and Running
 
-Git clone to your desired location
+### For Windows Users:
 
-create new venv within TagScribeR folder
+1. Ensure you have Python 3.7 or later installed on your system.
 
-`pip install -r requirements.txt`
+2. Git clone to your desired location
 
-**Running the Program:**
+3. Double-click the `install.bat` file to set up the virtual environment and install dependencies.
 
-`.\venv\Scripts\activate`
+4. Once installation is complete, double-click the `launch.bat` file to run TagScribeR.
 
-`python main.py`
+### Manual Installation:
+
+If you prefer to install manually or if you're having issues with the batch files:
+
+1. Create a virtual environment: `python -m venv venv`
+2. Activate the virtual environment:
+   - Windows: `venv\Scripts\activate`
+3. Install requirements: `pip install -r requirements.txt`
+4. Run the application: `python main.py`
 
 
 

@@ -13,6 +13,7 @@ from gui.gallery import GalleryWindow
 from gui.auto_captioning import AutoCaptioningWindow
 from gui.image_editing import ImageEditingWindow
 from gui.settings import SettingsWindow
+from gui.metadata_editor import MetadataEditor
 
 def set_app_id():
     app_id = "TagScribeR.ArchAngelAried.0.03a"  # Change this to a unique identifier for your app
@@ -24,6 +25,13 @@ class MainApplicationWindow(QMainWindow):
         self.setWindowTitle("TagScribeR")
         self.setGeometry(100, 100, 1200, 800)
 
+        # Create Tab Widget first
+        self.tabs = QTabWidget()
+        self.setCentralWidget(self.tabs)
+
+        # Load initial theme
+        self.loadInitialTheme()
+
         # Set application icon
         icon_path = self.get_icon_path()
         if icon_path:
@@ -32,26 +40,30 @@ class MainApplicationWindow(QMainWindow):
         else:
             print("Warning: Logo.png not found in the resources folder.")
 
-        # Create Tab Widget
-        self.tabs = QTabWidget()
-        self.setCentralWidget(self.tabs)
-
         # Add tabs
         self.galleryWindow = GalleryWindow()
         self.autoCaptioningWindow = AutoCaptioningWindow()
         self.imageEditingWindow = ImageEditingWindow()
+        self.metadataEditorWindow = MetadataEditor()
         self.settingsWindow = SettingsWindow()
 
         self.tabs.addTab(self.galleryWindow, "Gallery")
         self.tabs.addTab(self.autoCaptioningWindow, "Blip-2 Auto Captioning")
         self.tabs.addTab(self.imageEditingWindow, "Image Editing")
+        self.tabs.addTab(self.metadataEditorWindow, "Metadata Editor")
         self.tabs.addTab(self.settingsWindow, "Settings")
+        
+        self.tabs.currentChanged.connect(self.onTabChange)
+
+        # Update shortcuts in SettingsWindow
+        self.settingsWindow.updateShortcuts(self.galleryWindow.shortcuts)
 
         # Connect the themeChanged signal to a slot
         self.settingsWindow.themeChanged.connect(self.changeTheme)
 
-        # Load initial theme
-        self.loadInitialTheme()
+    def onTabChange(self, index):
+        if self.tabs.widget(index) == self.metadataEditorWindow:
+            self.metadataEditorWindow.showEvent(None)
 
     def loadInitialTheme(self):
         try:
@@ -75,11 +87,12 @@ class MainApplicationWindow(QMainWindow):
         # Refresh the application to apply changes
         QApplication.processEvents()
 
-        # Update each tab's theme
-        for i in range(self.tabs.count()):
-            widget = self.tabs.widget(i)
-            if hasattr(widget, 'applyTheme'):
-                widget.applyTheme(theme)
+        # Update each tab's theme if tabs exist
+        if hasattr(self, 'tabs'):
+            for i in range(self.tabs.count()):
+                widget = self.tabs.widget(i)
+                if hasattr(widget, 'applyTheme'):
+                    widget.applyTheme(theme)
             
     def get_icon_path(self):
         # Get the directory of the current script

@@ -94,7 +94,7 @@ Current Build is meant for Windows OS and Python as that is what I am working wi
 
 - Settings (Added a settings widget to select Default-Light, or Dark theme. NOTE: Do not choose "Light" it causes crash, choos "Default" if changing back to Light mode)
 
--Keyboard Shortcuts - Added keyboard shortcuts to the Gallery Window, Also the Shortcuts guide is now available in settings. The short cuts should be  remappable in the text box they are displayed in after saving with save button on Settings pane. Note: Remapping is currently untested, but current mapped shortcuts all work as intended. Here is a list of them for your convenience:
+- Keyboard Shortcuts - Added keyboard shortcuts to the Gallery Window, Also the Shortcuts guide is now available in settings. The short cuts should be  remappable in the text box they are displayed in after saving with save button on Settings pane. Note: Remapping is currently untested, but current mapped shortcuts all work as intended. Here is a list of them for your convenience:
 
 Ctrl+S: Save all edits
 Ctrl+Z: Undo last action
@@ -104,6 +104,8 @@ Ctrl+F: Focus on search bar
 Del: Clear selected captions
 Ctrl+L: Load directory
 Ctrl+C: Copy selected images to collection
+
+- Added Quick install & Quick launch .bat files (See instructions below)
 
 
 **To do list:**

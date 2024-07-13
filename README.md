@@ -92,17 +92,24 @@ Current Build is meant for Windows OS and Python as that is what I am working wi
 
 - Image Editing (Added an Image Editing Widget powered by OpenCV/cv2 for image editing, current image editing features are rotation and resizing, plan to add more soon)
 
-- Settings (Added a settings widget to select Default-Light, or Dark theme. NOTE: Do not choose "Light" it causes crash, choos "Default" if changing back to Light mode)
+- Settings (Added a settings widget to house current and future program settings. Currently there is a guide for hotkeys and the ability to change from Default/Light theme to Dark Mode.)
 
-- Keyboard Shortcuts - Added keyboard shortcuts to the Gallery Window, Also the Shortcuts guide is now available in settings. The short cuts should be  remappable in the text box they are displayed in after saving with save button on Settings pane. Note: Remapping is currently untested, but current mapped shortcuts all work as intended. Here is a list of them for your convenience:
+- Keyboard Hotkeys/Shortcuts - Added keyboard shortcuts to the Gallery Window, Also the Shortcuts guide is now available in settings.  Note: Remapping is currently unavailable, but current mapped shortcuts all work as intended. Here is a list of them for your convenience:
 
 Ctrl+S: Save all edits
+
 Ctrl+Z: Undo last action
+
 Ctrl+A: Select all images
+
 Ctrl+D: Deselect all images
+
 Ctrl+F: Focus on search bar
+
 Del: Clear selected captions
+
 Ctrl+L: Load directory
+
 Ctrl+C: Copy selected images to collection
 
 - Added Quick install & Quick launch .bat files (See instructions below)
@@ -111,6 +118,24 @@ Ctrl+C: Copy selected images to collection
 **To do list:**
 
 - [ ] **Image Editing suite** (complete Image Editing widget with batch functions to edit/manage/delete/crop/resize/adjust brightness/contrast/hue/color/etc)
+
+- [ ] **Remappable Hotkeys** Implement ability for user to remap hotkeys/shortcuts to their own configuration.
+
+- [ ] **Better Metadata Editor** Fix/Enhance the Metadata Editor functionality (Currently Unstable).
+
+- [ ] **Enhanced Search and Filter** Further expand the search/filter functions in the Gallery.
+
+- [ ] **Separate Image Preview** Implement a secondary window or dock-able/resizable window for inspecting individual images.
+
+- [ ] **Drag and Drop Organization** Implement drag and drop organization/grouping for user convenience/comfort/organization while creating datasets.
+
+- [ ] **Duplicate Detection** Implement duplicate detection, and additionally the ability to delete selected images and/or duplicates from the loaded collection/directory.
+
+- [ ] **Multi-language Support** Implement support for most major languages.
+
+- [ ] **Cloud Integration** Implement integration to allow working in/from a cloud storage space (Not super confident in my ability to pull this off, but would be nice if I can).
+
+- [ ] **Custom Themes/Backgrounds/Widgets/Panes** Implement the ability for users to customize themes and backgrounds and sizes and placement of panes/windows, and allow Widget Tab drag reorganization.
 
 
 ## Installation and Running

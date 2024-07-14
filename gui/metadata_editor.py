@@ -2,9 +2,12 @@ import os
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QTableWidget, QTableWidgetItem, QFileDialog,
                              QListWidget, QSplitter, QMessageBox, QProgressDialog,
-                             QCheckBox)
-from PyQt5.QtCore import Qt, QSettings
-from exif import Image as ExifImage
+                             QCheckBox, QListWidgetItem, QAbstractItemView)
+from PyQt5.QtCore import Qt, QSettings, QSize
+from PyQt5.QtGui import QPixmap, QIcon, QImage
+from PIL import Image
+from PIL.ExifTags import TAGS
+import piexif
 
 class MetadataEditor(QWidget):
     def __init__(self, parent=None):
@@ -23,7 +26,7 @@ class MetadataEditor(QWidget):
         buttonLayout = QHBoxLayout()
         loadDirButton = QPushButton("Load Directory")
         loadDirButton.clicked.connect(self.loadDirectory)
-        loadFilesButton = QPushButton("Load Files")
+        loadFilesButton = QPushButton("Load Single File")
         loadFilesButton.clicked.connect(self.loadFiles)
         buttonLayout.addWidget(loadDirButton)
         buttonLayout.addWidget(loadFilesButton)
@@ -32,8 +35,12 @@ class MetadataEditor(QWidget):
         # Splitter for file list and metadata
         splitter = QSplitter(Qt.Horizontal)
 
-        # File list
+        # File list with thumbnails
         self.fileList = QListWidget()
+        self.fileList.setIconSize(QSize(100, 100))
+        self.fileList.setResizeMode(QListWidget.Adjust)
+        self.fileList.setViewMode(QListWidget.IconMode)
+        self.fileList.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.fileList.itemSelectionChanged.connect(self.onFileSelected)
         splitter.addWidget(self.fileList)
 
@@ -53,6 +60,103 @@ class MetadataEditor(QWidget):
 
         self.setLayout(layout)
 
+    def loadDirectory(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory")
+        if dir_path:
+            self.current_directory = dir_path
+            self.loadImagesFromDirectory(dir_path)
+
+    def loadFiles(self):
+        files, _ = QFileDialog.getOpenFileNames(self, "Select Image(s)", "", "Images (*.jpg *.jpeg *.png *.gif *.bmp)")
+        if files:
+            self.current_directory = os.path.dirname(files[0])
+            self.image_files = files
+            self.updateFileList()
+
+    def loadImagesFromDirectory(self, dir_path):
+        self.image_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) 
+                            if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp'))]
+        self.updateFileList()
+
+    def updateFileList(self):
+        self.fileList.clear()
+        for file in self.image_files:
+            item = QListWidgetItem()
+            thumbnail = self.createThumbnail(file)
+            item.setIcon(QIcon(thumbnail))
+            item.setText(os.path.basename(file))
+            item.setSizeHint(QSize(120, 120))  # Adjust size as needed
+            self.fileList.addItem(item)
+
+    def createThumbnail(self, image_path):
+        try:
+            pixmap = QPixmap(image_path)
+            if not pixmap.isNull():
+                return pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            else:
+                print(f"Failed to load image: {image_path}")
+                return QPixmap()
+        except Exception as e:
+            print(f"Error creating thumbnail for {image_path}: {e}")
+            return QPixmap()
+
+    def onFileSelected(self):
+        selected_items = self.fileList.selectedItems()
+        if selected_items:
+            file_name = selected_items[0].text()
+            file_path = os.path.join(self.current_directory, file_name)
+            self.loadMetadata(file_path)
+
+    def loadMetadata(self, image_path):
+        try:
+            exif_dict = piexif.load(image_path)
+            self.metadataTable.setRowCount(0)
+            for ifd in ("0th", "Exif", "GPS", "1st"):
+                for tag_id, value in exif_dict[ifd].items():
+                    tag = TAGS.get(tag_id, str(tag_id))
+                    if isinstance(value, bytes):
+                        try:
+                            value = value.decode()
+                        except:
+                            value = value.hex()
+                    row = self.metadataTable.rowCount()
+                    self.metadataTable.insertRow(row)
+                    self.metadataTable.setItem(row, 0, QTableWidgetItem(str(tag)))
+                    self.metadataTable.setItem(row, 1, QTableWidgetItem(str(value)))
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load metadata: {str(e)}")
+
+    def onMetadataItemChanged(self, item):
+        if item.column() == 1:  # Value column
+            row = item.row()
+            tag = self.metadataTable.item(row, 0).text()
+            new_value = item.text()
+            # Here you would update the exif_dict with the new value
+            # This part requires careful implementation to map back to the correct IFD and tag ID
+
+    def saveChanges(self):
+        selected_items = self.fileList.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Warning", "No image selected.")
+            return
+    
+        progress = QProgressDialog("Saving metadata changes...", "Abort", 0, len(selected_items), self)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+    
+        success_count = 0
+        for i, item in enumerate(selected_items):
+            if progress.wasCanceled():
+                break
+            file_name = item.text()
+            file_path = os.path.join(self.current_directory, file_name)
+            if self.saveMetadataChanges(file_path):
+                success_count += 1
+            progress.setValue(i + 1)
+    
+        progress.close()
+        QMessageBox.information(self, "Save Complete", f"Metadata saved successfully for {success_count} out of {len(selected_items)} images.")
+
     def showEvent(self, event):
         super().showEvent(event)
         if not self.disclaimer_shown and not self.settings.value("hide_metadata_disclaimer", False, type=bool):
@@ -61,8 +165,8 @@ class MetadataEditor(QWidget):
     def showDisclaimer(self):
         disclaimer_text = (
             "EXIF Metadata Editing Disclaimer:\n\n"
-            "1. This tool allows editing of EXIF metadata in JPEG images.\n"
-            "2. Some EXIF tags may not be editable due to technical limitations.\n"
+            "1. This tool allows editing of metadata in various image formats.\n"
+            "2. Some metadata fields may not be editable due to technical limitations.\n"
             "3. Editing metadata incorrectly can potentially corrupt image files.\n"
             "4. Always keep backups of your original images before editing metadata.\n"
             "5. This tool is provided as-is, without any guarantees or warranty.\n\n"
@@ -83,78 +187,50 @@ class MetadataEditor(QWidget):
             self.settings.setValue("hide_metadata_disclaimer", True)
 
         self.disclaimer_shown = True
-
-    def loadDirectory(self):
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory")
-        if dir_path:
-            self.current_directory = dir_path
-            self.loadImagesFromDirectory(dir_path)
-
-    def loadFiles(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Select Image(s)", "", "Images (*.jpg *.jpeg)")
-        if files:
-            self.image_files = files
-            self.updateFileList()
-
-    def loadImagesFromDirectory(self, dir_path):
-        self.image_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) 
-                            if f.lower().endswith(('.jpg', '.jpeg'))]
-        self.updateFileList()
-
-    def updateFileList(self):
-        self.fileList.clear()
-        for file in self.image_files:
-            self.fileList.addItem(os.path.basename(file))
-
-    def onFileSelected(self):
-        selected_items = self.fileList.selectedItems()
-        if selected_items:
-            file_name = selected_items[0].text()
-            file_path = os.path.join(self.current_directory, file_name)
-            self.loadMetadata(file_path)
-
-    def loadMetadata(self, image_path):
+        
+    def getExifValue(self, exif_dict, ifd, tag):
         try:
-            with open(image_path, 'rb') as img_file:
-                self.current_image = ExifImage(img_file)
-            
-            self.metadataTable.setRowCount(0)
-            for tag in self.current_image.list_all():
+            value = exif_dict[ifd][tag]
+            if isinstance(value, bytes):
                 try:
-                    value = getattr(self.current_image, tag)
-                    row = self.metadataTable.rowCount()
-                    self.metadataTable.insertRow(row)
-                    self.metadataTable.setItem(row, 0, QTableWidgetItem(str(tag)))
-                    self.metadataTable.setItem(row, 1, QTableWidgetItem(str(value)))
-                except AttributeError:
-                    pass  # Skip attributes that can't be read
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load metadata: {str(e)}")
+                    return value.decode()
+                except:
+                    return value.hex()
+            return value
+        except KeyError:
+            return None
 
-    def onMetadataItemChanged(self, item):
-        if item.column() == 1:  # Value column
-            row = item.row()
+    def setExifValue(self, exif_dict, ifd, tag, value):
+        try:
+            if isinstance(exif_dict[ifd][tag], bytes):
+                exif_dict[ifd][tag] = value.encode()
+            else:
+                exif_dict[ifd][tag] = value
+        except KeyError:
+            print(f"Warning: Unable to set value for tag {tag} in IFD {ifd}")
+    
+    def updateExifData(self, image_path):
+        exif_dict = piexif.load(image_path)
+        for row in range(self.metadataTable.rowCount()):
             tag = self.metadataTable.item(row, 0).text()
-            new_value = item.text()
-            try:
-                setattr(self.current_image, tag, new_value)
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Failed to update {tag}: {str(e)}")
-                self.loadMetadata(self.current_image._filehandle.name)  # Reload to revert changes
-
-    def saveChanges(self):
-        if self.current_image:
-            try:
-                image_path = self.current_image._filehandle.name
-                with open(image_path, 'wb') as new_image_file:
-                    new_image_file.write(self.current_image.get_file())
-                QMessageBox.information(self, "Success", "Metadata saved successfully.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to save metadata: {str(e)}")
-        else:
-            QMessageBox.warning(self, "Warning", "No image loaded.")
+            value = self.metadataTable.item(row, 1).text()
+            for ifd in ("0th", "Exif", "GPS", "1st"):
+                for tag_id, tag_name in TAGS.items():
+                    if tag_name == tag:
+                        self.setExifValue(exif_dict, ifd, tag_id, value)
+                        break
+        return exif_dict
+    
+    def saveMetadataChanges(self, image_path):
+        try:
+            exif_dict = self.updateExifData(image_path)
+            exif_bytes = piexif.dump(exif_dict)
+            piexif.insert(exif_bytes, image_path)
+            return True
+        except Exception as e:
+            print(f"Error saving metadata for {image_path}: {e}")
+            return False    
 
     def closeEvent(self, event):
-        # Save the state of the checkbox when closing the widget
-        self.settings.setValue("hide_metadata_disclaimer", self.disclaimer_widget.hide_checkbox.isChecked())
+        # Save any settings if needed
         super().closeEvent(event)

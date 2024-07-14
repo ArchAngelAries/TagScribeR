@@ -112,12 +112,14 @@ Ctrl+C: Copy selected images to collection
 
 - Added Quick install & Quick launch .bat files (See instructions below)
 
+- Metadata Editor - Metadata Editor is functional, double click to edit fields (still in testing and needs UI adjustments)
+
 
 **To do list:**
 
 - [ ] **Image Editing suite** (complete Image Editing widget with batch functions to edit/manage/delete/crop/resize/adjust brightness/contrast/hue/color/etc)
 
-- [ ] **Better Metadata Editor** Fix/Enhance the Metadata Editor functionality (Currently Unstable).
+- [ ] **Metadata Editor** (Adjust Metadata Editor UI and test all functions thoroughly)
 
 - [ ] **Enhanced Search and Filter** Further expand the search/filter functions in the Gallery.
 

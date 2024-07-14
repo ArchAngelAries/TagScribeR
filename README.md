@@ -94,15 +94,13 @@ Current Build is meant for Windows OS and Python as that is what I am working wi
 
 - Settings (Added a settings widget to house current and future program settings. Currently there is a guide for hotkeys and the ability to change from Default/Light theme to Dark Mode.)
 
-- Keyboard Hotkeys/Shortcuts - Added keyboard shortcuts to the Gallery Window, Also the Shortcuts guide is now available in settings.  Note: Remapping is currently unavailable, but current mapped shortcuts all work as intended. Here is a list of them for your convenience:
+- Keyboard Hotkeys/Shortcuts - Added keyboard shortcuts to the Gallery Window, Also the Shortcuts guide is now available in settings.  Remapping Now Available! Note: Gallery uses all of these; Auto Captioning only uses Save, Undo/Redo, Select/Deselect, Clear Selected Captions; Image Editing only uses Save, and Select/Deselect All.
 
 Ctrl+S: Save all edits
 
 Ctrl+Z: Undo last action
 
-Ctrl+A: Select all images
-
-Ctrl+D: Deselect all images
+Ctrl+A: Select/Deselect all images (toggle)
 
 Ctrl+F: Focus on search bar
 
@@ -118,8 +116,6 @@ Ctrl+C: Copy selected images to collection
 **To do list:**
 
 - [ ] **Image Editing suite** (complete Image Editing widget with batch functions to edit/manage/delete/crop/resize/adjust brightness/contrast/hue/color/etc)
-
-- [ ] **Remappable Hotkeys** Implement ability for user to remap hotkeys/shortcuts to their own configuration.
 
 - [ ] **Better Metadata Editor** Fix/Enhance the Metadata Editor functionality (Currently Unstable).
 

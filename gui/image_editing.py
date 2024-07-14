@@ -3,8 +3,8 @@ import numpy as np
 import logging
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QPushButton, QLabel,
-    QScrollArea, QSlider, QMessageBox, QFileDialog, QComboBox, QDialog, QProgressDialog, QLineEdit)
-from PyQt5.QtGui import QPixmap, QImage
+    QScrollArea, QSlider, QMessageBox, QFileDialog, QComboBox, QDialog, QProgressDialog, QLineEdit, QShortcut)
+from PyQt5.QtGui import QPixmap, QImage, QKeySequence
 from PyQt5.QtCore import Qt
 import os
 
@@ -22,6 +22,16 @@ class ResizeDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setupUI()
+
+    def toggleSelectAllImages(self):
+        if all(label.selected for label in self.imageLabels.values()):
+            for label in self.imageLabels.values():
+                label.selected = False
+                label.setStyleSheet("border: 2px solid black;")
+        else:
+            for label in self.imageLabels.values():
+                label.selected = True
+                label.setStyleSheet("border: 2px solid blue;")
 
     def setupUI(self):
         self.layout = QVBoxLayout(self)
@@ -121,6 +131,23 @@ class ImageEditingWindow(QWidget):
         self.workingCopies = {}  # Dictionary to store working copies of images
         self.setupUI()
         self.edits_dir_path = ""
+        
+        self.shortcuts = {
+            "Ctrl+S": (self.saveEdits, "Save all edits"),
+            "Ctrl+A": (self.toggleSelectAllImages, "Toggle select/deselect all")
+        }
+        self.setupShortcuts()
+
+    def setupShortcuts(self):
+        for key, (func, _) in self.shortcuts.items():
+            QShortcut(QKeySequence(key), self).activated.connect(func)
+
+    def updateCustomShortcuts(self, custom_shortcuts):
+        for action, new_key in custom_shortcuts.items():
+            for key, (func, desc) in self.shortcuts.items():
+                if desc == action:
+                    QShortcut(QKeySequence(new_key), self).activated.connect(func)
+                    break
 
     def setupUI(self):
         self.layout = QVBoxLayout(self)
@@ -378,12 +405,16 @@ class ImageEditingWindow(QWidget):
             label.setFixedSize(resized_pixmap.size())
 
     def toggleSelectAllImages(self):
-        self.allSelected = not self.allSelected
-        for label in self.imageLabels.values():
-            label.selected = self.allSelected
-            label.setStyleSheet("border: 2px solid blue;" if label.selected else "border: 2px solid black;")
-        # Update the button text based on the current state
-        self.toggleSelectButton.setText("Deselect All" if self.allSelected else "Select All")
+        if all(label.selected for label in self.imageLabels.values()):
+            for label in self.imageLabels.values():
+                label.selected = False
+                label.setStyleSheet("border: 2px solid black;")
+            self.toggleSelectButton.setText("Select All")
+        else:
+            for label in self.imageLabels.values():
+                label.selected = True
+                label.setStyleSheet("border: 2px solid blue;")
+            self.toggleSelectButton.setText("Deselect All")
 
     def updateThumbnails(self):
         size = self.sizeSlider.value()

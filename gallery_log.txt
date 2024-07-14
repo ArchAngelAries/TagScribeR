@@ -1,6 +1,0 @@
-2024-07-12 09:43:10,401 - DEBUG - Reading QSS file in: :qdarkstyle\dark\darkstyle.qss
-2024-07-12 09:43:10,401 - INFO - QSS file successfully loaded.
-2024-07-12 09:43:10,401 - DEBUG - Checking patches for being applied.
-2024-07-12 09:43:10,401 - INFO - Found version patches to be applied.
-2024-07-12 09:43:10,401 - INFO - Found application patches to be applied.
-2024-07-12 09:43:10,589 - WARNING - No GPU acceleration found. Using CPU.

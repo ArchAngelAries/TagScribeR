@@ -12,8 +12,8 @@ from PyQt5.QtCore import QFile, QTextStream, Qt
 from gui.gallery import GalleryWindow
 from gui.auto_captioning import AutoCaptioningWindow
 from gui.image_editing import ImageEditingWindow
-from gui.settings import SettingsWindow
 from gui.metadata_editor import MetadataEditor
+from gui.settings import SettingsWindow
 
 def set_app_id():
     app_id = "TagScribeR.ArchAngelAried.0.03a"  # Change this to a unique identifier for your app
@@ -46,6 +46,7 @@ class MainApplicationWindow(QMainWindow):
         self.imageEditingWindow = ImageEditingWindow()
         self.metadataEditorWindow = MetadataEditor()
         self.settingsWindow = SettingsWindow()
+        self.updateSettingsShortcuts()
 
         self.tabs.addTab(self.galleryWindow, "Gallery")
         self.tabs.addTab(self.autoCaptioningWindow, "Blip-2 Auto Captioning")
@@ -56,10 +57,11 @@ class MainApplicationWindow(QMainWindow):
         self.tabs.currentChanged.connect(self.onTabChange)
 
         # Update shortcuts in SettingsWindow
-        self.settingsWindow.updateShortcuts(self.galleryWindow.shortcuts)
+        self.updateSettingsShortcuts()
 
         # Connect the themeChanged signal to a slot
         self.settingsWindow.themeChanged.connect(self.changeTheme)
+        self.settingsWindow.shortcutsChanged.connect(self.updateShortcuts)
 
     def onTabChange(self, index):
         if self.tabs.widget(index) == self.metadataEditorWindow:
@@ -93,6 +95,18 @@ class MainApplicationWindow(QMainWindow):
                 widget = self.tabs.widget(i)
                 if hasattr(widget, 'applyTheme'):
                     widget.applyTheme(theme)
+
+    def updateSettingsShortcuts(self):
+        all_shortcuts = {}
+        all_shortcuts.update(self.galleryWindow.shortcuts)
+        all_shortcuts.update(self.autoCaptioningWindow.shortcuts)
+        all_shortcuts.update(self.imageEditingWindow.shortcuts)
+        self.settingsWindow.updateShortcuts(all_shortcuts)
+
+    def updateShortcuts(self, custom_shortcuts):
+        self.galleryWindow.updateCustomShortcuts(custom_shortcuts)
+        self.autoCaptioningWindow.updateCustomShortcuts(custom_shortcuts)
+        self.imageEditingWindow.updateCustomShortcuts(custom_shortcuts)                    
             
     def get_icon_path(self):
         # Get the directory of the current script

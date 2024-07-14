@@ -3,9 +3,9 @@ import os
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
     QFileDialog, QLabel, QTextEdit, QGridLayout, QScrollArea, QSlider, 
-    QMessageBox, QLineEdit, QDockWidget, QProgressDialog, QComboBox
+    QMessageBox, QLineEdit, QDockWidget, QProgressDialog, QComboBox, QShortcut
 )
-from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtGui import QPixmap, QImage, QKeySequence
 from PyQt5.QtCore import Qt, pyqtSignal, QRunnable, QThreadPool, QObject
 from PIL import Image, ImageOps
 import clip_interrogator
@@ -85,6 +85,7 @@ class AutoCaptioningWindow(QMainWindow):
             QMessageBox.warning(self, "GPU Not Found", "No GPU acceleration found. The program will run on CPU, which may be slower.")
         else:
             logging.info(f"Using GPU acceleration: {self.acceleration_method}")
+        
         self.setWindowTitle("TagScribeR - Auto Captioning")
         self.setGeometry(100, 100, 800, 600)
         self.imageTextEdits = {}
@@ -95,6 +96,136 @@ class AutoCaptioningWindow(QMainWindow):
         self.thread_pool.setMaxThreadCount(4)
         self.setupUI()
         self.interrogator = None
+        
+        self.editHistory = {}
+        self.redoHistory = {}
+        
+        self.shortcuts = {
+            "Ctrl+S": (self.saveEdits, "Save all edits"),
+            "Ctrl+Z": (self.undoLastEdit, "Undo last action"),
+            "Ctrl+Shift+Z": (self.redoLastEdit, "Redo last action"),
+            "Ctrl+A": (self.toggleSelectAllImages, "Toggle select/deselect all"),
+            "Del": (self.clearSelectedCaptions, "Clear selected captions")
+        }
+        self.setupShortcuts()
+        
+    def setupShortcuts(self):
+        for key, (func, _) in self.shortcuts.items():
+            QShortcut(QKeySequence(key), self).activated.connect(func)
+
+    def updateCustomShortcuts(self, custom_shortcuts):
+        for action, new_key in custom_shortcuts.items():
+            for key, (func, desc) in self.shortcuts.items():
+                if desc == action:
+                    try:
+                        QShortcut(QKeySequence(new_key), self).activated.connect(func)
+                    except Exception as e:
+                        logging.error(f"Failed to update shortcut for {action}: {str(e)}")
+                    break    
+    
+    def captionImages(self):
+        if not self.interrogator:
+            self.initialize_interrogator()
+
+        selected_images = [path for path, label in self.selectedImages.items() if label.selected]
+
+        progress = QProgressDialog("Captioning images...", "Abort", 0, len(selected_images), self)
+        progress.setWindowTitle("Captioning in progress...")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+
+        for idx, image_path in enumerate(selected_images):
+            if progress.wasCanceled():
+                break
+            progress.setValue(idx)
+            QApplication.processEvents()
+
+            try:
+                pil_image = Image.open(image_path).convert("RGB")
+                caption = self.interrogator.generate_caption(pil_image)
+                textEdit = self.imageTextEdits[image_path]
+                currentText = textEdit.toPlainText()
+                
+                # Update edit history
+                if image_path not in self.editHistory:
+                    self.editHistory[image_path] = []
+                self.editHistory[image_path].append(currentText)
+                
+                if image_path not in self.redoHistory:
+                    self.redoHistory[image_path] = []
+                self.redoHistory[image_path].clear()
+                
+                textEdit.setText(caption)
+                logging.info(f"Caption generated for {image_path}")
+                
+                if self.acceleration_method != "cpu":
+                    if self.acceleration_method == "cuda":
+                        print(f"CUDA memory allocated: {torch.cuda.memory_allocated() / 1e6:.2f} MB")
+                    elif self.acceleration_method == "directml":
+                        print("DirectML acceleration in use")
+                    elif self.acceleration_method == "zluda":
+                        print("ZLUDA acceleration in use")
+                
+            except Exception as e:
+                logging.error(f"Error captioning image {image_path}: {str(e)}")
+                QMessageBox.warning(self, "Captioning Error", f"Failed to caption {os.path.basename(image_path)}: {str(e)}")
+
+        progress.setValue(len(selected_images))
+        QMessageBox.information(self, "Captioning Complete", "Selected images have been captioned.")
+
+    def saveEdits(self):
+        for image_path, textEdit in self.imageTextEdits.items():
+            self.saveTextToFile(image_path, textEdit)
+        QMessageBox.information(self, "Save Complete", "All edits have been saved successfully.")
+
+    def undoLastEdit(self):
+        for image_path, textEdit in self.imageTextEdits.items():
+            if self.selectedImages[image_path].selected and self.editHistory.get(image_path):
+                currentText = textEdit.toPlainText()
+                lastText = self.editHistory[image_path].pop()
+                textEdit.setText(lastText)
+                if image_path not in self.redoHistory:
+                    self.redoHistory[image_path] = []
+                self.redoHistory[image_path].append(currentText)
+
+    def redoLastEdit(self):
+        for image_path, textEdit in self.imageTextEdits.items():
+            if self.selectedImages[image_path].selected and self.redoHistory.get(image_path):
+                currentText = textEdit.toPlainText()
+                nextText = self.redoHistory[image_path].pop()
+                textEdit.setText(nextText)
+                if image_path not in self.editHistory:
+                    self.editHistory[image_path] = []
+                self.editHistory[image_path].append(currentText)
+
+    def toggleSelectAllImages(self):
+        all_selected = all(label.selected for label in self.selectedImages.values())
+        for label in self.selectedImages.values():
+            label.selected = not all_selected
+            label.setStyleSheet("border: 2px solid blue;" if label.selected else "border: 2px solid black;")
+
+    def clearSelectedCaptions(self):
+        for image_path, label in self.selectedImages.items():
+            if label.selected:
+                textEdit = self.imageTextEdits[image_path]
+                currentText = textEdit.toPlainText()
+                if image_path not in self.editHistory:
+                    self.editHistory[image_path] = []
+                self.editHistory[image_path].append(currentText)
+                textEdit.clear()
+                if image_path not in self.redoHistory:
+                    self.redoHistory[image_path] = []
+                self.redoHistory[image_path].clear()
+
+    # Make sure you have this method
+    def initialize_interrogator(self):
+        config = clip_interrogator.Config(
+            caption_model_name=self.captionModelDropdown.currentText(),
+            clip_model_name=self.clipModelDropdown.currentText(),
+            device=self.device
+        )
+        self.interrogator = clip_interrogator.Interrogator(config)
+        logging.info(f"Interrogator initialized with device: {self.device}")
 
     def setupUI(self):
         self.central_widget = QWidget(self)
@@ -237,13 +368,6 @@ class AutoCaptioningWindow(QMainWindow):
         else:
             logging.error(f"Image path not found in selectedImages: {image_path}")
 
-    def toggleSelectAllImages(self):
-        any_selected = any(label.selected for label in self.selectedImages.values())
-        for label in self.selectedImages.values():
-            label.selected = not any_selected
-            label.setStyleSheet("border: 2px solid blue;" if not any_selected else "border: 2px solid black;")
-        self.toggleSelectButton.setText("Deselect All" if not any_selected else "Select All")
-
     def updateThumbnails(self):
         size = self.sizeSlider.value()
         for image_path, label in self.imageLabels.items():
@@ -266,54 +390,7 @@ class AutoCaptioningWindow(QMainWindow):
         except Exception as e:
             logging.error(f"Failed to save text for {image_path}: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to save text for {os.path.basename(image_path)}: {str(e)}")
-
-
-    def initialize_interrogator(self):
-        config = clip_interrogator.Config(
-            caption_model_name=self.captionModelDropdown.currentText(),
-            clip_model_name=self.clipModelDropdown.currentText(),
-            device=self.device
-        )
-        self.interrogator = clip_interrogator.Interrogator(config)
-        logging.info(f"Interrogator initialized with device: {self.device}")
-
-    def captionImages(self):
-        if not self.interrogator:
-            self.initialize_interrogator()
-
-        selected_images = [path for path, label in self.selectedImages.items() if label.selected]
-
-        progress = QProgressDialog("Captioning images...", "Abort", 0, len(selected_images), self)
-        progress.setWindowTitle("Captioning in progress...")
-        progress.setWindowModality(Qt.WindowModal)
-        progress.show()
-
-        for idx, image_path in enumerate(selected_images):
-            if progress.wasCanceled():
-                break
-            progress.setValue(idx)
-            QApplication.processEvents()
-
-            try:
-                pil_image = Image.open(image_path).convert("RGB")
-                caption = self.interrogator.generate_caption(pil_image)
-                self.imageTextEdits[image_path].setText(caption)
-                logging.info(f"Caption generated for {image_path}")
-                
-                if self.acceleration_method != "cpu":
-                    if self.acceleration_method == "cuda":
-                        print(f"CUDA memory allocated: {torch.cuda.memory_allocated() / 1e6:.2f} MB")
-                    elif self.acceleration_method == "directml":
-                        print("DirectML acceleration in use")
-                    elif self.acceleration_method == "zluda":
-                        print("ZLUDA acceleration in use")
-                
-            except Exception as e:
-                logging.error(f"Error captioning image {image_path}: {str(e)}")
-                QMessageBox.warning(self, "Captioning Error", f"Failed to caption {os.path.basename(image_path)}: {str(e)}")
-
-        progress.setValue(len(selected_images))
-        QMessageBox.information(self, "Captioning Complete", "Selected images have been captioned.")
+        
 
 if __name__ == "__main__":
     app = QApplication([])

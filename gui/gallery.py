@@ -106,7 +106,6 @@ class GalleryWindow(QMainWindow):
         self.collectionsFilePath = os.path.join(self.collectionFolderPath, "collections.json")
 
         self.setupUI()
-        self.setupShortcuts()
         self.setupTagsPanel()
         self.loadTags()
         self.setupCollectionsPanel()
@@ -127,6 +126,12 @@ class GalleryWindow(QMainWindow):
         self.undoButton.clicked.connect(self.undoLastEdit)
         self.editButtonsLayout.addWidget(self.undoButton)
         
+        # Redo Button
+        self.redoButton = QPushButton("Redo", self)
+        self.redoButton.setFixedSize(100, 30)  # Make the button smaller
+        self.redoButton.clicked.connect(self.redoLastEdit)
+        self.editButtonsLayout.addWidget(self.redoButton)
+        
         # Add the new Clear Captions button
         self.clearCaptionsButton = QPushButton("Clear Selected Captions", self)
         self.clearCaptionsButton.setFixedSize(120, 40)  # Make the button smaller
@@ -136,6 +141,7 @@ class GalleryWindow(QMainWindow):
         self.mainLayout.addLayout(self.editButtonsLayout)
         
         self.editHistory = {image_path: [] for image_path in self.imageTextEdits.keys()}
+        self.redoHistory = {image_path: [] for image_path in self.imageTextEdits.keys()}
 
         self.loadCollections()
         self.thumbnail_cache = {}
@@ -151,20 +157,43 @@ class GalleryWindow(QMainWindow):
             with open(self.collectionsFilePath, 'w') as file:
                 json.dump([], file)
                 
-    def setupShortcuts(self):
         self.shortcuts = {
             "Ctrl+S": (self.saveAllEdits, "Save all edits"),
             "Ctrl+Z": (self.undoLastEdit, "Undo last action"),
-            "Ctrl+A": (self.selectAllImages, "Select all images"),
-            "Ctrl+D": (self.deselectAllImages, "Deselect all images"),
-            "Ctrl+F": (self.focusSearchBar, "Focus on search bar"),
+            "Ctrl+Shift+Z": (self.redoLastEdit, "Redo last action"),
+            "Ctrl+A": (self.toggleSelectAllImages, "Toggle select/deselect all"),
+            "Ctrl+F": (self.focusSearchBar, "Focus main search"),
             "Del": (self.clearSelectedCaptions, "Clear selected captions"),
             "Ctrl+L": (self.loadDirectory, "Load directory"),
-            "Ctrl+C": (self.copySelectedToCollection, "Copy selected images to collection")
-        }            
-        
+            "Ctrl+C": (self.copySelectedToCollection, "Save selected to collection")
+        }
+        self.setupShortcuts()
+
+    def setupShortcuts(self):
         for key, (func, _) in self.shortcuts.items():
             QShortcut(QKeySequence(key), self).activated.connect(func)
+
+    def updateCustomShortcuts(self, custom_shortcuts):
+        for action, new_key in custom_shortcuts.items():
+            for key, (func, desc) in self.shortcuts.items():
+                if desc == action:
+                    try:
+                        QShortcut(QKeySequence(new_key), self).activated.connect(func)
+                    except Exception as e:
+                        logging.error(f"Failed to update shortcut for {action}: {str(e)}")
+                    break
+
+    def toggleSelectAllImages(self):
+        if all(label.selected for label in self.imageLabels.values()):
+            for label in self.imageLabels.values():
+                label.selected = False
+                label.setStyleSheet("border: 2px solid black;")
+            self.selectAllButton.setText("Select All")
+        else:
+            for label in self.imageLabels.values():
+                label.selected = True
+                label.setStyleSheet("border: 2px solid blue;")
+            self.selectAllButton.setText("Deselect All")
                 
     def createImagePlaceholder(self, image_path, index):
         label = SelectableImageLabel(imagePath=image_path)
@@ -480,21 +509,28 @@ class GalleryWindow(QMainWindow):
             self.saveTags()  # Update tags file after deletion
 
     def tagButtonClicked(self, tagText):
-            for image_path, label in self.selectedImages.items():
-                if label.selected:
-                    textEdit = self.imageTextEdits[image_path]
-                    currentText = textEdit.toPlainText()
-                    newText = f"{currentText}, {tagText}" if currentText else tagText
-                    textEdit.setText(newText)
+        for image_path, label in self.selectedImages.items():
+            if label.selected:
+                textEdit = self.imageTextEdits[image_path]
+                currentText = textEdit.toPlainText()
+                newText = f"{currentText}, {tagText}" if currentText else tagText
+                
+                # Ensure the image_path exists in editHistory and redoHistory
+                if image_path not in self.editHistory:
+                    self.editHistory[image_path] = []
+                if image_path not in self.redoHistory:
+                    self.redoHistory[image_path] = []
+                
+                # Append current state to editHistory
+                self.editHistory[image_path].append(currentText)
+                
+                # Clear redoHistory as a new edit is being made
+                self.redoHistory[image_path].clear()
+                
+                # Set the new text
+                textEdit.setText(newText)
         
-                    # Update the edit history for undo functionality
-                    if image_path not in self.editHistory:
-                        self.editHistory[image_path] = [currentText]
-                    else:
-                        self.editHistory[image_path].append(currentText)
-        
-            # Optionally, save tags after modification
-            self.saveTags()
+        self.saveTags()
 
     def setupUI(self):
         self.central_widget = QWidget(self)
@@ -668,9 +704,18 @@ class GalleryWindow(QMainWindow):
     def undoLastEdit(self):
         for image_path, textEdit in self.imageTextEdits.items():
             if self.selectedImages[image_path].selected and self.editHistory[image_path]:
-                # Pop the last state from the stack and set it as the current text
+                currentState = textEdit.toPlainText()
                 lastState = self.editHistory[image_path].pop()
-                textEdit.setText(lastState)    
+                textEdit.setText(lastState)
+                self.redoHistory[image_path].append(currentState)
+
+    def redoLastEdit(self):
+        for image_path, textEdit in self.imageTextEdits.items():
+            if self.selectedImages[image_path].selected and self.redoHistory[image_path]:
+                currentState = textEdit.toPlainText()
+                nextState = self.redoHistory[image_path].pop()
+                textEdit.setText(nextState)
+                self.editHistory[image_path].append(currentState)        
 
     def clearSelectedCaptions(self):
         selected_images = [path for path, label in self.selectedImages.items() if label.selected]
@@ -710,6 +755,7 @@ class GalleryWindow(QMainWindow):
             self.imageTextEdits.clear()
             self.selectedImages.clear()
             self.editHistory.clear()  # Clear edit history
+            self.redoHistory.clear()  # Clear redo history
             gc.collect()  # Force garbage collection
     
             image_files = [f for f in os.listdir(dir_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
@@ -725,8 +771,14 @@ class GalleryWindow(QMainWindow):
                 QApplication.processEvents()
             
                 image_path = os.path.join(dir_path, filename)
+                # Use os.path.normpath to ensure consistent path format
+                image_path = os.path.normpath(image_path)
                 self.createImagePlaceholder(image_path, index)
                 self.queueThumbnailLoad(image_path)
+                
+                # Initialize edit and redo history for this image
+                self.editHistory[image_path] = []
+                self.redoHistory[image_path] = []
     
             progress.setValue(len(image_files))
         else:

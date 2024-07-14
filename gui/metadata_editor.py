@@ -2,12 +2,74 @@ import os
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QTableWidget, QTableWidgetItem, QFileDialog,
                              QListWidget, QSplitter, QMessageBox, QProgressDialog,
-                             QCheckBox, QListWidgetItem, QAbstractItemView)
+                             QCheckBox, QListWidgetItem, QAbstractItemView,
+                             QStyledItemDelegate, QTextEdit, QHeaderView,
+                             QStyleOptionViewItem, QStyle, QApplication)
 from PyQt5.QtCore import Qt, QSettings, QSize
-from PyQt5.QtGui import QPixmap, QIcon, QImage
+from PyQt5.QtGui import QPixmap, QIcon, QTextDocument, QAbstractTextDocumentLayout, QPalette, QColor
 from PIL import Image
 from PIL.ExifTags import TAGS
 import piexif
+
+class WordWrapDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def createEditor(self, parent, option, index):
+        editor = QTextEdit(parent)
+        editor.setAcceptRichText(False)
+        editor.setLineWrapMode(QTextEdit.WidgetWidth)
+        editor.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        editor.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        return editor
+
+    def setEditorData(self, editor, index):
+        editor.setText(index.data())
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, editor.toPlainText())
+
+    def updateEditorGeometry(self, editor, option, index):
+        editor.setGeometry(option.rect)
+
+    def paint(self, painter, option, index):
+        options = QStyleOptionViewItem(option)
+        self.initStyleOption(options, index)
+        
+        style = QApplication.style() if options.widget is None else options.widget.style()
+        
+        doc = QTextDocument()
+        doc.setTextWidth(options.rect.width())
+        
+        # Set text color based on the current palette
+        palette = options.palette
+        color = palette.color(QPalette.Text)
+        html_text = f'<span style="color: {color.name()};">{options.text}</span>'
+        doc.setHtml(html_text)
+        
+        options.text = ""
+        style.drawControl(QStyle.CE_ItemViewItem, options, painter)
+        
+        ctx = QAbstractTextDocumentLayout.PaintContext()
+        
+        # Set text color for the painter
+        ctx.palette.setColor(QPalette.Text, color)
+        
+        textRect = style.subElementRect(QStyle.SE_ItemViewItemText, options)
+        painter.save()
+        painter.translate(textRect.topLeft())
+        painter.setClipRect(textRect.translated(-textRect.topLeft()))
+        doc.documentLayout().draw(painter, ctx)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        options = QStyleOptionViewItem(option)
+        self.initStyleOption(options, index)
+        
+        doc = QTextDocument()
+        doc.setHtml(options.text)
+        doc.setTextWidth(options.rect.width())
+        return QSize(int(doc.idealWidth()), int(doc.size().height()))
 
 class MetadataEditor(QWidget):
     def __init__(self, parent=None):
@@ -48,6 +110,9 @@ class MetadataEditor(QWidget):
         self.metadataTable = QTableWidget()
         self.metadataTable.setColumnCount(2)
         self.metadataTable.setHorizontalHeaderLabels(["Field", "Value"])
+        self.metadataTable.horizontalHeader().setStretchLastSection(True)
+        self.metadataTable.verticalHeader().setDefaultSectionSize(50)  # Set default row height
+        self.metadataTable.setItemDelegate(WordWrapDelegate(self.metadataTable))
         self.metadataTable.itemChanged.connect(self.onMetadataItemChanged)
         splitter.addWidget(self.metadataTable)
 
@@ -59,6 +124,11 @@ class MetadataEditor(QWidget):
         layout.addWidget(saveButton)
 
         self.setLayout(layout)
+        self.enableRowResizing()
+
+    def enableRowResizing(self):
+        header = self.metadataTable.verticalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
 
     def loadDirectory(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Directory")
@@ -122,17 +192,20 @@ class MetadataEditor(QWidget):
                     row = self.metadataTable.rowCount()
                     self.metadataTable.insertRow(row)
                     self.metadataTable.setItem(row, 0, QTableWidgetItem(str(tag)))
-                    self.metadataTable.setItem(row, 1, QTableWidgetItem(str(value)))
+                    
+                    valueItem = QTableWidgetItem()
+                    valueItem.setText(str(value))
+                    self.metadataTable.setItem(row, 1, valueItem)
+            
+            self.metadataTable.resizeColumnsToContents()
+            self.metadataTable.resizeRowsToContents()
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load metadata: {str(e)}")
 
     def onMetadataItemChanged(self, item):
         if item.column() == 1:  # Value column
             row = item.row()
-            tag = self.metadataTable.item(row, 0).text()
-            new_value = item.text()
-            # Here you would update the exif_dict with the new value
-            # This part requires careful implementation to map back to the correct IFD and tag ID
+            self.metadataTable.resizeRowToContents(row)
 
     def saveChanges(self):
         selected_items = self.fileList.selectedItems()

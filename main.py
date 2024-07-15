@@ -78,23 +78,26 @@ class MainApplicationWindow(QMainWindow):
     def changeTheme(self, theme):
         if theme == 'Dark':
             self.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
+            QApplication.instance().setProperty("darkMode", True)
         elif theme == 'Light':
             # Reset to the default style
             QApplication.setStyle(QStyleFactory.create('Fusion'))
             self.setStyleSheet("")
+            QApplication.instance().setProperty("darkMode", False)
         else:  # Default theme
             QApplication.setStyle(QStyleFactory.create('Fusion'))
             self.setStyleSheet("")
+            QApplication.instance().setProperty("darkMode", False)
         
-        # Refresh the application to apply changes
-        QApplication.processEvents()
-
         # Update each tab's theme if tabs exist
         if hasattr(self, 'tabs'):
             for i in range(self.tabs.count()):
                 widget = self.tabs.widget(i)
-                if hasattr(widget, 'applyTheme'):
+                if isinstance(widget, GalleryWindow):
                     widget.applyTheme(theme)
+        
+        # Refresh the application to apply changes
+        QApplication.processEvents()
 
     def updateSettingsShortcuts(self):
         all_shortcuts = {}

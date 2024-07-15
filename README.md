@@ -114,14 +114,32 @@ Ctrl+C: Copy selected images to collection
 
 - Metadata Editor - Metadata Editor is functional, double click to edit fields (still in testing and needs UI adjustments)
 
+- Tag Search, Filter, and Organization - Implemented tag search, filter, and organizing. Tags are now sorted alphanumerically and can be organized into categories.
+
+- **How to use:**
+
+1. **IMPORTANT PREFACE:** The way `tags.txt` is handled has changed. If your previous tags have disappeared, **DO NOT PANIC**, they are still in your `tags.txt` in the TagScribeR main directory. The previous method saved the tag in the txt normally, but due to sorting/categorization enhancements, uncategorized tags will need "tag:" prior to the tag. For example: "tag:blonde hair". Simply add "tag:" to the beginning of each tag in the `tags.txt` file. I recommend using an editor like Notepad++ with the Shift+Alt+Down function to quickly Ctrl+V the "tag:" for multiple lines. Reload the program to see your tags restored and ready for sorting. Note: I tried to take into account the previous tags, and the program should do all this for you automatically, but this is a workaround just in case.
+
+2. **Inside Organization Mode:**
+   - Tick the organization mode box. This will temporarily pause tag button functions.
+   - Right-click an empty area in the tag button pane. A context menu will pop up prompting to create a category.
+   - Name your category and it will be automatically added to the pane alphanumerically.
+   - To sort your tags into a category, right-click the area highlighted next to the tree line (**not the button itself**). This will prompt a few options: "Move to Category", "Rename Tag", "Delete Tag".
+   - For sorting purposes, select "Move to Category". A window with a dropdown will appear for you to choose the category.
+   - Select the appropriate category you made and the tag will be sorted into the category. The category is now expandable (tick box non-functional, use the arrow) and your sorted tags are now within your custom category.
+
+3. **Outside of Organization Mode:**
+   - Typing a tag you've saved into the tag search bar will filter through any saved tags that match whatever you type. (If your tag is sorted into a category it will show the category. Select the expansion arrow and it will only show the tags with the words you're searching/filtering for)
+   - When a dataset/directory/collection that is tagged/captioned is loaded, right-click on the tag button in your tag pane and it will hide all images with captions that do not match that tag. (I'm working on reorganizing the window to show them uniformly, but for now, the hidden images/captions leave a blank space.)
+   - Note: Manual typing and searching of captions/tags is still available at the top for a broader scope of search/filter. The tag filter of images/captions is mainly for jumping to items containing your custom tags of interest.
+
+
 
 **To do list:**
 
 - [ ] **Image Editing suite** (complete Image Editing widget with batch functions to edit/manage/delete/crop/resize/adjust brightness/contrast/hue/color/etc)
 
 - [ ] **Metadata Editor** (Adjust Metadata Editor UI and test all functions thoroughly)
-
-- [ ] **Enhanced Search and Filter** Further expand the search/filter functions in the Gallery.
 
 - [ ] **Separate Image Preview** Implement a secondary window or dock-able/resizable window for inspecting individual images.
 

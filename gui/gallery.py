@@ -6,10 +6,11 @@ from functools import lru_cache
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
     QFileDialog, QLabel, QTextEdit, QGridLayout, QScrollArea, QSlider, 
-    QMessageBox, QLineEdit, QDockWidget, QSizePolicy, QProgressDialog, QMenu, QListWidget, QListWidgetItem, QShortcut, QInputDialog
+    QMessageBox, QLineEdit, QDockWidget, QSizePolicy, QProgressDialog, QMenu, 
+    QListWidget, QListWidgetItem, QShortcut, QInputDialog, QTreeWidget, QTreeWidgetItem, QCheckBox
 )
 from PyQt5.QtGui import QPixmap, QImage, QKeySequence
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtCore import pyqtSlot
 import os
 from PIL import Image, ImageOps
@@ -17,6 +18,9 @@ import subprocess
 import gc
 from PyQt5.QtCore import QRunnable, QThreadPool, pyqtSignal, QObject
 import io
+
+def alphanumeric_sort(text):
+    return ''.join([format(int(c), '03d') if c.isdigit() else c for c in text])  
 
 @lru_cache(maxsize=100)
 def load_image(image_path):
@@ -47,6 +51,7 @@ def pil2pixmap(image):
     qimage = QImage(data, image.size[0], image.size[1], QImage.Format_RGB888)
     pixmap = QPixmap.fromImage(qimage)
     return pixmap
+      
     
 class ThumbnailLoader(QRunnable):
     class Signals(QObject):
@@ -97,66 +102,64 @@ class GalleryWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TagScribeR - Gallery")
-        self.setGeometry(100, 100, 800, 600)
-        self.imageTextEdits = {}  # Dictionary to map image paths to their QTextEdits
-        self.imageLabels = {}  # Dictionary to map image paths to their QLabel widgets
-        self.selectedImages = {}  # {image_path: SelectableImageLabel}
-
+        self.setGeometry(100, 100, 1200, 800)
+        self.imageTextEdits = {}
+        self.imageLabels = {}
+        self.selectedImages = {}
+    
         self.collectionFolderPath = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', "Dataset Collections"))
         self.collectionsFilePath = os.path.join(self.collectionFolderPath, "collections.json")
-
-        self.setupUI()
-        self.setupTagsPanel()
-        self.loadTags()
-        self.setupCollectionsPanel()
-        self.loadCollections()
-
-        self.editButtonsLayout = QHBoxLayout()  # Layout to hold edit-related buttons
-
+    
+        self.editButtonsLayout = QHBoxLayout()
+    
         # Add a Save Edits button
         self.saveEditsButton = QPushButton("Save Edits", self)
-        self.saveEditsButton.setFixedSize(100, 30)  # Make the button smaller
+        self.saveEditsButton.setFixedSize(100, 30)
         self.saveEditsButton.clicked.connect(self.saveAllEdits)
         self.editButtonsLayout.addWidget(self.saveEditsButton)
         
         # Undo Button
         self.undoButton = QPushButton("Undo", self)
-        self.undoButton.setFixedSize(100, 30)  # Make the button smaller
+        self.undoButton.setFixedSize(100, 30)
         self.undoButton.clicked.connect(self.undoLastAction)
         self.undoButton.clicked.connect(self.undoLastEdit)
         self.editButtonsLayout.addWidget(self.undoButton)
         
         # Redo Button
         self.redoButton = QPushButton("Redo", self)
-        self.redoButton.setFixedSize(100, 30)  # Make the button smaller
+        self.redoButton.setFixedSize(100, 30)
         self.redoButton.clicked.connect(self.redoLastEdit)
         self.editButtonsLayout.addWidget(self.redoButton)
         
         # Add the new Clear Captions button
         self.clearCaptionsButton = QPushButton("Clear Selected Captions", self)
-        self.clearCaptionsButton.setFixedSize(120, 40)  # Make the button smaller
+        self.clearCaptionsButton.setFixedSize(120, 40)
         self.clearCaptionsButton.clicked.connect(self.clearSelectedCaptions)
-        self.editButtonsLayout.addWidget(self.clearCaptionsButton)     
+        self.editButtonsLayout.addWidget(self.clearCaptionsButton)
+    
+        self.setupUI()
         
-        self.mainLayout.addLayout(self.editButtonsLayout)
-        
-        self.editHistory = {image_path: [] for image_path in self.imageTextEdits.keys()}
-        self.redoHistory = {image_path: [] for image_path in self.imageTextEdits.keys()}
-
+        # Add dock widgets
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.collectionsDockWidget)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.tagsDockWidget)
+        self.setCorner(Qt.TopLeftCorner, Qt.LeftDockWidgetArea)
+        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
+        self.setCorner(Qt.TopRightCorner, Qt.RightDockWidgetArea)
+        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
+    
         self.loadCollections()
+        self.loadTags()
+        
+        # Initialize theme
+        self.updateTheme()
+    
         self.thumbnail_cache = {}
         self.thread_pool = QThreadPool()
-        self.thread_pool.setMaxThreadCount(4)  # Adjust based on your system
-        
-        if os.path.exists(self.collectionsFilePath):
-            with open(self.collectionsFilePath, 'r') as file:
-                collections = json.load(file)
-                for collection in collections:
-                    self.collectionsList.addItem(collection)
-        else:
-            with open(self.collectionsFilePath, 'w') as file:
-                json.dump([], file)
-                
+        self.thread_pool.setMaxThreadCount(4)
+    
+        self.editHistory = {image_path: [] for image_path in self.imageTextEdits.keys()}
+        self.redoHistory = {image_path: [] for image_path in self.imageTextEdits.keys()}
+    
         self.shortcuts = {
             "Ctrl+S": (self.saveAllEdits, "Save all edits"),
             "Ctrl+Z": (self.undoLastEdit, "Undo last action"),
@@ -168,6 +171,15 @@ class GalleryWindow(QMainWindow):
             "Ctrl+C": (self.copySelectedToCollection, "Save selected to collection")
         }
         self.setupShortcuts()
+        
+        self.organizeMode = False
+        
+    def updateTheme(self):
+        app = QApplication.instance()
+        if app:
+            dark_mode = app.property("darkMode")
+            for i in range(self.tagsTreeWidget.topLevelItemCount()):
+                self.updateItemStyle(self.tagsTreeWidget.topLevelItem(i), dark_mode)    
 
     def setupShortcuts(self):
         for key, (func, _) in self.shortcuts.items():
@@ -290,10 +302,10 @@ class GalleryWindow(QMainWindow):
 
     def setupCollectionsPanel(self):
         self.collectionsDockWidget = QDockWidget("Collections", self)
-        self.collectionsDockWidget.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.collectionsDockWidget.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
+        self.collectionsDockWidget.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.collectionsPanel = QWidget()
-        self.collectionsPanelLayout = QVBoxLayout()
-        self.collectionsPanel.setLayout(self.collectionsPanelLayout)
+        self.collectionsPanelLayout = QVBoxLayout(self.collectionsPanel)
         
         self.newCollectionLineEdit = QLineEdit()
         self.collectionsPanelLayout.addWidget(self.newCollectionLineEdit)
@@ -314,7 +326,8 @@ class GalleryWindow(QMainWindow):
         self.collectionsPanelLayout.addWidget(self.openCollectionsFolderButton)
         
         self.collectionsDockWidget.setWidget(self.collectionsPanel)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.collectionsDockWidget)
+        self.collectionsDockWidget.setMinimumWidth(10)  # Smaller minimum width
+        self.collectionsDockWidget.setMaximumWidth(300)  # Maximum width
 
     def onCollectionClicked(self, item):
         # Toggle the selection state of the clicked item
@@ -435,10 +448,10 @@ class GalleryWindow(QMainWindow):
 
     def setupTagsPanel(self):
         self.tagsDockWidget = QDockWidget("Tags", self)
-        self.tagsDockWidget.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.tagsDockWidget.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
+        self.tagsDockWidget.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.tagsPanel = QWidget()
-        self.tagsPanelLayout = QVBoxLayout()
-        self.tagsPanel.setLayout(self.tagsPanelLayout)
+        self.tagsPanelLayout = QVBoxLayout(self.tagsPanel)
         
         # New tag text field
         self.newTagLineEdit = QLineEdit()
@@ -449,64 +462,433 @@ class GalleryWindow(QMainWindow):
         self.addTagButton.clicked.connect(self.addTag)
         self.tagsPanelLayout.addWidget(self.addTagButton)
     
-        # Scrollable area for tag buttons
-        self.tagsScrollArea = QScrollArea()
-        self.tagsScrollArea.setWidgetResizable(True)
-        self.tagsScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.tagsScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # Organization mode checkbox
+        self.organizeModeCheckbox = QCheckBox("Organization Mode")
+        self.organizeModeCheckbox.stateChanged.connect(self.toggleOrganizeMode)
+        self.tagsPanelLayout.addWidget(self.organizeModeCheckbox)
+        
+        # Add search box for tags
+        self.tagSearchBox = QLineEdit()
+        self.tagSearchBox.setPlaceholderText("Search tags...")
+        self.tagSearchBox.textChanged.connect(self.filterTags)
+        self.tagsPanelLayout.addWidget(self.tagSearchBox)
     
-        self.tagsContainer = QWidget()
-        self.tagsContainerLayout = QVBoxLayout()
-        self.tagsContainerLayout.setAlignment(Qt.AlignTop)
-        self.tagsContainer.setLayout(self.tagsContainerLayout)
+        # Tree widget for tags and categories
+        self.tagsTreeWidget = QTreeWidget()
     
-        self.tagsScrollArea.setWidget(self.tagsContainer)
-        self.tagsPanelLayout.addWidget(self.tagsScrollArea)
+        # Tree widget for tags and categories
+        self.tagsTreeWidget = QTreeWidget()
+        self.tagsTreeWidget.setHeaderLabels(["Tags"])
+        self.tagsTreeWidget.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.tagsTreeWidget.itemSelectionChanged.connect(self.onTagSelectionChanged)
+        self.tagsTreeWidget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.updateAllItemsContextMenuPolicy()
+        self.tagsTreeWidget.customContextMenuRequested.connect(self.showTagContextMenu)
+        self.tagsTreeWidget.setIndentation(20)
+        self.tagsTreeWidget.setStyleSheet("""
+            QTreeWidget::item { padding: 5px; }
+            QTreeWidget::item:has-children { font-weight: bold; }
+        """)
+        
+        self.tagsPanelLayout.addWidget(self.tagsTreeWidget)
         
         self.tagsDockWidget.setWidget(self.tagsPanel)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.tagsDockWidget)
+        self.tagsDockWidget.setMinimumWidth(10)  # Smaller minimum width
+        self.tagsDockWidget.setMaximumWidth(300)  # Maximum width
+        
+    def toggleOrganizeMode(self, state):
+        self.organizeMode = state == Qt.Checked
+        self.toggleAllItemsFunctionality(not self.organizeMode)
+        for i in range(self.tagsTreeWidget.topLevelItemCount()):
+            self.updateItemContextMenuPolicy(self.tagsTreeWidget.topLevelItem(i))
+        
+        # Set the context menu policy for the tree widget itself
+        if self.organizeMode:
+            self.tagsTreeWidget.setContextMenuPolicy(Qt.CustomContextMenu)
+        else:
+            self.tagsTreeWidget.setContextMenuPolicy(Qt.DefaultContextMenu)
+            
+        # Enable category expansion in both modes
+        self.tagsTreeWidget.setItemsExpandable(True)
+        self.tagsTreeWidget.setExpandsOnDoubleClick(True)
+
+    def updateAllItemsContextMenuPolicy(self):
+        for i in range(self.tagsTreeWidget.topLevelItemCount()):
+            self.updateItemContextMenuPolicy(self.tagsTreeWidget.topLevelItem(i))
+    
+    def updateItemContextMenuPolicy(self, item):
+        button = self.tagsTreeWidget.itemWidget(item, 0)
+        if button:
+            button.setContextMenuPolicy(Qt.CustomContextMenu)
+        for i in range(item.childCount()):
+            self.updateItemContextMenuPolicy(item.child(i))
+    
+    def toggleAllItemsFunctionality(self, enable):
+        for i in range(self.tagsTreeWidget.topLevelItemCount()):
+            item = self.tagsTreeWidget.topLevelItem(i)
+            self.toggleItemFunctionality(item, enable)
+    
+    def toggleItemFunctionality(self, item, enable):
+        button = self.tagsTreeWidget.itemWidget(item, 0)
+        if button:
+            button.setEnabled(enable)
+        else:
+            # It's a category, set it expandable/collapsible based on organize mode
+            item.setFlags(item.flags() | Qt.ItemIsEnabled if enable else item.flags() & ~Qt.ItemIsEnabled)
+        for i in range(item.childCount()):
+            self.toggleItemFunctionality(item.child(i), enable)
+    
+    def onTagSelectionChanged(self):
+        if not self.organizeMode:
+            selected_tags = []
+            for item in self.tagsTreeWidget.selectedItems():
+                if item.parent() is None and self.tagsTreeWidget.itemWidget(item, 0):
+                    selected_tags.append(self.tagsTreeWidget.itemWidget(item, 0).text())
+            self.applyTagFilter(selected_tags)
+    
+    def applyTagFilter(self, selected_tags):
+        for image_path, label in self.imageLabels.items():
+            textEdit = self.imageTextEdits[image_path]
+            image_tags = textEdit.toPlainText().split(', ')
+            if all(tag in image_tags for tag in selected_tags):
+                label.show()
+                textEdit.show()
+            else:
+                label.hide()
+                textEdit.hide()
+                
+    def filterTags(self, filter_text):
+        for i in range(self.tagsTreeWidget.topLevelItemCount()):
+            item = self.tagsTreeWidget.topLevelItem(i)
+            if item.childCount() == 0:  # It's an uncategorized tag
+                button = self.tagsTreeWidget.itemWidget(item, 0)
+                if button:
+                    item.setHidden(filter_text.lower() not in button.text().lower())
+            else:  # It's a category
+                visible_children = self.filterTagsInCategory(item, filter_text)
+                item.setHidden(visible_children == 0)
+    
+    def filterTagsInCategory(self, category_item, filter_text):
+        visible_children = 0
+        for i in range(category_item.childCount()):
+            child = category_item.child(i)
+            button = self.tagsTreeWidget.itemWidget(child, 0)
+            if button:
+                if filter_text.lower() in button.text().lower():
+                    child.setHidden(False)
+                    visible_children += 1
+                else:
+                    child.setHidden(True)
+        return visible_children            
+    
+    def showTagContextMenu(self, position):
+        item = self.tagsTreeWidget.itemAt(position)
+        if not item:
+            if self.organizeMode:
+                self.showEmptySpaceContextMenu(position)
+            return
+    
+        # Check if the item is a tag button or a category
+        widget = self.tagsTreeWidget.itemWidget(item, 0)
+        if isinstance(widget, TagButton):
+            if self.organizeMode:
+                self.showTagButtonContextMenu(position, widget)
+        elif self.organizeMode:
+            self.showCategoryContextMenu(position, item)
+        
+    def showTagButtonContextMenu(self, position, button):
+        if not self.organizeMode:
+            return
+    
+        menu = QMenu()
+        move_to_category_action = menu.addAction("Move to Category")
+        rename_action = menu.addAction("Rename Tag")
+        delete_action = menu.addAction("Delete Tag")
+    
+        # Use the tagsTreeWidget's viewport to get the global position
+        global_pos = self.tagsTreeWidget.viewport().mapToGlobal(position)
+        action = menu.exec_(global_pos)
+    
+        if action == move_to_category_action:
+            self.moveTagsToCategory([self.tagsTreeWidget.itemAt(position)])
+        elif action == rename_action:
+            self.renameTag(button)
+        elif action == delete_action:
+            self.deleteTag(button)
+    
+        # Prevent image filtering
+        self.onTagSelectionChanged()
+    
+    def showCategoryContextMenu(self, position, item):
+        if not self.organizeMode:
+            return
+    
+        menu = QMenu()
+        rename_action = menu.addAction("Rename Category")
+        delete_action = menu.addAction("Delete Category")
+    
+        action = menu.exec_(self.tagsTreeWidget.mapToGlobal(position))
+    
+        if action == rename_action:
+            self.renameCategory(item)
+        elif action == delete_action:
+            self.deleteCategory(item)
+    
+    def showEmptySpaceContextMenu(self, position):
+        menu = QMenu()
+        create_category_action = menu.addAction("Create New Category")
+    
+        action = menu.exec_(self.tagsTreeWidget.mapToGlobal(position))
+    
+        if action == create_category_action:
+            self.createNewCategory()
+            
+    def createCategory(self, category_name):
+        category_item = QTreeWidgetItem(self.tagsTreeWidget)
+        category_item.setText(0, category_name)
+        category_item.setFlags(category_item.flags() | Qt.ItemIsUserCheckable)
+        category_item.setCheckState(0, Qt.Unchecked)
+        return category_item        
+    
+    def createNewCategory(self):
+        category_name, ok = QInputDialog.getText(self, "New Category", "Enter category name:")
+        if ok and category_name:
+            # Find the correct position to insert the new category
+            insert_index = 0
+            for i in range(self.tagsTreeWidget.topLevelItemCount()):
+                item = self.tagsTreeWidget.topLevelItem(i)
+                if self.tagsTreeWidget.itemWidget(item, 0) is None:  # It's a category
+                    if alphanumeric_sort(item.text(0)) > alphanumeric_sort(category_name):
+                        break
+                insert_index += 1
+            
+            # Insert the new category at the correct position
+            new_category = QTreeWidgetItem()
+            new_category.setText(0, category_name)
+            new_category.setFlags(new_category.flags() | Qt.ItemIsUserCheckable)
+            new_category.setCheckState(0, Qt.Unchecked)
+            self.tagsTreeWidget.insertTopLevelItem(insert_index, new_category)
+            
+            self.saveTags()
+    
+    def renameTag(self, button):
+        old_name = button.text()
+        new_name, ok = QInputDialog.getText(self, "Rename Tag", "Enter new name:", text=old_name)
+        if ok and new_name:
+            button.setText(new_name)
+            self.saveTags()
+    
+    def renameCategory(self, item):
+        old_name = item.text(0)
+        new_name, ok = QInputDialog.getText(self, "Rename Category", "Enter new name:", text=old_name)
+        if ok and new_name:
+            item.setText(0, new_name)
+            self.saveTags()
+    
+    def deleteTag(self, button):
+        reply = QMessageBox.question(self, "Delete Tag", f"Are you sure you want to delete the tag '{button.text()}'?",
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            item = self.tagsTreeWidget.itemAt(button.pos())
+            if item.parent():
+                item.parent().removeChild(item)
+            else:
+                index = self.tagsTreeWidget.indexOfTopLevelItem(item)
+                self.tagsTreeWidget.takeTopLevelItem(index)
+            self.saveTags()
+    
+    def deleteCategory(self, item):
+        reply = QMessageBox.question(self, "Delete Category", f"Are you sure you want to delete the category '{item.text(0)}' and all its tags?",
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            index = self.tagsTreeWidget.indexOfTopLevelItem(item)
+            self.tagsTreeWidget.takeTopLevelItem(index)
+            self.saveTags()
+    
+    def moveTagsToCategory(self, items):
+        if not items:
+            return
+    
+        categories = [self.tagsTreeWidget.topLevelItem(i).text(0) 
+                    for i in range(self.tagsTreeWidget.topLevelItemCount())
+                    if self.tagsTreeWidget.itemWidget(self.tagsTreeWidget.topLevelItem(i), 0) is None]
+        
+        category, ok = QInputDialog.getItem(self, "Select Category", "Move to category:", categories, 0, False)
+        
+        if ok and category:
+            category_item = self.findCategoryItem(category)
+            if category_item:
+                for item in items:
+                    if isinstance(item, QTreeWidgetItem):
+                        button = self.tagsTreeWidget.itemWidget(item, 0)
+                        if button:
+                            tag_text = button.text()
+                            if item.parent():
+                                item.parent().removeChild(item)
+                            else:
+                                index = self.tagsTreeWidget.indexOfTopLevelItem(item)
+                                self.tagsTreeWidget.takeTopLevelItem(index)
+                            new_tag_item = self.createTagButton(tag_text, category_item)
+                    elif isinstance(item, TagButton):
+                        tag_text = item.text()
+                        parent_item = self.tagsTreeWidget.itemAt(item.pos()).parent()
+                        if parent_item:
+                            parent_item.removeChild(self.tagsTreeWidget.itemAt(item.pos()))
+                        else:
+                            index = self.tagsTreeWidget.indexOfTopLevelItem(self.tagsTreeWidget.itemAt(item.pos()))
+                            self.tagsTreeWidget.takeTopLevelItem(index)
+                        new_tag_item = self.createTagButton(tag_text, category_item)
+            self.saveTags()
+    
+    def findCategoryItem(self, category_name):
+        for i in range(self.tagsTreeWidget.topLevelItemCount()):
+            item = self.tagsTreeWidget.topLevelItem(i)
+            if item.text(0) == category_name:
+                return item
+        return None    
         
     def loadTags(self):
         try:
+            categories = {}
+            uncategorized_tags = []
+            
             with open('tags.txt', 'r') as file:
                 for line in file:
-                    tagText = line.strip()
-                    self.createTagButton(tagText)
+                    line = line.strip()
+                    if line.startswith("category:"):
+                        category_name = line[9:]
+                        categories[category_name] = []
+                    elif line.startswith("tag_in_category:"):
+                        _, category_name, tag_text = line.split(":", 2)
+                        if category_name in categories:
+                            categories[category_name].append(tag_text)
+                    elif line.startswith("tag:"):
+                        tag_text = line[4:]
+                        uncategorized_tags.append(tag_text)
+                    else:
+                        # Handle old format (just tag text)
+                        uncategorized_tags.append(line)
+            
+            # Sort categories
+            sorted_categories = sorted(categories.keys(), key=alphanumeric_sort)
+            
+            # Add sorted uncategorized tags
+            for tag in sorted(uncategorized_tags, key=alphanumeric_sort):
+                self.createTagButton(tag)
+            
+            # Add sorted categories with their sorted tags
+            for category in sorted_categories:
+                category_item = self.createCategory(category)
+                for tag in sorted(categories[category], key=alphanumeric_sort):
+                    self.createTagButton(tag, category_item)
+            
+            self.tagsTreeWidget.expandAll()  # Expand all categories
         except FileNotFoundError:
             pass  # File doesn't exist yet
+        
+        # Apply the current theme
+        app = QApplication.instance()
+        if app:
+            dark_mode = app.property("darkMode")
+            self.updateTagButtonStyles(dark_mode)
+            
+    def applyTheme(self, theme):
+        app = QApplication.instance()
+        dark_mode = (theme == 'Dark')
+        app.setProperty("darkMode", dark_mode)
+        self.tagsTreeWidget.clear()  # Clear existing tags
+        self.loadTags()  # Reload tags with new theme
+        
+    def updateTagButtonStyles(self, dark_mode):
+        def update_item(item):
+            button = self.tagsTreeWidget.itemWidget(item, 0)
+            if isinstance(button, TagButton):
+                button.updateStyle(dark_mode)
+            for i in range(item.childCount()):
+                update_item(item.child(i))
+
+        for i in range(self.tagsTreeWidget.topLevelItemCount()):
+            update_item(self.tagsTreeWidget.topLevelItem(i))
+    
+    def updateItemStyle(self, item, dark_mode):
+        button = self.tagsTreeWidget.itemWidget(item, 0)
+        if isinstance(button, TagButton):
+            button.updateStyle(dark_mode)
+        for i in range(item.childCount()):
+            self.updateItemStyle(item.child(i), dark_mode)                
 
     def saveTags(self):
         with open('tags.txt', 'w') as file:
-            for i in range(self.tagsContainerLayout.count()):
-                widget = self.tagsContainerLayout.itemAt(i).widget()
-                if isinstance(widget, QPushButton):
-                    file.write(widget.text() + '\n')
-
-    def createTagButton(self, tagText):
-        tagButton = QPushButton(tagText)
-        tagButton.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        tagButton.setFixedHeight(30)  # Set a fixed height for the button
-        tagButton.clicked.connect(lambda: self.tagButtonClicked(tagText))
-        tagButton.setContextMenuPolicy(Qt.CustomContextMenu)
-        tagButton.customContextMenuRequested.connect(lambda pos, btn=tagButton: self.tagButtonContextMenu(pos, btn))
-        self.tagsContainerLayout.addWidget(tagButton)
+            # Save categories and their tags
+            for i in range(self.tagsTreeWidget.topLevelItemCount()):
+                item = self.tagsTreeWidget.topLevelItem(i)
+                if self.tagsTreeWidget.itemWidget(item, 0) is None:  # It's a category
+                    file.write(f"category:{item.text(0)}\n")
+                    for j in range(item.childCount()):
+                        tag_item = item.child(j)
+                        button = self.tagsTreeWidget.itemWidget(tag_item, 0)
+                        if button:
+                            file.write(f"tag_in_category:{item.text(0)}:{button.text()}\n")
+                else:  # It's a top-level tag
+                    button = self.tagsTreeWidget.itemWidget(item, 0)
+                    if button:
+                        file.write(f"tag:{button.text()}\n")
+    
+    def saveTagsInCategory(self, category_item, file):
+        for i in range(category_item.childCount()):
+            tag_item = category_item.child(i)
+            button = self.tagsTreeWidget.itemWidget(tag_item, 0)
+            if button:
+                file.write(f"tag_in_category:{category_item.text(0)}:{button.text()}\n")
+                
+    def createTagButton(self, tag_text, parent=None):
+        if parent and parent != self.tagsTreeWidget:  # It's a categorized tag
+            # Find the correct position to insert the new tag within the category
+            insert_index = 0
+            for i in range(parent.childCount()):
+                child = parent.child(i)
+                button = self.tagsTreeWidget.itemWidget(child, 0)
+                if alphanumeric_sort(button.text()) > alphanumeric_sort(tag_text):
+                    break
+                insert_index += 1
+            
+            tag_item = QTreeWidgetItem()
+            parent.insertChild(insert_index, tag_item)
+        else:  # It's an uncategorized tag
+            tag_item = QTreeWidgetItem(self.tagsTreeWidget)
+        
+        tag_button = TagButton(tag_text, self)
+        app = QApplication.instance()
+        dark_mode = app.property("darkMode") if app else False
+        tag_button.updateStyle(dark_mode)
+        tag_button.clicked.connect(lambda: self.tagButtonClicked(tag_text))
+        tag_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        tag_button.customContextMenuRequested.connect(lambda pos: self.showTagButtonContextMenu(tag_button.mapToGlobal(pos), tag_button))
+        self.tagsTreeWidget.setItemWidget(tag_item, 0, tag_button)
+        tag_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        return tag_item
 
     def addTag(self):
         tagText = self.newTagLineEdit.text().strip()
         if tagText:
-            self.createTagButton(tagText)
+            # Find the correct position to insert the new tag
+            insert_index = 0
+            for i in range(self.tagsTreeWidget.topLevelItemCount()):
+                item = self.tagsTreeWidget.topLevelItem(i)
+                if self.tagsTreeWidget.itemWidget(item, 0) is None:  # It's a category
+                    continue
+                button = self.tagsTreeWidget.itemWidget(item, 0)
+                if alphanumeric_sort(button.text()) > alphanumeric_sort(tagText):
+                    break
+                insert_index += 1
+            
+            # Insert the new tag at the correct position
+            new_item = QTreeWidgetItem()
+            self.tagsTreeWidget.insertTopLevelItem(insert_index, new_item)
+            self.createTagButton(tagText, new_item)
+            
             self.newTagLineEdit.clear()
             self.saveTags()  # Save tags to file
-
-    def tagButtonContextMenu(self, pos, btn):
-        # Create a context menu for the tag button
-        menu = QMenu()
-        deleteAction = menu.addAction("Delete Tag")
-        action = menu.exec_(btn.mapToGlobal(pos))
-        if action == deleteAction:
-            self.tagsContainerLayout.removeWidget(btn)
-            btn.deleteLater()
-            self.saveTags()  # Update tags file after deletion
 
     def tagButtonClicked(self, tagText):
         for image_path, label in self.selectedImages.items():
@@ -532,39 +914,58 @@ class GalleryWindow(QMainWindow):
         
         self.saveTags()
 
+    def saveAllEdits(self):
+        for image_path, textEdit in self.imageTextEdits.items():
+            self.saveTextToFile(image_path, textEdit)
+        QMessageBox.information(self, "Save Complete", "All edits have been saved successfully.")            
+
     def setupUI(self):
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
         self.mainLayout = QVBoxLayout(self.central_widget)
-
+    
+        # Top bar with search
         self.topBarLayout = QHBoxLayout()
         self.searchBox = QLineEdit(self)
         self.searchBox.setPlaceholderText("Search by tag or caption...")
         self.searchBox.returnPressed.connect(self.filterImages)
         self.topBarLayout.addWidget(self.searchBox)
         self.mainLayout.addLayout(self.topBarLayout)
-        self.topBarLayout.setAlignment(Qt.AlignTop)
-
+    
+        # Slider for thumbnail size
         self.sizeSlider = QSlider(Qt.Horizontal, self)
         self.sizeSlider.setMinimum(50)
         self.sizeSlider.setMaximum(353)
         self.sizeSlider.setValue(100)
         self.sizeSlider.valueChanged.connect(self.updateThumbnails)
         self.mainLayout.addWidget(self.sizeSlider)
-        
+    
+        # Viewer window (center)
+        self.viewerLayout = QVBoxLayout()
         self.selectAllButton = QPushButton("Select/Deselect All", self)
         self.selectAllButton.clicked.connect(self.toggleSelectDeselectAll)
-        self.mainLayout.addWidget(self.selectAllButton)
+        self.viewerLayout.addWidget(self.selectAllButton)
+        
         self.loadDirButton = QPushButton("Load Directory")
         self.loadDirButton.clicked.connect(self.loadDirectory)
-        self.mainLayout.addWidget(self.loadDirButton)
+        self.viewerLayout.addWidget(self.loadDirButton)
+        
         self.gridLayout = QGridLayout()
         self.scrollArea = QScrollArea(self)
         self.scrollArea.setWidgetResizable(True)
         self.container = QWidget()
         self.container.setLayout(self.gridLayout)
         self.scrollArea.setWidget(self.container)
-        self.mainLayout.addWidget(self.scrollArea)
+        self.viewerLayout.addWidget(self.scrollArea)
+        
+        self.mainLayout.addLayout(self.viewerLayout)
+    
+        # Add edit buttons layout
+        self.mainLayout.addLayout(self.editButtonsLayout)
+    
+        # Setup dock widgets
+        self.setupCollectionsPanel()
+        self.setupTagsPanel()
 
     def selectAllImages(self):
         for label in self.imageLabels.values():
@@ -609,11 +1010,6 @@ class GalleryWindow(QMainWindow):
                 label = self.imageLabels[image_path]
                 label.show()
                 textEdit.show()
-
-    def saveAllEdits(self):
-        for image_path, textEdit in self.imageTextEdits.items():
-            self.saveTextToFile(image_path, textEdit)
-        QMessageBox.information(self, "Save Complete", "All edits have been saved successfully.")
 
     def saveTextToFile(self, image_path, textEdit):
         txt_file_path = os.path.splitext(image_path)[0] + '.txt'
@@ -831,5 +1227,50 @@ class GalleryWindow(QMainWindow):
     def closeEvent(self, event):
         self.thumbnail_cache.clear()
         gc.collect()
-        super().closeEvent(event)            
+        super().closeEvent(event) 
+
+class TagButton(QPushButton):
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.updateStyle()
+
+    def updateStyle(self, dark_mode=False):
+        if dark_mode:
+            self.setStyleSheet("""
+                QPushButton { 
+                    text-align: left; 
+                    padding: 5px; 
+                    margin: 2px 0; 
+                    min-height: 30px;
+                    background-color: #455364;
+                    color: white;
+                    border: 1px solid #3a4654;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #3a4654;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QPushButton { 
+                    text-align: left; 
+                    padding: 5px; 
+                    margin: 2px 0; 
+                    min-height: 30px;
+                    background-color: #f2f2f2;
+                    color: black;
+                    border: 1px solid #d9d9d9;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #e6e6e6;
+                }
+            """)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self.customContextMenuRequested.emit(event.pos())
+        else:
+            super().mousePressEvent(event)      
 

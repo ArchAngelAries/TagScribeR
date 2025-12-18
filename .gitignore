@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# User Data & configuration
+config.json
+user_tags.txt
+logs/
+
+# Large AI Models
+models/
+
+# Generated Content
+Dataset Collections/
+Image Edits/
+
+# IDEs
+.vscode/
+.idea/

@@ -1,0 +1,9 @@
+PySide6
+qt-material
+transformers>=4.45.0
+accelerate
+pillow
+opencv-python
+qwen-vl-utils
+piexif
+huggingface_hub

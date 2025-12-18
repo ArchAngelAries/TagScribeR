@@ -11,11 +11,16 @@ from PySide6.QtGui import QPixmap
 from core.ai_backend import QwenWorker, DownloadWorker
 from core.image_utils import load_thumbnail
 
+# --- UPDATED MODEL LIST (Qwen 3-VL Added) ---
 KNOWN_MODELS = {
-    "Qwen2.5-VL-3B-Instruct (Balanced)": "Qwen/Qwen2.5-VL-3B-Instruct",
-    "Qwen2.5-VL-7B-Instruct (High Quality)": "Qwen/Qwen2.5-VL-7B-Instruct",
-    "Qwen2-VL-2B-Instruct (Fast)": "Qwen/Qwen2-VL-2B-Instruct",
-    "Qwen2-VL-7B-Instruct (Legacy)": "Qwen/Qwen2-VL-7B-Instruct"
+    # Qwen 3 VL (Newest, SOTA)
+    "Qwen3-VL-8B-Instruct (Best Quality)": "Qwen/Qwen3-VL-8B-Instruct",
+    "Qwen3-VL-4B-Instruct (Balanced)": "Qwen/Qwen3-VL-4B-Instruct",
+    "Qwen3-VL-2B-Instruct (Fastest)": "Qwen/Qwen3-VL-2B-Instruct",
+    
+    # Qwen 2.5 VL (Stable Fallbacks)
+    "Qwen2.5-VL-7B-Instruct": "Qwen/Qwen2.5-VL-7B-Instruct",
+    "Qwen2.5-VL-3B-Instruct": "Qwen/Qwen2.5-VL-3B-Instruct"
 }
 
 PROMPT_TEMPLATES = {
@@ -117,12 +122,11 @@ class CaptionTab(QWidget):
         self.cards = {}
         self.selected_paths = set()
         self.thread_pool = QThreadPool()
-        self.is_processing = False # State flag for Run/Abort logic
+        self.is_processing = False 
         
         layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
 
-        # --- LEFT: Grid ---
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         
@@ -144,7 +148,6 @@ class CaptionTab(QWidget):
         self.scroll.setWidget(self.grid_container)
         left_layout.addWidget(self.scroll)
 
-        # --- RIGHT: Settings & Controls ---
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
         right_widget = QWidget()
@@ -218,13 +221,11 @@ class CaptionTab(QWidget):
         save_layout.addWidget(self.btn_save_all)
         right_layout.addLayout(save_layout)
         
-        # Save to Dataset
         self.btn_dataset = QPushButton("📦 Save Selected to Dataset")
         self.btn_dataset.clicked.connect(self.save_to_dataset)
         self.btn_dataset.setStyleSheet("background-color: #6c5ce7; font-weight: bold;")
         right_layout.addWidget(self.btn_dataset)
         
-        # Progress Indicators
         self.lbl_status = QLabel("Ready")
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.setStyleSheet("font-weight: bold; color: #aaa;")
@@ -332,16 +333,12 @@ class CaptionTab(QWidget):
         target = not all_selected
         for card in self.cards.values(): card.toggle_selection(target)
 
-    # --- PROCESS LOGIC ---
     def toggle_process_state(self):
         if self.is_processing:
-            # ABORT MODE
-            if hasattr(self, 'worker'):
-                self.worker.stop()
-            self.log_box.append("🛑 Process Aborted by User.")
+            if hasattr(self, 'worker'): self.worker.stop()
+            self.log_box.append("🛑 Process Aborted.")
             self.set_processing_ui(False)
         else:
-            # RUN MODE
             self.run_process()
 
     def set_processing_ui(self, running):
@@ -362,7 +359,6 @@ class CaptionTab(QWidget):
         if not self.selected_paths:
             self.log_box.append("⚠️ No images selected!")
             return
-            
         data = self.combo_model.currentData()
         models_dir = os.path.join(os.getcwd(), "models")
         path = os.path.join(models_dir, data)
@@ -375,7 +371,7 @@ class CaptionTab(QWidget):
         self.set_processing_ui(True)
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(self.selected_paths))
-        self.progress_bar.setFormat("%p% - %v/%m") # Shows: 25% - 5/20
+        self.progress_bar.setFormat("%p% - %v/%m")
         
         params = {
             "max_tokens": self.spin_tokens.value(),
@@ -388,7 +384,7 @@ class CaptionTab(QWidget):
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.on_single_finished)
-        self.worker.progress.connect(self.update_log_status) # Updated handler
+        self.worker.progress.connect(self.update_log_status)
         self.worker.error.connect(self.log_box.append)
         self.worker.finished.connect(self.check_if_done)
         self.thread.start()
@@ -399,7 +395,7 @@ class CaptionTab(QWidget):
 
     def update_log_status(self, msg):
         self.log_box.append(msg)
-        self.lbl_status.setText(msg) # Shows current file processing above bar
+        self.lbl_status.setText(msg)
 
     def check_if_done(self):
         if self.progress_bar.value() >= self.progress_bar.maximum():

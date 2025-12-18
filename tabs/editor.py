@@ -1,17 +1,25 @@
 import os
 import cv2
 import numpy as np
+import traceback
+import gc
+from PIL import Image
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
     QScrollArea, QGridLayout, QFrame, QSplitter, QFileDialog, 
     QMessageBox, QGroupBox, QSpinBox, QComboBox, QRadioButton, 
-    QCheckBox, QProgressBar, QTextEdit, QFormLayout, QSlider
+    QCheckBox, QProgressBar, QTextEdit, QFormLayout, QSlider,
+    QProgressDialog, QApplication
 )
 from PySide6.QtCore import Qt, Signal, QRunnable, QThreadPool, QObject, Slot
 from PySide6.QtGui import QPixmap
 from core.image_utils import load_thumbnail
 
-# --- WORKER FOR THUMBNAILS ---
+# Determine Root Directory
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EDIT_DIR = os.path.join(BASE_DIR, "Image Edits")
+
+# --- WORKER FOR THUMBNAILS (Keep this threaded, it's read-only and safe) ---
 class ThumbnailSignals(QObject):
     loaded = Signal(str, QPixmap, str) 
 
@@ -25,134 +33,15 @@ class ThumbnailWorker(QRunnable):
     @Slot()
     def run(self):
         pix = load_thumbnail(self.path, self.size)
+        info = "?"
         try:
-            img = cv2.imread(self.path)
-            if img is not None:
-                h, w = img.shape[:2]
+            # Use PIL for info to avoid CV2 conflicts
+            with Image.open(self.path) as img:
+                w, h = img.size
                 info = f"{w} x {h}"
-            else:
-                info = "Error"
         except:
-            info = "?"
+            pass
         self.signals.loaded.emit(self.path, pix, info)
-
-# --- WORKER FOR BATCH PROCESSING ---
-class BatchProcessWorker(QObject):
-    finished = Signal()
-    progress = Signal(int)
-    log = Signal(str)
-    card_updated = Signal(str) 
-
-    def __init__(self, paths, operation, params, output_mode, output_folder):
-        super().__init__()
-        self.paths = paths
-        self.operation = operation 
-        self.params = params
-        self.output_mode = output_mode 
-        self.output_folder = output_folder
-        self.running = True
-
-    def run(self):
-        count = 0
-        for i, path in enumerate(self.paths):
-            if not self.running: break
-            
-            try:
-                img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-                if img is None:
-                    self.log.emit(f"❌ Could not load: {os.path.basename(path)}")
-                    continue
-                
-                h, w = img.shape[:2]
-                res_img = img
-                new_ext = None
-                save_params = []
-
-                if self.operation == 'rotate':
-                    direction = self.params.get('direction', 'cw')
-                    if direction == 'cw':
-                        res_img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-                    else:
-                        res_img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
-
-                elif self.operation == 'resize':
-                    mode = self.params.get('mode', 'longest')
-                    if mode == 'longest':
-                        target = self.params['size']
-                        scale = target / max(h, w)
-                        if scale < 1.0: 
-                            new_w, new_h = int(w * scale), int(h * scale)
-                            res_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                    else: 
-                        t_w, t_h = self.params['w'], self.params['h']
-                        res_img = cv2.resize(img, (t_w, t_h), interpolation=cv2.INTER_AREA)
-
-                elif self.operation == 'crop':
-                    t_w, t_h = self.params['w'], self.params['h']
-                    focus = self.params.get('focus', 'Center')
-                    
-                    if w < t_w or h < t_h:
-                        self.log.emit(f"⚠️ Skip {os.path.basename(path)}: Image smaller than crop size.")
-                        continue
-                        
-                    x = (w - t_w) // 2
-                    y = (h - t_h) // 2
-                    
-                    if focus == 'Top-Left': x, y = 0, 0
-                    elif focus == 'Top-Center': x, y = (w - t_w)//2, 0
-                    elif focus == 'Top-Right': x, y = w - t_w, 0
-                    elif focus == 'Center-Left': x, y = 0, (h - t_h)//2
-                    elif focus == 'Center-Right': x, y = w - t_w, (h - t_h)//2
-                    elif focus == 'Bottom-Left': x, y = 0, h - t_h
-                    elif focus == 'Bottom-Center': x, y = (w - t_w)//2, h - t_h
-                    elif focus == 'Bottom-Right': x, y = w - t_w, h - t_h
-                    
-                    res_img = img[y:y+t_h, x:x+t_w]
-
-                elif self.operation == 'convert':
-                    fmt = self.params['format'].lower()
-                    quality = self.params['quality']
-                    new_ext = f".{fmt}"
-                    if fmt in ['jpg', 'jpeg']:
-                        save_params = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-                        if res_img.shape[2] == 4:
-                            res_img = cv2.cvtColor(res_img, cv2.COLOR_BGRA2BGR)
-                    elif fmt == 'webp':
-                        save_params = [int(cv2.IMWRITE_WEBP_QUALITY), quality]
-
-                # --- SAVING LOGIC (Updated) ---
-                filename = os.path.basename(path)
-                if new_ext:
-                    base = os.path.splitext(filename)[0]
-                    filename = f"{base}{new_ext}"
-                
-                if self.output_mode == 'folder':
-                    # Create the root "Image Edits" folder if it doesn't exist
-                    if not os.path.exists(self.output_folder):
-                        os.makedirs(self.output_folder)
-                    save_path = os.path.join(self.output_folder, filename)
-                else:
-                    save_path = os.path.join(os.path.dirname(path), filename)
-
-                success = cv2.imwrite(save_path, res_img, save_params)
-                
-                if success:
-                    count += 1
-                    if save_path == path:
-                        self.card_updated.emit(path)
-                else:
-                    self.log.emit(f"❌ Failed to save: {filename}")
-
-                self.progress.emit(i + 1)
-                
-            except Exception as e:
-                self.log.emit(f"❌ Error processing {os.path.basename(path)}: {e}")
-
-        self.log.emit(f"✅ Processed {count} images.")
-        self.finished.emit()
-
-    def stop(self):
-        self.running = False
 
 # --- VISUAL CARD ---
 class EditorCard(QFrame):
@@ -221,6 +110,7 @@ class EditorTab(QWidget):
         layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
 
+        # LEFT
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         
@@ -242,6 +132,7 @@ class EditorTab(QWidget):
         self.scroll.setWidget(self.grid_container)
         left_layout.addWidget(self.scroll)
 
+        # RIGHT
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
         right_widget = QWidget()
@@ -251,7 +142,6 @@ class EditorTab(QWidget):
 
         grp_out = QGroupBox("1. Output Settings")
         lyt_out = QVBoxLayout(grp_out)
-        # CHANGED: Label updated to reflect root folder
         self.rad_folder = QRadioButton("Save to 'Image Edits' (In App Root)")
         self.rad_folder.setChecked(True)
         self.rad_overwrite = QRadioButton("Overwrite Originals")
@@ -263,8 +153,8 @@ class EditorTab(QWidget):
         lyt_rot = QHBoxLayout(grp_rot)
         self.btn_ccw = QPushButton("⟲ Left")
         self.btn_cw = QPushButton("⟳ Right")
-        self.btn_ccw.clicked.connect(lambda: self.run_batch('rotate', {'direction': 'ccw'}))
-        self.btn_cw.clicked.connect(lambda: self.run_batch('rotate', {'direction': 'cw'}))
+        self.btn_ccw.clicked.connect(lambda: self.run_batch_main_thread('rotate', {'direction': 'ccw'}))
+        self.btn_cw.clicked.connect(lambda: self.run_batch_main_thread('rotate', {'direction': 'cw'}))
         lyt_rot.addWidget(self.btn_ccw)
         lyt_rot.addWidget(self.btn_cw)
         right_layout.addWidget(grp_rot)
@@ -315,8 +205,6 @@ class EditorTab(QWidget):
 
         right_layout.addStretch()
         
-        self.progress = QProgressBar()
-        right_layout.addWidget(self.progress)
         self.log_box = QTextEdit()
         self.log_box.setPlaceholderText("Log...")
         self.log_box.setReadOnly(True)
@@ -375,7 +263,7 @@ class EditorTab(QWidget):
             params['mode'] = 'force'
             params['w'] = self.spin_w.value()
             params['h'] = self.spin_h.value()
-        self.run_batch('resize', params)
+        self.run_batch_main_thread('resize', params)
 
     def prep_crop(self):
         params = {
@@ -383,41 +271,154 @@ class EditorTab(QWidget):
             'h': self.spin_ch.value(),
             'focus': self.combo_focus.currentText()
         }
-        self.run_batch('crop', params)
+        self.run_batch_main_thread('crop', params)
 
     def prep_convert(self):
         params = {
             'format': self.combo_format.currentText(),
             'quality': self.slider_quality.value()
         }
-        self.run_batch('convert', params)
+        self.run_batch_main_thread('convert', params)
 
-    def run_batch(self, operation, params):
+    # --- MAIN THREAD BATCH PROCESSOR (STABILITY FIX) ---
+    def run_batch_main_thread(self, operation, params):
         if not self.selected_paths:
             self.log_box.append("⚠️ No images selected!")
             return
 
         mode = 'overwrite' if self.rad_overwrite.isChecked() else 'folder'
+        output_folder = EDIT_DIR if mode == 'folder' else ""
         
-        # CHANGED: Save to App Root "Image Edits" if not overwrite
+        # Create Output Folder
         if mode == 'folder':
-            out_folder = os.path.join(os.getcwd(), "Image Edits")
-        else:
-            out_folder = "" # Unused in overwrite mode
+            if not os.path.exists(output_folder):
+                try:
+                    os.makedirs(output_folder)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Could not create output folder:\n{e}")
+                    return
+
+        # Modal Progress Dialog
+        paths = list(self.selected_paths)
+        count = len(paths)
+        progress = QProgressDialog(f"Running {operation}...", "Abort", 0, count, self)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+
+        processed_count = 0
         
-        self.progress.setValue(0)
-        self.progress.setMaximum(len(self.selected_paths))
-        self.log_box.append(f"Starting {operation}...")
-        if mode == 'folder':
-            self.log_box.append(f"Output: {out_folder}")
-        
-        from PySide6.QtCore import QThread
-        self.worker = BatchProcessWorker(list(self.selected_paths), operation, params, mode, out_folder)
-        self.thread = QThread()
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
-        self.worker.progress.connect(self.progress.setValue)
-        self.worker.log.connect(self.log_box.append)
-        self.worker.card_updated.connect(self.reload_card_thumbnail)
-        self.worker.finished.connect(lambda: (self.thread.quit(), self.log_box.append("✅ Done.")))
-        self.thread.start()
+        for i, path in enumerate(paths):
+            if progress.wasCanceled():
+                self.log_box.append("🛑 Batch Aborted.")
+                break
+            
+            progress.setValue(i)
+            QApplication.processEvents() # Keep UI alive
+            
+            try:
+                # 1. Load (Standard CV2)
+                # Note: If path has unicode, CV2 might fail reading. 
+                # For basic stability we assume standard paths or use simple load.
+                img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+                
+                if img is None:
+                    # Try unicode fallback
+                    stream = np.fromfile(path, dtype=np.uint8)
+                    img = cv2.imdecode(stream, cv2.IMREAD_UNCHANGED)
+                
+                if img is None:
+                    self.log_box.append(f"❌ Failed load: {os.path.basename(path)}")
+                    continue
+
+                # 2. Process
+                h, w = img.shape[:2]
+                res_img = img
+                new_ext = None
+                save_params = []
+
+                if operation == 'rotate':
+                    direction = params.get('direction', 'cw')
+                    if direction == 'cw': res_img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+                    else: res_img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+                elif operation == 'resize':
+                    mode_r = params.get('mode', 'longest')
+                    new_w, new_h = w, h
+                    if mode_r == 'longest':
+                        target = int(params['size'])
+                        scale = target / max(h, w)
+                        new_w, new_h = int(w * scale), int(h * scale)
+                    else:
+                        new_w, new_h = int(params['w']), int(params['h'])
+                    
+                    new_w = max(1, new_w); new_h = max(1, new_h)
+                    if new_w != w or new_h != h:
+                        res_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+                elif operation == 'crop':
+                    t_w, t_h = int(params['w']), int(params['h'])
+                    focus = params.get('focus', 'Center')
+                    if w < t_w or h < t_h:
+                        self.log_box.append(f"⚠️ Too small: {os.path.basename(path)}")
+                        continue
+                    
+                    x = (w - t_w) // 2
+                    y = (h - t_h) // 2
+                    
+                    if focus == 'Top-Left': x, y = 0, 0
+                    elif focus == 'Top-Center': x, y = (w - t_w)//2, 0
+                    elif focus == 'Top-Right': x, y = w - t_w, 0
+                    elif focus == 'Center-Left': x, y = 0, (h - t_h)//2
+                    elif focus == 'Center-Right': x, y = w - t_w, (h - t_h)//2
+                    elif focus == 'Bottom-Left': x, y = 0, h - t_h
+                    elif focus == 'Bottom-Center': x, y = (w - t_w)//2, h - t_h
+                    elif focus == 'Bottom-Right': x, y = w - t_w, h - t_h
+                    
+                    x = max(0, min(x, w - t_w))
+                    y = max(0, min(y, h - t_h))
+                    res_img = img[y:y+t_h, x:x+t_w]
+
+                elif operation == 'convert':
+                    fmt = params['format'].lower()
+                    quality = params['quality']
+                    new_ext = f".{fmt}"
+                    if fmt in ['jpg', 'jpeg']:
+                        save_params = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+                        if len(res_img.shape) == 3 and res_img.shape[2] == 4:
+                            res_img = cv2.cvtColor(res_img, cv2.COLOR_BGRA2BGR)
+                    elif fmt == 'webp':
+                        save_params = [int(cv2.IMWRITE_WEBP_QUALITY), quality]
+
+                # 3. Save
+                filename = os.path.basename(path)
+                if new_ext:
+                    base = os.path.splitext(filename)[0]
+                    filename = f"{base}{new_ext}"
+                
+                if mode == 'folder':
+                    save_path = os.path.join(output_folder, filename)
+                else:
+                    save_path = os.path.join(os.path.dirname(path), filename)
+
+                # Unicode safe save
+                ext = os.path.splitext(save_path)[1]
+                if not ext: ext = os.path.splitext(path)[1]
+                
+                success, encoded_img = cv2.imencode(ext, res_img, save_params)
+                if success:
+                    with open(save_path, "wb") as f:
+                        encoded_img.tofile(f)
+                    processed_count += 1
+                    # If overwritten, reload thumb immediately
+                    if save_path == path:
+                        self.reload_card_thumbnail(path)
+                else:
+                    self.log_box.append(f"❌ Save failed: {filename}")
+
+                gc.collect()
+
+            except Exception as e:
+                self.log_box.append(f"❌ Error {os.path.basename(path)}: {e}")
+
+        progress.setValue(count)
+        self.log_box.append(f"✅ Finished. Processed {processed_count} images.")

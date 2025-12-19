@@ -1,12 +1,14 @@
-# TagScribeR v2
+# TagScribeR v2.1
 
-**TagScribeR v2** is a modern, GPU-accelerated local image captioning and dataset management suite. Rebuilt from the ground up using **PySide6** and powered by **Qwen 3-VL** (Vision-Language) models, it offers a "Studio" workflow for preparing AI training datasets.
+**TagScribeR v2** is a modern, GPU-accelerated local image captioning and dataset management suite. Rebuilt from the ground up using **PySide6** and powered by **Qwen 3-VL** (Vision-Language) models(with optional API support), it offers a "Studio" workflow for preparing AI training datasets.
 
 <img width="512" height="512" alt="Logo" src="https://github.com/user-attachments/assets/c94898af-b851-49f0-9f72-f40587b739b8" />
 
 <img width="3250" height="1888" alt="1" src="https://github.com/user-attachments/assets/fd63cc0e-ad96-44a9-8051-ac360936cae5" />
 
 <img width="3824" height="2056" alt="2" src="https://github.com/user-attachments/assets/2afb6ae8-003e-4632-81cc-39f629060b9f" />
+
+<img width="3831" height="2058" alt="Screenshot 2025-12-19 123602" src="https://github.com/user-attachments/assets/592ba435-13be-4e1a-977d-113354e8fdc0" />
 
 <img width="3829" height="2066" alt="3" src="https://github.com/user-attachments/assets/78423ea1-5d91-4017-95e0-5e7f1ea655e1" />
 
@@ -23,7 +25,7 @@
     *   **GPU Accelerated:** Supports NVIDIA (CUDA) and AMD (ROCm) on Windows.
     *   **Real-time Preview:** Watch captions appear as they generate.
     *   **Custom Prompts:** Use templates or natural language (e.g., "Describe the lighting in detail").
-    *   **API Mode:** Connect to **LM Studio**, **Ollama**, or **OpenAI** (GPT-4o) to offload processing to another machine or the cloud.
+    *   **API Mode:** Connect to **LM Studio**, **Ollama**, or other API services to use other desired models or offload processing to another machine or the cloud.
 *   **✏️ Batch Editor:** Resize, Crop (with focus points), Rotate, and Convert formats in bulk.
 *   **📂 Dataset Manager:** Create, sort, filter, and organize image collections without duplicating files manually.
 *   **ℹ️ Metadata Editor:** View and edit EXIF data, specifically targeting Stable Diffusion generation parameters.
@@ -45,29 +47,52 @@ cd TagScribeR
 install.bat
 ```
 
-The installer will ask for your GPU type (NVIDIA, AMD, or CPU).
+The installer will **automatically detect your hardware**:
+*   **NVIDIA RTX 20/30/40:** Installs Stable CUDA 12.4.
+*   **NVIDIA RTX 50 (Blackwell):** Installs Nightly CUDA 12.8 (cu128).
+*   **AMD Radeon:** Scans for your architecture (RX 7000, RX 9000, Strix Halo) and installs the correct ROCm Nightly build.
 
 ---
 
-## 🔴 AMD GPU Users (Windows ROCm)
+## 🔴 Manual Install (Troubleshooting)
 
-TagScribeR v2 supports AMD GPUs (RX 6000/7000 series) on Windows via **ROCm Nightlies**.
+If the auto-installer fails or you need a specific version, activate the venv (`.\venv\Scripts\activate`) and run the command for your hardware:
 
-The `install.bat` attempts to install a generic ROCm build (`gfx1100`). However, if you experience issues or have a specific card variant, you may need to install the specific PyTorch build for your architecture manually.
-
-**Please visit "TheRock" (AMD ROCm for Windows) Release Page:**
-*   [View Supported GPU List (TheRock Releases)](https://github.com/ROCm/TheRock/blob/main/RELEASES.md)
-
-**Common Manual Install Commands (Run inside `venv`):**
-
-**For RX 7900 Series / 7000 Series (gfx110X):**
-```powershell
-pip install --force-reinstall --pre torch torchvision torchaudio --index-url https://rocm.nightlies.amd.com/v2/gfx1100-all/
+### NVIDIA
+**Standard (RTX 30/40):**
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+**Bleeding Edge (RTX 50 Series):**
+```bash
+pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
 ```
 
-**For RX 7900 XTX / XT specific (gfx1100):**
-```powershell
-pip install --force-reinstall --pre torch torchvision torchaudio --index-url https://rocm.nightlies.amd.com/v2/gfx1100-dgpu/
+### AMD ROCm (Windows)
+Find your architecture below. You must run **both** commands (SDK + Torch).
+
+**RX 7000 Series / 780M (gfx110X):**
+```bash
+pip install --index-url https://rocm.nightlies.amd.com/v2/gfx110X-all/ "rocm[libraries,devel]"
+pip install --index-url https://rocm.nightlies.amd.com/v2/gfx110X-all/ --pre torch torchvision torchaudio
+```
+
+**RX 9000 Series (gfx120X):**
+```bash
+pip install --index-url https://rocm.nightlies.amd.com/v2/gfx120X-all/ "rocm[libraries,devel]"
+pip install --index-url https://rocm.nightlies.amd.com/v2/gfx120X-all/ --pre torch torchvision torchaudio
+```
+
+**Strix Halo (gfx1151):**
+```bash
+pip install --index-url https://rocm.nightlies.amd.com/v2/gfx1151/ "rocm[libraries,devel]"
+pip install --index-url https://rocm.nightlies.amd.com/v2/gfx1151/ --pre torch torchvision torchaudio
+```
+
+**Workstation MI300 (gfx94X):**
+```bash
+pip install --index-url https://rocm.nightlies.amd.com/v2/gfx94X-dcgpu/ "rocm[libraries,devel]"
+pip install --index-url https://rocm.nightlies.amd.com/v2/gfx94X-dcgpu/ --pre torch torchvision torchaudio
 ```
 
 > **⚠️ Important:** Do not run `pip install torch` afterwards, or it will overwrite the AMD version with the generic CPU version.

@@ -1,75 +1,104 @@
 @echo off
-title TagScribeR v2 Installer
+title TagScribeR v2.1 Smart Installer
 cls
 
 echo ===================================================
-echo       TagScribeR v2 - Environment Installer
+echo       TagScribeR v2.1 - Auto-Detect Installer
 echo ===================================================
 echo.
 
-REM 1. Check Python
+REM --- 1. Python Check ---
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Python is not installed or not in PATH.
-    echo Please install Python 3.10 or 3.11 from python.org.
+    echo Please install Python 3.10 or 3.11.
     pause
     exit /b
 )
 
-REM 2. Create Venv
+REM --- 2. Venv Setup ---
 if not exist "venv" (
     echo [INFO] Creating virtual environment...
     python -m venv venv
-) else (
-    echo [INFO] Virtual environment already exists.
 )
-
-REM 3. Activate Venv
 call venv\Scripts\activate
 
-REM 4. Install Core Requirements
+REM --- 3. Core Requirements ---
 echo.
-echo [INFO] Installing core dependencies (GUI, Utils)...
+echo [INFO] Installing GUI and AI dependencies...
 pip install -r requirements.txt
 echo.
 
-REM 5. GPU Selection Menu
-echo ===================================================
-echo           SELECT YOUR HARDWARE ACCELERATOR
-echo ===================================================
-echo 1. NVIDIA GPU (CUDA 12.4) - Recommended for RTX Cards
-echo 2. AMD GPU (ROCm) - For RX 6000/7000 Series (Windows)
-echo 3. CPU Only (Slow, fallback)
-echo.
-set /p gpu_choice="Enter number (1-3): "
+REM --- 4. Hardware Auto-Detection ---
+echo [INFO] Detecting Hardware...
 
-if "%gpu_choice%"=="1" goto install_nvidia
-if "%gpu_choice%"=="2" goto install_amd
-if "%gpu_choice%"=="3" goto install_cpu
-goto end
+REM Get GPU Name into variable
+for /f "tokens=2 delims==" %%a in ('wmic path win32_videocontroller get name /value') do set "gpu=%%a"
+echo      Found GPU: %gpu%
 
-:install_nvidia
-echo.
-echo [INFO] Installing PyTorch for NVIDIA (CUDA 12.4)...
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-goto end
+REM --- NVIDIA DETECTION ---
+echo %gpu% | findstr /i "NVIDIA" >nul
+if %errorlevel% equ 0 (
+    echo [DETECTED] NVIDIA GPU.
+    
+    REM Check specifically for RTX 50 Series (Blackwell) -> CUDA 12.8
+    echo %gpu% | findstr /i "RTX 50" >nul
+    if %errorlevel% equ 0 (
+        echo [INFO] RTX 50 Series detected! Installing CUDA 12.8 (cu128)...
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+    ) else (
+        echo [INFO] Standard NVIDIA card detected. Installing CUDA 12.4 (cu124)...
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+    )
+    goto finish
+)
 
-:install_amd
-echo.
-echo [INFO] Installing PyTorch for AMD (ROCm Nightly)...
-echo [NOTE] Using generic gfx1100 install. If you have a specific card,
-echo        please check the README for "TheRock" github links.
-echo.
-pip install --pre torch torchvision torchaudio --index-url https://rocm.nightlies.amd.com/v2/gfx1100-all/
-goto end
+REM --- AMD DETECTION ---
+echo %gpu% | findstr /i "Radeon AMD" >nul
+if %errorlevel% equ 0 (
+    echo [DETECTED] AMD Radeon GPU.
+    
+    REM Initialize default to most common (7000 series)
+    set "amd_url=https://rocm.nightlies.amd.com/v2/gfx110X-all/"
+    set "arch=gfx110X-all (RX 7000 Series / 780M)"
 
-:install_cpu
-echo.
-echo [INFO] Installing PyTorch for CPU...
+    REM Check for RX 9000 Series (gfx120X)
+    echo %gpu% | findstr /i "RX 90" >nul
+    if %errorlevel% equ 0 (
+        set "amd_url=https://rocm.nightlies.amd.com/v2/gfx120X-all/"
+        set "arch=gfx120X (RX 9000 Series)"
+    )
+
+    REM Check for Strix Halo (gfx1151)
+    echo %gpu% | findstr /i "Strix Halo" >nul
+    if %errorlevel% equ 0 (
+        set "amd_url=https://rocm.nightlies.amd.com/v2/gfx1151/"
+        set "arch=gfx1151 (Strix Halo)"
+    )
+
+    REM Check for Workstation MI300 (gfx94X)
+    echo %gpu% | findstr /i "MI300" >nul
+    if %errorlevel% equ 0 (
+        set "amd_url=https://rocm.nightlies.amd.com/v2/gfx94X-dcgpu/"
+        set "arch=gfx94X (MI300)"
+    )
+
+    echo [INFO] Architecture detected: %arch%
+    echo [INFO] Installing ROCm SDK...
+    pip install --index-url %amd_url% "rocm[libraries,devel]"
+    
+    echo [INFO] Installing PyTorch for ROCm...
+    pip install --index-url %amd_url% --pre torch torchvision torchaudio
+    
+    goto finish
+)
+
+REM --- FALLBACK (CPU) ---
+echo [WARNING] No dedicated GPU detected (or unknown vendor).
+echo [INFO] Installing CPU-only PyTorch...
 pip install torch torchvision torchaudio
-goto end
 
-:end
+:finish
 echo.
 echo ===================================================
 echo    Installation Complete! Run start.bat to launch.

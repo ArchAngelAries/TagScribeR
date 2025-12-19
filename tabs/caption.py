@@ -1,24 +1,23 @@
 import os
 import shutil
+import json
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, 
     QLabel, QProgressBar, QComboBox, QFileDialog, QScrollArea, 
     QGridLayout, QFrame, QSplitter, QMessageBox, QCheckBox, QGroupBox, 
-    QSpinBox, QDoubleSpinBox, QFormLayout, QInputDialog
+    QSpinBox, QDoubleSpinBox, QFormLayout, QInputDialog, QTabWidget, QLineEdit
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QRunnable, QThreadPool, QObject
 from PySide6.QtGui import QPixmap
 from core.ai_backend import QwenWorker, DownloadWorker
 from core.image_utils import load_thumbnail
 
-# --- UPDATED MODEL LIST (Qwen 3-VL Added) ---
+API_PRESETS_FILE = "api_presets.json"
+
 KNOWN_MODELS = {
-    # Qwen 3 VL (Newest, SOTA)
     "Qwen3-VL-8B-Instruct (Best Quality)": "Qwen/Qwen3-VL-8B-Instruct",
     "Qwen3-VL-4B-Instruct (Balanced)": "Qwen/Qwen3-VL-4B-Instruct",
     "Qwen3-VL-2B-Instruct (Fastest)": "Qwen/Qwen3-VL-2B-Instruct",
-    
-    # Qwen 2.5 VL (Stable Fallbacks)
     "Qwen2.5-VL-7B-Instruct": "Qwen/Qwen2.5-VL-7B-Instruct",
     "Qwen2.5-VL-3B-Instruct": "Qwen/Qwen2.5-VL-3B-Instruct"
 }
@@ -123,10 +122,12 @@ class CaptionTab(QWidget):
         self.selected_paths = set()
         self.thread_pool = QThreadPool()
         self.is_processing = False 
+        self.api_presets = {}
         
         layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
 
+        # LEFT
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         
@@ -148,6 +149,7 @@ class CaptionTab(QWidget):
         self.scroll.setWidget(self.grid_container)
         left_layout.addWidget(self.scroll)
 
+        # RIGHT
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
         right_widget = QWidget()
@@ -155,13 +157,18 @@ class CaptionTab(QWidget):
         right_layout = QVBoxLayout(right_widget)
         right_scroll.setWidget(right_widget)
 
-        # 1. Model
-        grp_model = QGroupBox("1. AI Model")
-        lyt_model = QVBoxLayout(grp_model)
+        # 1. Model Source Tabs
+        self.tab_source = QTabWidget()
+        self.tab_source.setFixedHeight(220)
+        
+        # TAB 1: Local
+        tab_local = QWidget()
+        lay_local = QVBoxLayout(tab_local)
         self.combo_model = QComboBox()
         self.combo_model.currentIndexChanged.connect(self.check_download_status)
         btn_box = QHBoxLayout()
-        self.btn_refresh = QPushButton("🔄 Refresh")
+        self.btn_refresh = QPushButton("🔄")
+        self.btn_refresh.setFixedWidth(30)
         self.btn_refresh.clicked.connect(self.refresh_models)
         self.btn_download = QPushButton("⬇️ Download")
         self.btn_download.clicked.connect(self.start_download)
@@ -169,13 +176,57 @@ class CaptionTab(QWidget):
         self.btn_download.setStyleSheet("background-color: #0984e3; color: white;")
         btn_box.addWidget(self.btn_refresh)
         btn_box.addWidget(self.btn_download)
-        lyt_model.addWidget(QLabel("Select Local or Preset:"))
-        lyt_model.addWidget(self.combo_model)
-        lyt_model.addLayout(btn_box)
-        right_layout.addWidget(grp_model)
+        lay_local.addWidget(QLabel("Local Model:"))
+        lay_local.addWidget(self.combo_model)
+        lay_local.addLayout(btn_box)
+        lay_local.addStretch()
+        
+        # TAB 2: API
+        tab_api = QWidget()
+        lay_api = QVBoxLayout(tab_api)
+        
+        # Preset Controls
+        preset_box = QHBoxLayout()
+        self.combo_presets = QComboBox()
+        self.combo_presets.addItem("Select Preset...")
+        self.combo_presets.currentIndexChanged.connect(self.apply_api_preset)
+        
+        self.btn_save_preset = QPushButton("💾")
+        self.btn_save_preset.setToolTip("Save current settings as preset")
+        self.btn_save_preset.setFixedWidth(30)
+        self.btn_save_preset.clicked.connect(self.save_api_preset)
+        
+        self.btn_del_preset = QPushButton("🗑️")
+        self.btn_del_preset.setToolTip("Delete selected preset")
+        self.btn_del_preset.setFixedWidth(30)
+        self.btn_del_preset.setStyleSheet("background-color: #d63031;")
+        self.btn_del_preset.clicked.connect(self.delete_api_preset)
+        
+        preset_box.addWidget(self.combo_presets)
+        preset_box.addWidget(self.btn_save_preset)
+        preset_box.addWidget(self.btn_del_preset)
+        lay_api.addLayout(preset_box)
+
+        # Form
+        form_api = QFormLayout()
+        self.inp_api_url = QLineEdit("http://localhost:1234/v1")
+        self.inp_api_key = QLineEdit("lm-studio")
+        self.inp_api_key.setEchoMode(QLineEdit.Password)
+        self.inp_api_model = QLineEdit("qwen-vl")
+        self.inp_api_model.setPlaceholderText("Model ID (e.g. gpt-4o)")
+        
+        form_api.addRow("URL:", self.inp_api_url)
+        form_api.addRow("Key:", self.inp_api_key)
+        form_api.addRow("ID:", self.inp_api_model)
+        lay_api.addLayout(form_api)
+        
+        self.tab_source.addTab(tab_local, "Local (GPU)")
+        self.tab_source.addTab(tab_api, "API / Remote")
+        
+        right_layout.addWidget(self.tab_source)
 
         # 2. Params
-        grp_params = QGroupBox("2. Generation Parameters")
+        grp_params = QGroupBox("2. Parameters")
         lyt_params = QFormLayout(grp_params)
         self.spin_tokens = QSpinBox(); self.spin_tokens.setRange(64, 4096); self.spin_tokens.setValue(512)
         self.spin_temp = QDoubleSpinBox(); self.spin_temp.setRange(0.0, 2.0); self.spin_temp.setSingleStep(0.1); self.spin_temp.setValue(0.7)
@@ -248,7 +299,53 @@ class CaptionTab(QWidget):
         
         self.apply_template()
         self.refresh_models()
+        self.load_api_presets()
 
+    # --- API PRESET LOGIC ---
+    def load_api_presets(self):
+        if os.path.exists(API_PRESETS_FILE):
+            try:
+                with open(API_PRESETS_FILE, 'r') as f:
+                    self.api_presets = json.load(f)
+            except: self.api_presets = {}
+        
+        self.combo_presets.clear()
+        self.combo_presets.addItem("Select Preset...")
+        self.combo_presets.addItems(list(self.api_presets.keys()))
+
+    def save_api_preset(self):
+        name, ok = QInputDialog.getText(self, "Save Preset", "Preset Name:")
+        if ok and name:
+            preset_data = {
+                "base_url": self.inp_api_url.text(),
+                "api_key": self.inp_api_key.text(),
+                "model_name": self.inp_api_model.text()
+            }
+            self.api_presets[name] = preset_data
+            
+            with open(API_PRESETS_FILE, 'w') as f:
+                json.dump(self.api_presets, f, indent=4)
+            
+            self.load_api_presets()
+            self.combo_presets.setCurrentText(name)
+
+    def delete_api_preset(self):
+        name = self.combo_presets.currentText()
+        if name in self.api_presets:
+            del self.api_presets[name]
+            with open(API_PRESETS_FILE, 'w') as f:
+                json.dump(self.api_presets, f, indent=4)
+            self.load_api_presets()
+
+    def apply_api_preset(self):
+        name = self.combo_presets.currentText()
+        if name in self.api_presets:
+            data = self.api_presets[name]
+            self.inp_api_url.setText(data.get("base_url", ""))
+            self.inp_api_key.setText(data.get("api_key", ""))
+            self.inp_api_model.setText(data.get("model_name", ""))
+
+    # --- MAIN LOGIC (UNCHANGED BELOW) ---
     def apply_template(self):
         if not self.chk_override.isChecked():
             key = self.combo_template.currentText()
@@ -359,15 +456,32 @@ class CaptionTab(QWidget):
         if not self.selected_paths:
             self.log_box.append("⚠️ No images selected!")
             return
-        data = self.combo_model.currentData()
-        models_dir = os.path.join(os.getcwd(), "models")
-        path = os.path.join(models_dir, data)
-        if not os.path.exists(path):
-            path = os.path.join(models_dir, data.split("/")[-1])
-            if not os.path.exists(path):
-                self.log_box.append("❌ Model path not found.")
-                return
         
+        # Check active tab (Local vs API)
+        is_local = self.tab_source.currentIndex() == 0
+        model_path = ""
+        api_config = None
+        
+        if is_local:
+            # Local Logic
+            data = self.combo_model.currentData()
+            models_dir = os.path.join(os.getcwd(), "models")
+            path = os.path.join(models_dir, data)
+            if not os.path.exists(path):
+                path = os.path.join(models_dir, data.split("/")[-1])
+                if not os.path.exists(path):
+                    self.log_box.append("❌ Local model not found.")
+                    return
+            model_path = path
+        else:
+            # API Logic
+            api_config = {
+                "base_url": self.inp_api_url.text(),
+                "api_key": self.inp_api_key.text(),
+                "model_name": self.inp_api_model.text()
+            }
+            model_path = "API" # Placeholder
+
         self.set_processing_ui(True)
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(self.selected_paths))
@@ -379,7 +493,7 @@ class CaptionTab(QWidget):
             "top_p": self.spin_top_p.value()
         }
         
-        self.worker = QwenWorker(path, list(self.selected_paths), self.prompt_input.toPlainText(), params)
+        self.worker = QwenWorker(model_path, list(self.selected_paths), self.prompt_input.toPlainText(), params, api_config)
         self.thread = QThread()
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)

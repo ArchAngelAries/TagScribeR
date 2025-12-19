@@ -7,3 +7,4 @@ opencv-python
 qwen-vl-utils
 piexif
 huggingface_hub
+openai

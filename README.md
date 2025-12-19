@@ -1,11 +1,20 @@
-Here is the raw Markdown code for your `README.md`. You can copy this directly into your file.
-
-```markdown
 # TagScribeR v2
 
 **TagScribeR v2** is a modern, GPU-accelerated local image captioning and dataset management suite. Rebuilt from the ground up using **PySide6** and powered by **Qwen 3-VL** (Vision-Language) models, it offers a "Studio" workflow for preparing AI training datasets.
 
-![TagScribeR Screenshot](https://via.placeholder.com/800x450.png?text=TagScribeR+v2+Screenshot)
+<img width="512" height="512" alt="Logo" src="https://github.com/user-attachments/assets/c94898af-b851-49f0-9f72-f40587b739b8" />
+
+<img width="3250" height="1888" alt="1" src="https://github.com/user-attachments/assets/fd63cc0e-ad96-44a9-8051-ac360936cae5" />
+
+<img width="3824" height="2056" alt="2" src="https://github.com/user-attachments/assets/2afb6ae8-003e-4632-81cc-39f629060b9f" />
+
+<img width="3829" height="2066" alt="3" src="https://github.com/user-attachments/assets/78423ea1-5d91-4017-95e0-5e7f1ea655e1" />
+
+<img width="3839" height="2066" alt="4" src="https://github.com/user-attachments/assets/69e019fe-16e0-458e-80e4-0065dc901159" />
+
+<img width="3839" height="2067" alt="5" src="https://github.com/user-attachments/assets/f9382a3a-2b9e-43c8-b625-18e4469687c7" />
+
+<img width="3839" height="2060" alt="6" src="https://github.com/user-attachments/assets/bf22af80-d7ac-47aa-bf5b-3025a77f726c" />
 
 ## ✨ Key Features
 
@@ -14,6 +23,7 @@ Here is the raw Markdown code for your `README.md`. You can copy this directly i
     *   **GPU Accelerated:** Supports NVIDIA (CUDA) and AMD (ROCm) on Windows.
     *   **Real-time Preview:** Watch captions appear as they generate.
     *   **Custom Prompts:** Use templates or natural language (e.g., "Describe the lighting in detail").
+    *   **API Mode:** Connect to **LM Studio**, **Ollama**, or **OpenAI** (GPT-4o) to offload processing to another machine or the cloud.
 *   **✏️ Batch Editor:** Resize, Crop (with focus points), Rotate, and Convert formats in bulk.
 *   **📂 Dataset Manager:** Create, sort, filter, and organize image collections without duplicating files manually.
 *   **ℹ️ Metadata Editor:** View and edit EXIF data, specifically targeting Stable Diffusion generation parameters.

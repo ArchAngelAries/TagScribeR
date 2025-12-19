@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import base64
+from io import BytesIO
 from PIL import Image, ImageOps
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import Qt
@@ -42,3 +44,26 @@ def load_thumbnail(path, size=(300, 300)):
     except Exception as e:
         print(f"Error loading thumbnail {path}: {e}")
         return QPixmap()
+
+def image_to_base64(image_path):
+    """Converts an image file to a base64 string for API usage."""
+    try:
+        with Image.open(image_path) as img:
+            # Fix rotation based on EXIF
+            img = ImageOps.exif_transpose(img)
+            
+            # Convert to RGB to ensure compatibility
+            if img.mode not in ('RGB', 'L'):
+                img = img.convert('RGB')
+            
+            # Resize if too massive (optional, but good for APIs)
+            # Most VLMs choke on > 4096px
+            if max(img.size) > 4096:
+                img.thumbnail((4096, 4096))
+
+            buff = BytesIO()
+            img.save(buff, format="JPEG", quality=90)
+            return base64.b64encode(buff.getvalue()).decode('utf-8')
+    except Exception as e:
+        print(f"Base64 Conversion Error: {e}")
+        return None

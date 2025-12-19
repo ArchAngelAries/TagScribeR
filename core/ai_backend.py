@@ -5,28 +5,32 @@ from transformers import AutoProcessor, AutoModelForImageTextToText
 from qwen_vl_utils import process_vision_info
 from huggingface_hub import snapshot_download
 from PySide6.QtCore import QObject, Signal
+from openai import OpenAI
+from core.image_utils import image_to_base64
 
 class QwenWorker(QObject):
     finished = Signal(str, str) # file_path, caption
     error = Signal(str)
     progress = Signal(str)      # Log messages
     
-    def __init__(self, model_path, file_paths, prompt, params=None):
+    def __init__(self, model_path, file_paths, prompt, params=None, api_config=None):
         super().__init__()
-        self.model_path = model_path
         self.file_paths = file_paths
         self.prompt = prompt
-        self.params = params or {} # {max_tokens, temperature, top_p}
+        self.params = params or {} 
+        self.api_config = api_config # {base_url, api_key, model_name}
+        
+        # Local Model Stuff
+        self.model_path = model_path
         self.model = None
         self.processor = None
         self.running = True
         self.device = "cpu"
 
-    def load_model(self):
+    def load_local_model(self):
+        """Loads the local Transformers model."""
         try:
-            # --- HARDWARE DETECTION ---
             if torch.cuda.is_available():
-                # ComfyUI Fix for AMD/Windows
                 self.device_map = {"": 0}
                 self.dtype = torch.float16
                 self.device = "cuda"
@@ -37,85 +41,126 @@ class QwenWorker(QObject):
                 self.device = "cpu"
                 self.progress.emit("⚠️ GPU NOT DETECTED! Falling back to CPU.")
 
-            self.progress.emit(f"📂 Loading model from: {self.model_path}")
+            self.progress.emit(f"📂 Loading local model from: {self.model_path}")
 
             if os.path.isfile(self.model_path):
                  self.model_path = os.path.dirname(self.model_path)
 
-            # --- LOAD PROCESSOR ---
-            self.processor = AutoProcessor.from_pretrained(
-                self.model_path, 
-                trust_remote_code=True
-            )
-            
-            # --- LOAD MODEL ---
+            self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
             self.model = AutoModelForImageTextToText.from_pretrained(
                 self.model_path,
                 device_map=self.device_map,
                 torch_dtype=self.dtype,
                 trust_remote_code=True
             )
-            
             self.model.eval()
-            self.progress.emit("✅ Model loaded successfully!")
+            self.progress.emit("✅ Local Model loaded!")
             return True
         except Exception as e:
-            self.error.emit(f"Failed to load model: {str(e)}")
+            self.error.emit(f"Failed to load local model: {str(e)}")
             return False
 
+    def run_api_inference(self, client, fpath):
+        """Handles OpenAI-Compatible API calls (LM Studio, Ollama, etc)"""
+        b64_img = image_to_base64(fpath)
+        if not b64_img:
+            raise Exception("Failed to encode image to Base64")
+
+        try:
+            response = client.chat.completions.create(
+                model=self.api_config['model_name'],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": self.prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{b64_img}"
+                                },
+                            },
+                        ],
+                    }
+                ],
+                max_tokens=self.params.get('max_tokens', 512),
+                temperature=self.params.get('temperature', 0.7),
+                top_p=self.params.get('top_p', 0.9),
+            )
+            
+            if not response or not response.choices:
+                raise Exception("API returned empty response.")
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            raise Exception(f"API Call Failed: {e}")
+
+    def run_local_inference(self, fpath):
+        """Handles Local Transformers Inference"""
+        messages = [{
+            "role": "user",
+            "content": [{"type": "image", "image": fpath}, {"type": "text", "text": self.prompt}]
+        }]
+        
+        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        image_inputs, video_inputs = process_vision_info(messages)
+        
+        inputs = self.processor(
+            text=[text], 
+            images=image_inputs, 
+            videos=video_inputs, 
+            padding=True, 
+            return_tensors="pt"
+        )
+        
+        inputs = inputs.to(self.model.device)
+
+        with torch.no_grad():
+            generated_ids = self.model.generate(
+                **inputs, 
+                max_new_tokens=self.params.get('max_tokens', 256),
+                do_sample=True if self.params.get('temperature', 0.7) > 0 else False,
+                temperature=self.params.get('temperature', 0.7),
+                top_p=self.params.get('top_p', 0.9)
+            )
+        
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        return self.processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )[0]
+
     def run(self):
-        if not self.model:
-            if not self.load_model():
+        # Check Mode
+        is_api = self.api_config is not None
+        
+        if is_api:
+            url = self.api_config['base_url'].strip()
+            self.progress.emit(f"🌐 Connecting to API: {url}")
+            try:
+                client = OpenAI(
+                    base_url=url,
+                    api_key=self.api_config['api_key']
+                )
+            except Exception as e:
+                self.error.emit(f"API Init Error: {e}")
                 return
+        else:
+            if not self.model:
+                if not self.load_local_model():
+                    return
 
         total = len(self.file_paths)
         
-        # Extract params
-        max_tokens = self.params.get('max_tokens', 256)
-        temp = self.params.get('temperature', 0.7)
-        top_p = self.params.get('top_p', 0.9)
-        
-        # Logic: If temp is 0, we can't 'sample', we must be deterministic
-        do_sample = True if temp > 0 else False
-
         for i, fpath in enumerate(self.file_paths):
             if not self.running: break
             try:
-                # Prepare Inputs
-                messages = [{
-                    "role": "user",
-                    "content": [{"type": "image", "image": fpath}, {"type": "text", "text": self.prompt}]
-                }]
-                
-                text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                image_inputs, video_inputs = process_vision_info(messages)
-                
-                inputs = self.processor(
-                    text=[text], 
-                    images=image_inputs, 
-                    videos=video_inputs, 
-                    padding=True, 
-                    return_tensors="pt"
-                )
-                
-                inputs = inputs.to(self.model.device)
-
-                # Generate with User Params
-                with torch.no_grad():
-                    generated_ids = self.model.generate(
-                        **inputs, 
-                        max_new_tokens=max_tokens,
-                        do_sample=do_sample,
-                        temperature=temp,
-                        top_p=top_p
-                    )
-                
-                generated_ids_trimmed = [
-                    out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-                ]
-                output_text = self.processor.batch_decode(
-                    generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-                )[0]
+                if is_api:
+                    output_text = self.run_api_inference(client, fpath)
+                else:
+                    output_text = self.run_local_inference(fpath)
                 
                 self.finished.emit(fpath, output_text)
                 self.progress.emit(f"({i+1}/{total}) Processed")
@@ -130,7 +175,7 @@ class QwenWorker(QObject):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-# --- SEPARATE WORKER FOR DOWNLOADS ---
+# --- DOWNLOAD WORKER (Unchanged) ---
 class DownloadWorker(QObject):
     finished = Signal()
     progress = Signal(str)

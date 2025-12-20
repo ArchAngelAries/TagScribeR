@@ -29,23 +29,23 @@ echo [INFO] Installing GUI and AI dependencies...
 pip install -r requirements.txt
 echo.
 
-REM --- 4. Hardware Auto-Detection ---
+REM --- 4. Hardware Auto-Detection (PowerShell Method) ---
 echo [INFO] Detecting Hardware...
 
-REM Get GPU Name into variable
-for /f "tokens=2 delims==" %%a in ('wmic path win32_videocontroller get name /value') do set "gpu=%%a"
-echo      Found GPU: %gpu%
+REM Print GPU names to console for user visibility
+powershell -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"
 
 REM --- NVIDIA DETECTION ---
-echo %gpu% | findstr /i "NVIDIA" >nul
+powershell -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name" | findstr /i "NVIDIA" >nul
 if %errorlevel% equ 0 (
+    echo.
     echo [DETECTED] NVIDIA GPU.
     
     REM Check specifically for RTX 50 Series (Blackwell) -> CUDA 12.8
-    echo %gpu% | findstr /i "RTX 50" >nul
+    powershell -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name" | findstr /i "RTX 50" >nul
     if %errorlevel% equ 0 (
         echo [INFO] RTX 50 Series detected! Installing CUDA 12.8 (cu128)...
-        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+        pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
     ) else (
         echo [INFO] Standard NVIDIA card detected. Installing CUDA 12.4 (cu124)...
         pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
@@ -54,8 +54,9 @@ if %errorlevel% equ 0 (
 )
 
 REM --- AMD DETECTION ---
-echo %gpu% | findstr /i "Radeon AMD" >nul
+powershell -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name" | findstr /i "Radeon AMD" >nul
 if %errorlevel% equ 0 (
+    echo.
     echo [DETECTED] AMD Radeon GPU.
     
     REM Initialize default to most common (7000 series)
@@ -63,21 +64,21 @@ if %errorlevel% equ 0 (
     set "arch=gfx110X-all (RX 7000 Series / 780M)"
 
     REM Check for RX 9000 Series (gfx120X)
-    echo %gpu% | findstr /i "RX 90" >nul
+    powershell -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name" | findstr /i "RX 90" >nul
     if %errorlevel% equ 0 (
         set "amd_url=https://rocm.nightlies.amd.com/v2/gfx120X-all/"
         set "arch=gfx120X (RX 9000 Series)"
     )
 
     REM Check for Strix Halo (gfx1151)
-    echo %gpu% | findstr /i "Strix Halo" >nul
+    powershell -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name" | findstr /i "Strix Halo" >nul
     if %errorlevel% equ 0 (
         set "amd_url=https://rocm.nightlies.amd.com/v2/gfx1151/"
         set "arch=gfx1151 (Strix Halo)"
     )
 
     REM Check for Workstation MI300 (gfx94X)
-    echo %gpu% | findstr /i "MI300" >nul
+    powershell -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name" | findstr /i "MI300" >nul
     if %errorlevel% equ 0 (
         set "amd_url=https://rocm.nightlies.amd.com/v2/gfx94X-dcgpu/"
         set "arch=gfx94X (MI300)"

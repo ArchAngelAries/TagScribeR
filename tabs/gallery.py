@@ -1,5 +1,6 @@
 import os
 import shutil
+import unicodedata
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QPushButton, 
     QLineEdit, QGridLayout, QTextEdit, QSplitter, QFileDialog, QMessageBox, 
@@ -126,15 +127,15 @@ class GalleryTab(QWidget):
         self.btn_select_all = QPushButton("Select All")
         self.btn_select_all.clicked.connect(self.select_all)
         
-        # Undo/Redo Buttons (Visual placeholders for now)
-        self.btn_undo = QPushButton("↩️")
-        self.btn_undo.setToolTip("Undo (Ctrl+Z) - Logic coming next")
-        self.btn_redo = QPushButton("↪️")
-        self.btn_redo.setToolTip("Redo (Ctrl+Y) - Logic coming next")
-        
         self.btn_save_all = QPushButton("💾 Save")
         self.btn_save_all.clicked.connect(self.save_all)
         self.btn_save_all.setStyleSheet("background-color: #0984e3; color: white; font-weight: bold;")
+
+        # NEW: Sanitize Button
+        self.btn_sanitize = QPushButton("🧹 Sanitize Text")
+        self.btn_sanitize.setToolTip("Convert special characters (ä, ö, ñ) to ASCII and remove weird symbols.")
+        self.btn_sanitize.clicked.connect(self.sanitize_selection)
+        self.btn_sanitize.setStyleSheet("background-color: #e17055; color: white;")
 
         self.btn_dataset = QPushButton("📦 Save to Dataset")
         self.btn_dataset.clicked.connect(self.save_to_dataset)
@@ -142,8 +143,7 @@ class GalleryTab(QWidget):
 
         toolbar.addWidget(self.btn_open)
         toolbar.addWidget(self.btn_select_all)
-        toolbar.addWidget(self.btn_undo)
-        toolbar.addWidget(self.btn_redo)
+        toolbar.addWidget(self.btn_sanitize) # Added
         toolbar.addWidget(self.btn_save_all)
         toolbar.addWidget(self.btn_dataset)
         left_layout.addLayout(toolbar)
@@ -199,11 +199,8 @@ class GalleryTab(QWidget):
         self.setup_hotkeys()
 
     def setup_hotkeys(self):
-        # Toggle Select All
         QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(self.select_all)
-        # Save All
         QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.save_all)
-        # Clear Selection Text
         QShortcut(QKeySequence("Del"), self).activated.connect(self.delete_text_selection)
 
     def select_folder(self):
@@ -250,10 +247,7 @@ class GalleryTab(QWidget):
             card.toggle_selection(toggle_to)
 
     def delete_text_selection(self):
-        # Don't delete if focusing input field
         if self.inp_new_tag.hasFocus(): return
-        
-        # Check specific focus within cards
         focus_widget = QApplication.focusWidget()
         if isinstance(focus_widget, QTextEdit): return
 
@@ -263,6 +257,28 @@ class GalleryTab(QWidget):
                 for path in self.selected_paths:
                     if path in self.image_cards:
                         self.image_cards[path].clear_text()
+
+    def sanitize_selection(self):
+        """Converts special chars to ASCII (e.g., ö -> o, ñ -> n)"""
+        if not self.selected_paths:
+            QMessageBox.warning(self, "No Selection", "Please select images to sanitize.")
+            return
+            
+        count = 0
+        for path in self.selected_paths:
+            if path in self.image_cards:
+                card = self.image_cards[path]
+                original_text = card.txt_caption.toPlainText()
+                
+                # Normalize Unicode characters to ASCII equivalent
+                # NFKD breaks 'ü' into 'u' + '¨', then encode(ascii, ignore) drops the '¨'
+                sanitized_text = unicodedata.normalize('NFKD', original_text).encode('ascii', 'ignore').decode('ascii')
+                
+                if original_text != sanitized_text:
+                    card.txt_caption.setText(sanitized_text)
+                    count += 1
+                    
+        QMessageBox.information(self, "Sanitized", f"Updated captions for {count} images.")
 
     def save_all(self):
         count = 0

@@ -97,6 +97,25 @@ pip install --index-url https://rocm.nightlies.amd.com/v2/gfx94X-dcgpu/ --pre to
 
 > **⚠️ Important:** Do not run `pip install torch` afterwards, or it will overwrite the AMD version with the generic CPU version.
 
+## 🐧 Linux Users
+
+TagScribeR works natively on Linux with full GPU acceleration.
+
+1.  Run the install script:
+    ```bash
+    chmod +x install.sh
+    ./install.sh
+    ```
+2.  If the app fails to launch, you may need the Qt XCB library:
+    ```bash
+    sudo apt-get install libxcb-cursor0
+    ```
+3.  Launch:
+    ```bash
+    source venv/bin/activate
+    python main.py
+    ```
+
 ---
 
 ## 🛠️ Usage Guide
@@ -126,5 +145,5 @@ pip install --index-url https://rocm.nightlies.amd.com/v2/gfx94X-dcgpu/ --pre to
 *   **AI Backend:** [HuggingFace Transformers](https://huggingface.co/docs/transformers/index) & [Qwen-VL](https://github.com/QwenLM/Qwen-VL)
 *   **AMD Support:** [ROCm for Windows](https://github.com/ROCm/TheRock)
 
-Created by **ArchAngelAries**.
+Created by **ArchAngelAries**. Code Assisted by **Google's Gemini Pro 3**.
 ```

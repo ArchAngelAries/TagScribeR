@@ -1,12 +1,10 @@
 import os
-import torch
 import gc
-from transformers import AutoProcessor, AutoModelForImageTextToText
-from qwen_vl_utils import process_vision_info
-from huggingface_hub import snapshot_download
 from PySide6.QtCore import QObject, Signal
-from openai import OpenAI
 from core.image_utils import image_to_base64
+
+# Note: Heavy imports (torch, transformers, openai) are lazy-loaded inside methods 
+# to prevent application startup lag.
 
 class QwenWorker(QObject):
     finished = Signal(str, str) # file_path, caption
@@ -29,12 +27,31 @@ class QwenWorker(QObject):
 
     def load_local_model(self):
         """Loads the local Transformers model."""
+        # --- LAZY IMPORT ---
+        import torch
+        import platform
+        from transformers import AutoProcessor, AutoModelForImageTextToText
+        # -------------------
+
         try:
+            current_os = platform.system()
+            
+            # --- HARDWARE DETECTION ---
             if torch.cuda.is_available():
-                self.device_map = {"": 0}
-                self.dtype = torch.float16
-                self.device = "cuda"
                 self.progress.emit(f"🚀 GPU Detected: {torch.cuda.get_device_name(0)}")
+                
+                if current_os == "Linux":
+                    # Linux handles device_map="auto" much better
+                    self.device_map = "auto"
+                    self.device = "cuda" 
+                    self.dtype = torch.float16
+                    self.progress.emit("✅ Mode: Linux Optimized (Accelerate Auto-Map)")
+                else:
+                    # Windows (ROCm/CUDA) often needs manual forcing
+                    self.device_map = None 
+                    self.device = "cuda"
+                    self.dtype = torch.float16
+                    self.progress.emit("✅ Mode: Windows Forced GPU")
             else:
                 self.device_map = "cpu"
                 self.dtype = torch.float32
@@ -47,12 +64,18 @@ class QwenWorker(QObject):
                  self.model_path = os.path.dirname(self.model_path)
 
             self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
+            
+            # Load Model
             self.model = AutoModelForImageTextToText.from_pretrained(
                 self.model_path,
                 device_map=self.device_map,
                 torch_dtype=self.dtype,
                 trust_remote_code=True
             )
+            
+            if current_os == "Windows" and self.device == "cuda":
+                self.model.to(self.device)
+            
             self.model.eval()
             self.progress.emit("✅ Local Model loaded!")
             return True
@@ -61,7 +84,7 @@ class QwenWorker(QObject):
             return False
 
     def run_api_inference(self, client, fpath):
-        """Handles OpenAI-Compatible API calls (LM Studio, Ollama, etc)"""
+        """Handles OpenAI-Compatible API calls"""
         b64_img = image_to_base64(fpath)
         if not b64_img:
             raise Exception("Failed to encode image to Base64")
@@ -98,6 +121,11 @@ class QwenWorker(QObject):
 
     def run_local_inference(self, fpath):
         """Handles Local Transformers Inference"""
+        # --- LAZY IMPORT ---
+        import torch
+        from qwen_vl_utils import process_vision_info
+        # -------------------
+
         messages = [{
             "role": "user",
             "content": [{"type": "image", "image": fpath}, {"type": "text", "text": self.prompt}]
@@ -137,6 +165,9 @@ class QwenWorker(QObject):
         is_api = self.api_config is not None
         
         if is_api:
+            # --- LAZY IMPORT ---
+            from openai import OpenAI
+            # -------------------
             url = self.api_config['base_url'].strip()
             self.progress.emit(f"🌐 Connecting to API: {url}")
             try:
@@ -169,11 +200,16 @@ class QwenWorker(QObject):
                 self.error.emit(f"Error on {os.path.basename(fpath)}: {str(e)}")
     
     def stop(self):
+        # --- LAZY IMPORT ---
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except: pass
+        # -------------------
         self.running = False
         self.model = None
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
 # --- DOWNLOAD WORKER (Unchanged) ---
 class DownloadWorker(QObject):
@@ -186,6 +222,9 @@ class DownloadWorker(QObject):
         self.target_dir = target_dir
         
     def run(self):
+        # --- LAZY IMPORT ---
+        from huggingface_hub import snapshot_download
+        # -------------------
         try:
             self.progress.emit(f"📥 Starting download for {self.repo_id}...")
             self.progress.emit("This may take a while (several GBs)...")

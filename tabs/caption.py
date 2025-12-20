@@ -1,6 +1,7 @@
 import os
 import shutil
 import json
+import gc
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, 
     QLabel, QProgressBar, QComboBox, QFileDialog, QScrollArea, 
@@ -8,7 +9,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QFormLayout, QInputDialog, QTabWidget, QLineEdit
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QRunnable, QThreadPool, QObject
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QShortcut, QKeySequence
 from core.ai_backend import QwenWorker, DownloadWorker
 from core.image_utils import load_thumbnail
 
@@ -123,6 +124,7 @@ class CaptionTab(QWidget):
         self.thread_pool = QThreadPool()
         self.is_processing = False 
         self.api_presets = {}
+        self.worker = None # Track worker for cleanup
         
         layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
@@ -174,47 +176,48 @@ class CaptionTab(QWidget):
         self.btn_download.clicked.connect(self.start_download)
         self.btn_download.setEnabled(False) 
         self.btn_download.setStyleSheet("background-color: #0984e3; color: white;")
+        
+        # NEW: Unload Button
+        self.btn_unload = QPushButton("🧹 Free VRAM")
+        self.btn_unload.setToolTip("Unloads model from GPU memory")
+        self.btn_unload.clicked.connect(self.cleanup_worker)
+        self.btn_unload.setStyleSheet("background-color: #636e72; color: white;")
+
         btn_box.addWidget(self.btn_refresh)
         btn_box.addWidget(self.btn_download)
+        
         lay_local.addWidget(QLabel("Local Model:"))
         lay_local.addWidget(self.combo_model)
         lay_local.addLayout(btn_box)
+        lay_local.addWidget(self.btn_unload) # Added button
         lay_local.addStretch()
         
         # TAB 2: API
         tab_api = QWidget()
         lay_api = QVBoxLayout(tab_api)
         
-        # Preset Controls
         preset_box = QHBoxLayout()
         self.combo_presets = QComboBox()
         self.combo_presets.addItem("Select Preset...")
         self.combo_presets.currentIndexChanged.connect(self.apply_api_preset)
-        
         self.btn_save_preset = QPushButton("💾")
-        self.btn_save_preset.setToolTip("Save current settings as preset")
         self.btn_save_preset.setFixedWidth(30)
         self.btn_save_preset.clicked.connect(self.save_api_preset)
-        
         self.btn_del_preset = QPushButton("🗑️")
-        self.btn_del_preset.setToolTip("Delete selected preset")
         self.btn_del_preset.setFixedWidth(30)
         self.btn_del_preset.setStyleSheet("background-color: #d63031;")
         self.btn_del_preset.clicked.connect(self.delete_api_preset)
-        
         preset_box.addWidget(self.combo_presets)
         preset_box.addWidget(self.btn_save_preset)
         preset_box.addWidget(self.btn_del_preset)
         lay_api.addLayout(preset_box)
 
-        # Form
         form_api = QFormLayout()
         self.inp_api_url = QLineEdit("http://localhost:1234/v1")
         self.inp_api_key = QLineEdit("lm-studio")
         self.inp_api_key.setEchoMode(QLineEdit.Password)
         self.inp_api_model = QLineEdit("qwen-vl")
         self.inp_api_model.setPlaceholderText("Model ID (e.g. gpt-4o)")
-        
         form_api.addRow("URL:", self.inp_api_url)
         form_api.addRow("Key:", self.inp_api_key)
         form_api.addRow("ID:", self.inp_api_model)
@@ -300,15 +303,24 @@ class CaptionTab(QWidget):
         self.apply_template()
         self.refresh_models()
         self.load_api_presets()
+        self.setup_hotkeys()
 
-    # --- API PRESET LOGIC ---
+    def setup_hotkeys(self):
+        QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(self.select_all)
+        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self.run_process)
+        QShortcut(QKeySequence("Ctrl+Enter"), self).activated.connect(self.run_process)
+        QShortcut(QKeySequence("Esc"), self).activated.connect(self.abort_process)
+
+    def abort_process(self):
+        if self.is_processing:
+            self.toggle_process_state()
+
     def load_api_presets(self):
         if os.path.exists(API_PRESETS_FILE):
             try:
                 with open(API_PRESETS_FILE, 'r') as f:
                     self.api_presets = json.load(f)
             except: self.api_presets = {}
-        
         self.combo_presets.clear()
         self.combo_presets.addItem("Select Preset...")
         self.combo_presets.addItems(list(self.api_presets.keys()))
@@ -322,10 +334,7 @@ class CaptionTab(QWidget):
                 "model_name": self.inp_api_model.text()
             }
             self.api_presets[name] = preset_data
-            
-            with open(API_PRESETS_FILE, 'w') as f:
-                json.dump(self.api_presets, f, indent=4)
-            
+            with open(API_PRESETS_FILE, 'w') as f: json.dump(self.api_presets, f, indent=4)
             self.load_api_presets()
             self.combo_presets.setCurrentText(name)
 
@@ -333,8 +342,7 @@ class CaptionTab(QWidget):
         name = self.combo_presets.currentText()
         if name in self.api_presets:
             del self.api_presets[name]
-            with open(API_PRESETS_FILE, 'w') as f:
-                json.dump(self.api_presets, f, indent=4)
+            with open(API_PRESETS_FILE, 'w') as f: json.dump(self.api_presets, f, indent=4)
             self.load_api_presets()
 
     def apply_api_preset(self):
@@ -345,7 +353,6 @@ class CaptionTab(QWidget):
             self.inp_api_key.setText(data.get("api_key", ""))
             self.inp_api_model.setText(data.get("model_name", ""))
 
-    # --- MAIN LOGIC (UNCHANGED BELOW) ---
     def apply_template(self):
         if not self.chk_override.isChecked():
             key = self.combo_template.currentText()
@@ -432,11 +439,28 @@ class CaptionTab(QWidget):
 
     def toggle_process_state(self):
         if self.is_processing:
-            if hasattr(self, 'worker'): self.worker.stop()
+            self.cleanup_worker()
             self.log_box.append("🛑 Process Aborted.")
             self.set_processing_ui(False)
         else:
             self.run_process()
+
+    def cleanup_worker(self):
+        """Force stops the worker and clears GPU memory."""
+        if self.worker:
+            self.worker.stop()
+            # Explicit deletion to help GC
+            del self.worker
+            self.worker = None
+        
+        # Try import torch to clear cache (only if loaded)
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+            self.log_box.append("🧹 VRAM/RAM Cleared.")
+        except: pass
 
     def set_processing_ui(self, running):
         self.is_processing = running
@@ -457,13 +481,14 @@ class CaptionTab(QWidget):
             self.log_box.append("⚠️ No images selected!")
             return
         
-        # Check active tab (Local vs API)
+        # Cleanup any existing worker first
+        self.cleanup_worker()
+        
         is_local = self.tab_source.currentIndex() == 0
         model_path = ""
         api_config = None
         
         if is_local:
-            # Local Logic
             data = self.combo_model.currentData()
             models_dir = os.path.join(os.getcwd(), "models")
             path = os.path.join(models_dir, data)
@@ -474,13 +499,12 @@ class CaptionTab(QWidget):
                     return
             model_path = path
         else:
-            # API Logic
             api_config = {
                 "base_url": self.inp_api_url.text(),
                 "api_key": self.inp_api_key.text(),
                 "model_name": self.inp_api_model.text()
             }
-            model_path = "API" # Placeholder
+            model_path = "API"
 
         self.set_processing_ui(True)
         self.progress_bar.setValue(0)

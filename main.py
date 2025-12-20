@@ -2,33 +2,32 @@ import sys
 import json
 import os
 import ctypes
-from ctypes import wintypes
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                               QHBoxLayout, QListWidget, QStackedWidget)
-from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, 
+    QHBoxLayout, QListWidget, QStackedWidget, QPushButton
+)
+from PySide6.QtGui import QIcon, QShortcut, QKeySequence
 from qt_material import apply_stylesheet
 
-from tabs import GalleryTab, CaptionTab, EditorTab, MetadataTab, SettingsTab, DatasetsTab
+# Clean imports
+from tabs import GalleryTab, CaptionTab, EditorTab, MetadataTab, SettingsTab, DatasetsTab, HelpDialog
 
 CONFIG_FILE = "config.json"
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TagScribeR v2.0 - Qwen Edition")
+        self.setWindowTitle("TagScribeR v2.1 - Qwen Edition")
         self.resize(1600, 900)
         
-        # --- ICON LOGIC ---
-        # We try to use the ICO first, then PNG
+        # Window Icon logic
         basedir = os.path.dirname(os.path.abspath(__file__))
         icon_path = os.path.join(basedir, "resources", "logo.ico")
         if not os.path.exists(icon_path):
             icon_path = os.path.join(basedir, "resources", "logo.png")
-            
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
-            # Store path for global access
-            self.icon_path = icon_path 
+            self.icon_path = icon_path
         
         # Layout
         central_widget = QWidget()
@@ -37,9 +36,14 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0,0,0,0)
         main_layout.setSpacing(0)
 
-        # Sidebar
+        # --- SIDEBAR ---
+        sidebar_container = QWidget()
+        sidebar_container.setFixedWidth(200)
+        sidebar_container.setStyleSheet("background-color: #232323;")
+        sidebar_layout = QVBoxLayout(sidebar_container)
+        sidebar_layout.setContentsMargins(0,0,0,0)
+        
         self.sidebar = QListWidget()
-        self.sidebar.setFixedWidth(200)
         self.sidebar.addItem("🖼️ Gallery")
         self.sidebar.addItem("🤖 Auto Caption")
         self.sidebar.addItem("✏️ Image Editor")
@@ -54,9 +58,19 @@ class MainWindow(QMainWindow):
             QListWidget::item:selected { background-color: #00b894; color: white; }
         """)
         
-        # Stack
-        self.stack = QStackedWidget()
+        # Help Button
+        btn_help = QPushButton("❓ Help / Manual")
+        btn_help.setStyleSheet("""
+            QPushButton { background-color: #2d3436; color: #aaa; border: none; padding: 15px; text-align: left; }
+            QPushButton:hover { background-color: #333; color: white; }
+        """)
+        btn_help.clicked.connect(self.show_help)
         
+        sidebar_layout.addWidget(self.sidebar)
+        sidebar_layout.addWidget(btn_help)
+
+        # --- STACK ---
+        self.stack = QStackedWidget()
         self.tab_gallery = GalleryTab()
         self.tab_caption = CaptionTab()
         self.tab_editor = EditorTab()
@@ -73,23 +87,38 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.tab_metadata)
         self.stack.addWidget(self.tab_settings)
 
-        main_layout.addWidget(self.sidebar)
+        main_layout.addWidget(sidebar_container)
         main_layout.addWidget(self.stack)
         self.sidebar.setCurrentRow(0)
+        
+        self.setup_hotkeys()
 
     def change_tab(self, index):
         self.stack.setCurrentIndex(index)
 
-    # --- NATIVE WINDOWS ICON FORCE ---
+    def show_help(self):
+        dlg = HelpDialog(self)
+        dlg.exec()
+
+    def setup_hotkeys(self):
+        for i in range(6):
+            QShortcut(QKeySequence(f"Ctrl+{i+1}"), self).activated.connect(lambda idx=i: self.sidebar.setCurrentRow(idx))
+        QShortcut(QKeySequence("F1"), self).activated.connect(self.show_help)
+
     def showEvent(self, event):
         super().showEvent(event)
-        # Only run on Windows
         if os.name == 'nt' and hasattr(self, 'icon_path'):
-            try:
-                # Force Windows to refresh the taskbar icon mapping for this window handle
-                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-            except:
-                pass
+            try: ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            except: pass
+
+    # --- CLEANUP ON EXIT ---
+    def closeEvent(self, event):
+        # Explicitly ask caption tab to kill threads and free VRAM
+        if hasattr(self.tab_caption, 'cleanup_worker'):
+            self.tab_caption.cleanup_worker()
+        
+        # Accept closing
+        event.accept()
 
 def load_theme_from_config():
     default_theme = 'dark_teal.xml'
@@ -100,20 +129,15 @@ def load_theme_from_config():
         except: pass
     return default_theme
 
-# --- GLOBAL APP ID ---
-# Changed again to force cache refresh
 myappid = 'ArchAngelAries.TagScribeR.Pro.Final.v4' 
 
 if __name__ == "__main__":
     if os.name == 'nt':
-        try:
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-        except Exception as e:
-            print(f"AppID Error: {e}")
+        try: ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except: pass
 
     app = QApplication(sys.argv)
     
-    # 1. Load Icon Global
     basedir = os.path.dirname(os.path.abspath(__file__))
     icon_path = os.path.join(basedir, "resources", "logo.ico")
     if not os.path.exists(icon_path):
@@ -121,9 +145,6 @@ if __name__ == "__main__":
     
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
-        print(f"Icon loaded from: {icon_path}")
-    else:
-        print("❌ Icon file not found in resources/")
 
     startup_theme = load_theme_from_config()
     apply_stylesheet(app, theme=startup_theme)
@@ -136,9 +157,4 @@ if __name__ == "__main__":
 
     window = MainWindow()
     window.show()
-    
-    # One last trick: Force update
-    if os.name == 'nt':
-        window.setWindowIcon(QIcon(icon_path))
-    
     sys.exit(app.exec())

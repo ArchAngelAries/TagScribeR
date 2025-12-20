@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QProgressDialog, QApplication
 )
 from PySide6.QtCore import Qt, Signal, QRunnable, QThreadPool, QObject, Slot
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QShortcut, QKeySequence
 from core.image_utils import load_thumbnail
 
 # Determine Root Directory
@@ -35,12 +35,10 @@ class ThumbnailWorker(QRunnable):
         pix = load_thumbnail(self.path, self.size)
         info = "?"
         try:
-            # Use PIL for info to avoid CV2 conflicts
             with Image.open(self.path) as img:
                 w, h = img.size
                 info = f"{w} x {h}"
-        except:
-            pass
+        except: pass
         self.signals.loaded.emit(self.path, pix, info)
 
 # --- VISUAL CARD ---
@@ -205,6 +203,8 @@ class EditorTab(QWidget):
 
         right_layout.addStretch()
         
+        self.progress = QProgressBar()
+        right_layout.addWidget(self.progress)
         self.log_box = QTextEdit()
         self.log_box.setPlaceholderText("Log...")
         self.log_box.setReadOnly(True)
@@ -216,6 +216,13 @@ class EditorTab(QWidget):
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter)
+        
+        self.setup_hotkeys()
+
+    def setup_hotkeys(self):
+        QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(self.select_all)
+        QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(lambda: self.run_batch_main_thread('rotate', {'direction': 'cw'}))
+        QShortcut(QKeySequence("Ctrl+Shift+R"), self).activated.connect(lambda: self.run_batch_main_thread('rotate', {'direction': 'ccw'}))
 
     def load_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Folder")
@@ -280,7 +287,6 @@ class EditorTab(QWidget):
         }
         self.run_batch_main_thread('convert', params)
 
-    # --- MAIN THREAD BATCH PROCESSOR (STABILITY FIX) ---
     def run_batch_main_thread(self, operation, params):
         if not self.selected_paths:
             self.log_box.append("⚠️ No images selected!")
@@ -289,16 +295,13 @@ class EditorTab(QWidget):
         mode = 'overwrite' if self.rad_overwrite.isChecked() else 'folder'
         output_folder = EDIT_DIR if mode == 'folder' else ""
         
-        # Create Output Folder
         if mode == 'folder':
             if not os.path.exists(output_folder):
-                try:
-                    os.makedirs(output_folder)
+                try: os.makedirs(output_folder)
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Could not create output folder:\n{e}")
                     return
 
-        # Modal Progress Dialog
         paths = list(self.selected_paths)
         count = len(paths)
         progress = QProgressDialog(f"Running {operation}...", "Abort", 0, count, self)
@@ -313,16 +316,12 @@ class EditorTab(QWidget):
                 break
             
             progress.setValue(i)
-            QApplication.processEvents() # Keep UI alive
+            QApplication.processEvents()
             
             try:
-                # 1. Load (Standard CV2)
-                # Note: If path has unicode, CV2 might fail reading. 
-                # For basic stability we assume standard paths or use simple load.
                 img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-                
                 if img is None:
-                    # Try unicode fallback
+                    # Unicode fallback
                     stream = np.fromfile(path, dtype=np.uint8)
                     img = cv2.imdecode(stream, cv2.IMREAD_UNCHANGED)
                 
@@ -330,7 +329,6 @@ class EditorTab(QWidget):
                     self.log_box.append(f"❌ Failed load: {os.path.basename(path)}")
                     continue
 
-                # 2. Process
                 h, w = img.shape[:2]
                 res_img = img
                 new_ext = None
@@ -389,7 +387,6 @@ class EditorTab(QWidget):
                     elif fmt == 'webp':
                         save_params = [int(cv2.IMWRITE_WEBP_QUALITY), quality]
 
-                # 3. Save
                 filename = os.path.basename(path)
                 if new_ext:
                     base = os.path.splitext(filename)[0]
@@ -400,7 +397,6 @@ class EditorTab(QWidget):
                 else:
                     save_path = os.path.join(os.path.dirname(path), filename)
 
-                # Unicode safe save
                 ext = os.path.splitext(save_path)[1]
                 if not ext: ext = os.path.splitext(path)[1]
                 
@@ -409,7 +405,6 @@ class EditorTab(QWidget):
                     with open(save_path, "wb") as f:
                         encoded_img.tofile(f)
                     processed_count += 1
-                    # If overwritten, reload thumb immediately
                     if save_path == path:
                         self.reload_card_thumbnail(path)
                 else:

@@ -6,3 +6,4 @@ from .editor import EditorTab
 from .datasets import DatasetsTab
 from .metadata import MetadataTab
 from .settings import SettingsTab
+from .help import HelpDialog

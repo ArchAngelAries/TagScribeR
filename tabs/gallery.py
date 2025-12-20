@@ -6,12 +6,12 @@ from PySide6.QtWidgets import (
     QFrame, QListWidget, QProgressBar, QApplication, QInputDialog, QRadioButton
 )
 from PySide6.QtCore import Qt, Signal, QRunnable, QThreadPool, QObject, Slot
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QIcon
 from core.image_utils import load_thumbnail
 
 TAG_FILE = "user_tags.txt"
 
-# --- WORKER FOR THREADING ---
+# --- WORKER ---
 class ThumbnailSignals(QObject):
     loaded = Signal(str, QPixmap) 
 
@@ -27,7 +27,7 @@ class ThumbnailWorker(QRunnable):
         pix = load_thumbnail(self.path, self.size)
         self.signals.loaded.emit(self.path, pix)
 
-# --- CUSTOM WIDGET: IMAGE CARD ---
+# --- IMAGE CARD ---
 class ImageCard(QFrame):
     selection_changed = Signal(str, bool)
 
@@ -51,9 +51,7 @@ class ImageCard(QFrame):
         
         self.txt_caption = QTextEdit()
         self.txt_caption.setPlaceholderText("Caption...")
-        self.txt_caption.setStyleSheet(
-            "QTextEdit { background-color: #1e1e1e; border: 1px solid #333; border-radius: 4px; padding: 5px; color: #ddd; }"
-        )
+        self.txt_caption.setStyleSheet("QTextEdit { background-color: #1e1e1e; border: 1px solid #333; border-radius: 4px; padding: 5px; color: #ddd; }")
         
         self.layout.addWidget(self.lbl_image)
         self.layout.addWidget(self.txt_caption)
@@ -81,6 +79,9 @@ class ImageCard(QFrame):
         with open(txt_path, 'w', encoding='utf-8') as f:
             f.write(self.txt_caption.toPlainText())
 
+    def clear_text(self):
+        self.txt_caption.clear()
+
     def toggle_selection(self, force_state=None):
         if force_state is not None:
             self.is_selected = force_state
@@ -99,7 +100,7 @@ class ImageCard(QFrame):
             self.toggle_selection()
         super().mousePressEvent(event)
 
-# --- MAIN GALLERY TAB ---
+# --- GALLERY TAB ---
 class GalleryTab(QWidget):
     image_selected = Signal(str) 
 
@@ -125,7 +126,13 @@ class GalleryTab(QWidget):
         self.btn_select_all = QPushButton("Select All")
         self.btn_select_all.clicked.connect(self.select_all)
         
-        self.btn_save_all = QPushButton("💾 Save Changes")
+        # Undo/Redo Buttons (Visual placeholders for now)
+        self.btn_undo = QPushButton("↩️")
+        self.btn_undo.setToolTip("Undo (Ctrl+Z) - Logic coming next")
+        self.btn_redo = QPushButton("↪️")
+        self.btn_redo.setToolTip("Redo (Ctrl+Y) - Logic coming next")
+        
+        self.btn_save_all = QPushButton("💾 Save")
         self.btn_save_all.clicked.connect(self.save_all)
         self.btn_save_all.setStyleSheet("background-color: #0984e3; color: white; font-weight: bold;")
 
@@ -135,7 +142,8 @@ class GalleryTab(QWidget):
 
         toolbar.addWidget(self.btn_open)
         toolbar.addWidget(self.btn_select_all)
-        toolbar.addStretch()
+        toolbar.addWidget(self.btn_undo)
+        toolbar.addWidget(self.btn_redo)
         toolbar.addWidget(self.btn_save_all)
         toolbar.addWidget(self.btn_dataset)
         left_layout.addLayout(toolbar)
@@ -155,16 +163,14 @@ class GalleryTab(QWidget):
 
         right_layout.addWidget(QLabel("<b>Quick Tags</b>"))
         
-        # Tag Mode
         mode_layout = QHBoxLayout()
-        self.rad_append = QRadioButton("Append (End)")
-        self.rad_prepend = QRadioButton("Prepend (Start)")
+        self.rad_append = QRadioButton("Append")
+        self.rad_prepend = QRadioButton("Prepend")
         self.rad_append.setChecked(True)
         mode_layout.addWidget(self.rad_append)
         mode_layout.addWidget(self.rad_prepend)
         right_layout.addLayout(mode_layout)
 
-        # Tag Adder
         tag_add_layout = QHBoxLayout()
         self.inp_new_tag = QLineEdit()
         self.inp_new_tag.setPlaceholderText("New tag...")
@@ -189,6 +195,16 @@ class GalleryTab(QWidget):
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
         main_layout.addWidget(splitter)
+        
+        self.setup_hotkeys()
+
+    def setup_hotkeys(self):
+        # Toggle Select All
+        QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(self.select_all)
+        # Save All
+        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.save_all)
+        # Clear Selection Text
+        QShortcut(QKeySequence("Del"), self).activated.connect(self.delete_text_selection)
 
     def select_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Image Folder")
@@ -233,6 +249,21 @@ class GalleryTab(QWidget):
         for card in self.image_cards.values():
             card.toggle_selection(toggle_to)
 
+    def delete_text_selection(self):
+        # Don't delete if focusing input field
+        if self.inp_new_tag.hasFocus(): return
+        
+        # Check specific focus within cards
+        focus_widget = QApplication.focusWidget()
+        if isinstance(focus_widget, QTextEdit): return
+
+        if self.selected_paths:
+            reply = QMessageBox.question(self, "Clear Captions", f"Clear text for {len(self.selected_paths)} images?", QMessageBox.Yes|QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                for path in self.selected_paths:
+                    if path in self.image_cards:
+                        self.image_cards[path].clear_text()
+
     def save_all(self):
         count = 0
         for card in self.image_cards.values():
@@ -242,49 +273,37 @@ class GalleryTab(QWidget):
 
     def save_to_dataset(self):
         if not self.selected_paths:
-            QMessageBox.warning(self, "No Selection", "Please select images to save to a dataset.")
+            QMessageBox.warning(self, "No Selection", "Please select images.")
             return
-
         name, ok = QInputDialog.getText(self, "New Dataset", "Enter Dataset Collection Name:")
-        if not ok or not name.strip():
-            return
+        if not ok or not name.strip(): return
         
         dataset_root = os.path.join(os.getcwd(), "Dataset Collections")
         target_dir = os.path.join(dataset_root, name.strip())
-        
-        if not os.path.exists(target_dir):
-            os.makedirs(target_dir)
+        if not os.path.exists(target_dir): os.makedirs(target_dir)
             
         count = 0
         for path in self.selected_paths:
-            if path in self.image_cards:
-                self.image_cards[path].save_text()
-                
+            if path in self.image_cards: self.image_cards[path].save_text()
             try:
                 shutil.copy2(path, target_dir)
                 txt_path = os.path.splitext(path)[0] + ".txt"
-                if os.path.exists(txt_path):
-                    shutil.copy2(txt_path, target_dir)
+                if os.path.exists(txt_path): shutil.copy2(txt_path, target_dir)
                 count += 1
-            except Exception as e:
-                print(f"Error copying {path}: {e}")
-        
+            except Exception as e: print(f"Error copying {path}: {e}")
         QMessageBox.information(self, "Success", f"Successfully copied {count} items to '{name}'.")
 
     # --- TAG LOGIC ---
     def load_tags(self):
         defaults = ["masterpiece", "best quality", "4k", "photo", "illustration", 
                     "scenery", "portrait", "simple background", "solo", "1girl", "1boy"]
-        tags_to_load = []
+        tags_to_load = defaults
         if os.path.exists(TAG_FILE):
             try:
                 with open(TAG_FILE, "r", encoding="utf-8") as f:
                     lines = f.readlines()
                     tags_to_load = [line.strip() for line in lines if line.strip()]
-            except: tags_to_load = defaults
-        else:
-            tags_to_load = defaults
-            self.save_tags_to_file(defaults)
+            except: pass
         self.tag_list.clear()
         self.tag_list.addItems(tags_to_load)
 
@@ -315,18 +334,13 @@ class GalleryTab(QWidget):
             card = self.image_cards.get(path)
             if card:
                 current_text = card.txt_caption.toPlainText().strip()
-                
                 if not current_text:
                     new_text = tag
                 else:
-                    # Check for duplicates
                     tags = [t.strip() for t in current_text.split(',')]
                     if tag in tags: continue
-                    
-                    # Logic for Append vs Prepend
                     if self.rad_prepend.isChecked():
                         new_text = f"{tag}, {current_text}"
                     else:
                         new_text = f"{current_text}, {tag}"
-                        
                 card.txt_caption.setText(new_text)

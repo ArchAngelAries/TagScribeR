@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, QRunnable, QThreadPool, QObject, Slot
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QShortcut, QKeySequence
 from core.image_utils import load_thumbnail
 
 # Root folder for collections
@@ -120,12 +120,11 @@ class DatasetsTab(QWidget):
         self.inp_filter.textChanged.connect(self.apply_filter)
         
         self.btn_sel_all = QPushButton("Select All")
-        self.btn_sel_all.setMinimumWidth(80) # Give it breathing room
+        self.btn_sel_all.setMinimumWidth(80) 
         self.btn_sel_all.clicked.connect(self.select_all)
         
-        # Add widgets with Stretch so the Input field gets the most space
         tools.addWidget(self.btn_load, 0)
-        tools.addWidget(self.inp_filter, 1) # 1 = take available space
+        tools.addWidget(self.inp_filter, 1) 
         tools.addWidget(self.btn_sel_all, 0)
         left_lay.addLayout(tools)
         
@@ -146,7 +145,6 @@ class DatasetsTab(QWidget):
 
         # --- RIGHT: Collections ---
         right_widget = QWidget()
-        # Removed setFixedWidth to allow resizing via Splitter
         right_widget.setMinimumWidth(250) 
         right_lay = QVBoxLayout(right_widget)
         
@@ -163,7 +161,7 @@ class DatasetsTab(QWidget):
         self.btn_new.clicked.connect(self.create_collection)
         
         self.btn_del_col = QPushButton("🗑️ Delete")
-        self.btn_del_col.setMinimumWidth(70) # Widened to prevent squishing
+        self.btn_del_col.setMinimumWidth(70) 
         self.btn_del_col.setStyleSheet("background-color: #d63031; color: white;")
         self.btn_del_col.clicked.connect(self.delete_collection)
         
@@ -184,14 +182,21 @@ class DatasetsTab(QWidget):
         
         splitter.addWidget(left_widget)
         splitter.addWidget(right_widget)
-        
-        # Set default splitter proportions (Left=3 parts, Right=1 part)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
-        
         layout.addWidget(splitter)
         
         self.refresh_collections()
+        self.setup_hotkeys()
+
+    def setup_hotkeys(self):
+        QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(self.select_all)
+        QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self.inp_filter.setFocus)
+        QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.create_collection)
+        QShortcut(QKeySequence("F5"), self).activated.connect(self.refresh_collections)
+        QShortcut(QKeySequence("Del"), self).activated.connect(self.delete_selected_images)
+        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self.add_to_collection)
+        QShortcut(QKeySequence("Ctrl+Enter"), self).activated.connect(self.add_to_collection)
 
     def load_folder_dialog(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Source Images")

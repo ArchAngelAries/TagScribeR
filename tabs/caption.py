@@ -1,7 +1,6 @@
 import os
 import shutil
 import json
-import gc
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, 
     QLabel, QProgressBar, QComboBox, QFileDialog, QScrollArea, 
@@ -124,7 +123,7 @@ class CaptionTab(QWidget):
         self.thread_pool = QThreadPool()
         self.is_processing = False 
         self.api_presets = {}
-        self.worker = None # Track worker for cleanup
+        self.worker = None
         
         layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
@@ -161,11 +160,14 @@ class CaptionTab(QWidget):
 
         # 1. Model Source Tabs
         self.tab_source = QTabWidget()
-        self.tab_source.setFixedHeight(220)
+        # Increased height to fit new custom path options
+        self.tab_source.setFixedHeight(280) 
         
         # TAB 1: Local
         tab_local = QWidget()
         lay_local = QVBoxLayout(tab_local)
+        
+        # Standard Dropdown Area
         self.combo_model = QComboBox()
         self.combo_model.currentIndexChanged.connect(self.check_download_status)
         btn_box = QHBoxLayout()
@@ -186,10 +188,32 @@ class CaptionTab(QWidget):
         btn_box.addWidget(self.btn_refresh)
         btn_box.addWidget(self.btn_download)
         
-        lay_local.addWidget(QLabel("Local Model:"))
+        lay_local.addWidget(QLabel("Preset / Downloaded Models:"))
         lay_local.addWidget(self.combo_model)
         lay_local.addLayout(btn_box)
-        lay_local.addWidget(self.btn_unload) # Added button
+        lay_local.addWidget(self.btn_unload)
+        
+        # NEW: Custom Path Area
+        lay_local.addSpacing(10)
+        self.chk_custom_path = QCheckBox("Use External Model Path")
+        self.chk_custom_path.toggled.connect(self.toggle_custom_path)
+        lay_local.addWidget(self.chk_custom_path)
+        
+        self.wid_custom_path = QWidget()
+        path_box = QHBoxLayout(self.wid_custom_path)
+        path_box.setContentsMargins(0,0,0,0)
+        self.line_custom_path = QLineEdit()
+        self.line_custom_path.setPlaceholderText("C:/AI/Models/Qwen-VL...")
+        self.btn_browse_path = QPushButton("📂")
+        self.btn_browse_path.setFixedWidth(30)
+        self.btn_browse_path.clicked.connect(self.browse_model_path)
+        
+        path_box.addWidget(self.line_custom_path)
+        path_box.addWidget(self.btn_browse_path)
+        
+        lay_local.addWidget(self.wid_custom_path)
+        self.wid_custom_path.setVisible(False) # Hidden by default
+        
         lay_local.addStretch()
         
         # TAB 2: API
@@ -311,6 +335,33 @@ class CaptionTab(QWidget):
         QShortcut(QKeySequence("Ctrl+Enter"), self).activated.connect(self.run_process)
         QShortcut(QKeySequence("Esc"), self).activated.connect(self.abort_process)
 
+    # --- CUSTOM PATH LOGIC ---
+    def toggle_custom_path(self, checked):
+        self.wid_custom_path.setVisible(checked)
+        self.combo_model.setDisabled(checked)
+        self.btn_download.setDisabled(checked)
+        if not checked:
+            self.check_download_status() # Re-enable logic
+
+    def browse_model_path(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Model Folder (containing config.json)")
+        if folder:
+            self.line_custom_path.setText(folder)
+
+    def cleanup_worker(self):
+        if self.worker:
+            self.worker.stop()
+            del self.worker
+            self.worker = None
+        try:
+            import torch
+            if torch.cuda.is_available(): torch.cuda.empty_cache()
+            gc.collect()
+            self.log_box.append("🧹 VRAM/RAM Cleared.")
+        except: pass
+
+    # ... [Rest of Existing Logic] ...
+    
     def abort_process(self):
         if self.is_processing:
             self.toggle_process_state()
@@ -445,23 +496,6 @@ class CaptionTab(QWidget):
         else:
             self.run_process()
 
-    def cleanup_worker(self):
-        """Force stops the worker and clears GPU memory."""
-        if self.worker:
-            self.worker.stop()
-            # Explicit deletion to help GC
-            del self.worker
-            self.worker = None
-        
-        # Try import torch to clear cache (only if loaded)
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
-            self.log_box.append("🧹 VRAM/RAM Cleared.")
-        except: pass
-
     def set_processing_ui(self, running):
         self.is_processing = running
         if running:
@@ -489,15 +523,27 @@ class CaptionTab(QWidget):
         api_config = None
         
         if is_local:
-            data = self.combo_model.currentData()
-            models_dir = os.path.join(os.getcwd(), "models")
-            path = os.path.join(models_dir, data)
-            if not os.path.exists(path):
-                path = os.path.join(models_dir, data.split("/")[-1])
-                if not os.path.exists(path):
-                    self.log_box.append("❌ Local model not found.")
+            # Check for Custom Path
+            if self.chk_custom_path.isChecked():
+                custom_path = self.line_custom_path.text().strip()
+                if not os.path.exists(custom_path):
+                    self.log_box.append("❌ Custom path does not exist.")
                     return
-            model_path = path
+                # Verify it looks like a model folder (basic check)
+                if not os.path.exists(os.path.join(custom_path, "config.json")):
+                    self.log_box.append("⚠️ Warning: config.json not found in custom path. It might fail.")
+                model_path = custom_path
+            else:
+                # Standard Logic
+                data = self.combo_model.currentData()
+                models_dir = os.path.join(os.getcwd(), "models")
+                path = os.path.join(models_dir, data)
+                if not os.path.exists(path):
+                    path = os.path.join(models_dir, data.split("/")[-1])
+                    if not os.path.exists(path):
+                        self.log_box.append("❌ Local model not found.")
+                        return
+                model_path = path
         else:
             api_config = {
                 "base_url": self.inp_api_url.text(),

@@ -118,6 +118,24 @@ TagScribeR works natively on Linux with full GPU acceleration.
 
 ---
 
+## 🔴 Troubleshooting (RTX 5090)
+
+If you have an **RTX 5090** and get an error saying `RuntimeError: operator torchvision::nms does not exist` or `no kernel image available`:
+
+This means the PyTorch Nightly server has mismatched versions (a common issue on the bleeding edge).
+
+**The Fix (Manual Transplant):**
+1.  If you have **Fluxgym**, **Kohya_SS**, or **OneTrainer** running successfully on your machine, go to that application's `venv\Lib\site-packages` folder.
+2.  Copy the folders `torch`, `torchvision`, and `torchaudio`.
+3.  Paste them into `TagScribeR\venv\Lib\site-packages`, overwriting files.
+4.  Run this in the TagScribeR terminal to fix dependencies:
+    ```bash
+    .\venv\Scripts\activate
+    pip install torchgen sympy networkx jinja2 fsspec pyyaml
+    ```
+
+---
+
 ## 🛠️ Usage Guide
 
 ### 1. Auto Captioning (Qwen)

@@ -8,7 +8,7 @@ class HelpDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("TagScribeR - Help Center")
-        self.resize(800, 600)
+        self.resize(850, 650)
         
         layout = QVBoxLayout(self)
         
@@ -49,6 +49,8 @@ class HelpDialog(QDialog):
             ("Gallery", "Ctrl+A", "Toggle Select All / None"),
             ("Gallery", "Del", "Clear Caption Text (Selected Images)"),
             ("Gallery", "Ctrl+S", "Save All Changes to Disk"),
+            ("Gallery", "Ctrl+Z", "Undo Last Action"),
+            ("Gallery", "Ctrl+Y", "Redo Last Action"),
             ("Auto Caption", "Ctrl+A", "Toggle Select All"),
             ("Auto Caption", "Ctrl+Enter", "Run Captioning"),
             ("Auto Caption", "Esc", "Abort Processing"),
@@ -79,26 +81,27 @@ class HelpDialog(QDialog):
         # HTML Guide Content
         html = """
         <style>
-            h2 { color: #00b894; margin-top: 20px; }
+            h2 { color: #00b894; margin-top: 20px; border-bottom: 1px solid #333; padding-bottom: 5px; }
             h3 { color: #74b9ff; margin-top: 10px; }
-            p { font-size: 14px; line-height: 1.4; }
-            li { font-size: 14px; margin-bottom: 5px; }
-            .warning { color: #ff7675; font-weight: bold; }
+            p { font-size: 14px; line-height: 1.5; color: #ddd; }
+            li { font-size: 14px; margin-bottom: 6px; color: #ccc; }
+            b { color: #fff; }
+            .highlight { color: #e17055; font-weight: bold; }
         </style>
         
-        <h1>Welcome to TagScribeR v2.1</h1>
+        <h1>Welcome to TagScribeR v2.2</h1>
         <p>TagScribeR is a professional studio for managing, captioning, and editing image datasets for AI training (LoRA/Checkpoints). Below is a walkthrough of each workspace.</p>
         
-        <hr>
-        
-        <h2>🖼️ Gallery Tab</h2>
-        <p>This is your primary workspace for reviewing and manually tagging images.</p>
+        <h2>🖼️ Gallery Tab (The Studio)</h2>
+        <p>Your primary workspace for curating, tagging, and cleaning datasets.</p>
         <ul>
-            <li><b>Loading:</b> Click "Open Folder" to load a directory of images.</li>
-            <li><b>Selection:</b> Click images to select/deselect them (Green border = Selected). Use <b>Ctrl+A</b> to toggle all.</li>
-            <li><b>Captioning:</b> Type directly into the text box under an image. Changes are in memory until saved.</li>
-            <li><b>Quick Tags:</b> Click a tag in the sidebar to append it to ALL selected images. Use the "Prepend/Append" toggle to decide if tags go at the start (triggers) or end.</li>
-            <li><b>Saving:</b> Click "Save Changes" (Ctrl+S) to write .txt files to disk.</li>
+            <li><b>Smart Filtering:</b> Type a tag (e.g., "text", "bad hands") in the top filter bar to instantly find images containing that tag.</li>
+            <li><b>Tag Editor (Bubbles):</b> When you select an image, its tags appear as bubbles in the right sidebar. Click the <span class="highlight">X</span> on a bubble to instantly remove that tag. If multiple images are selected, it removes the tag from ALL of them.</li>
+            <li><b>🤖 Auto Tag (WD14):</b> Click "Auto Tag Selected" to scan images with the WD14 AI and automatically add booru-style tags. You can adjust the confidence threshold to control sensitivity.</li>
+            <li><b>🧹 Sanitize:</b> Click the Broom icon to clean up text files for training (converts accents like 'ä' to 'a' and removes junk characters).</li>
+            <li><b>Selection:</b> Click images to select/deselect them (Green border = Selected). Use <b>Ctrl+A</b> to toggle selection of visible images.</li>
+            <li><b>Quick Tags:</b> Click a tag in the sidebar list to append/prepend it to selected images.</li>
+            <li><b>Undo/Redo:</b> Made a mistake? Use the Undo/Redo buttons (or Ctrl+Z) to revert text changes or batch operations.</li>
         </ul>
 
         <h2>🤖 Auto Caption Tab</h2>
@@ -114,7 +117,7 @@ class HelpDialog(QDialog):
         <p>Connects to local or cloud APIs.</p>
         <ul>
             <li>Enter your Base URL (e.g., <code>http://localhost:1234/v1</code>) and Key.</li>
-            <li>Save your configuration using the "Floppy Disk" icon in the API tab.</li>
+            <li>Save your configuration using the "Floppy Disk" icon in the API tab for quick access later.</li>
         </ul>
 
         <h2>✏️ Image Editor Tab</h2>
@@ -131,7 +134,7 @@ class HelpDialog(QDialog):
         <ul>
             <li><b>Collections:</b> Create named folders (e.g., "Style_A", "Concept_B").</li>
             <li><b>Filtering:</b> Load a massive source folder, then type tags into the filter bar (e.g., "1girl") to see only matching images.</li>
-            <li><b>Add to Collection:</b> Select filtered images and click "Add". This <b>copies</b> the image and its caption text file to the collection folder.</li>
+            <li><b>Add to Collection:</b> Select filtered images and click "Add". This <b>copies</b> the image and its caption text file to the collection folder safely.</li>
         </ul>
 
         <h2>ℹ️ Metadata Tab</h2>

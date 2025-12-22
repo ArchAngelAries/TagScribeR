@@ -124,6 +124,8 @@ class CaptionTab(QWidget):
         self.is_processing = False 
         self.api_presets = {}
         self.worker = None
+        self.thread = None
+        self.stale_threads = [] # Keep references to old threads so they don't crash the app
         
         layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
@@ -160,14 +162,11 @@ class CaptionTab(QWidget):
 
         # 1. Model Source Tabs
         self.tab_source = QTabWidget()
-        # Increased height to fit new custom path options
         self.tab_source.setFixedHeight(280) 
         
         # TAB 1: Local
         tab_local = QWidget()
         lay_local = QVBoxLayout(tab_local)
-        
-        # Standard Dropdown Area
         self.combo_model = QComboBox()
         self.combo_model.currentIndexChanged.connect(self.check_download_status)
         btn_box = QHBoxLayout()
@@ -179,10 +178,9 @@ class CaptionTab(QWidget):
         self.btn_download.setEnabled(False) 
         self.btn_download.setStyleSheet("background-color: #0984e3; color: white;")
         
-        # NEW: Unload Button
         self.btn_unload = QPushButton("🧹 Free VRAM")
         self.btn_unload.setToolTip("Unloads model from GPU memory")
-        self.btn_unload.clicked.connect(self.cleanup_worker)
+        self.btn_unload.clicked.connect(self.force_cleanup)
         self.btn_unload.setStyleSheet("background-color: #636e72; color: white;")
 
         btn_box.addWidget(self.btn_refresh)
@@ -193,7 +191,6 @@ class CaptionTab(QWidget):
         lay_local.addLayout(btn_box)
         lay_local.addWidget(self.btn_unload)
         
-        # NEW: Custom Path Area
         lay_local.addSpacing(10)
         self.chk_custom_path = QCheckBox("Use External Model Path")
         self.chk_custom_path.toggled.connect(self.toggle_custom_path)
@@ -207,19 +204,15 @@ class CaptionTab(QWidget):
         self.btn_browse_path = QPushButton("📂")
         self.btn_browse_path.setFixedWidth(30)
         self.btn_browse_path.clicked.connect(self.browse_model_path)
-        
         path_box.addWidget(self.line_custom_path)
         path_box.addWidget(self.btn_browse_path)
-        
         lay_local.addWidget(self.wid_custom_path)
-        self.wid_custom_path.setVisible(False) # Hidden by default
-        
+        self.wid_custom_path.setVisible(False)
         lay_local.addStretch()
         
         # TAB 2: API
         tab_api = QWidget()
         lay_api = QVBoxLayout(tab_api)
-        
         preset_box = QHBoxLayout()
         self.combo_presets = QComboBox()
         self.combo_presets.addItem("Select Preset...")
@@ -335,37 +328,66 @@ class CaptionTab(QWidget):
         QShortcut(QKeySequence("Ctrl+Enter"), self).activated.connect(self.run_process)
         QShortcut(QKeySequence("Esc"), self).activated.connect(self.abort_process)
 
-    # --- CUSTOM PATH LOGIC ---
     def toggle_custom_path(self, checked):
         self.wid_custom_path.setVisible(checked)
         self.combo_model.setDisabled(checked)
         self.btn_download.setDisabled(checked)
-        if not checked:
-            self.check_download_status() # Re-enable logic
+        if not checked: self.check_download_status()
 
     def browse_model_path(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Model Folder (containing config.json)")
-        if folder:
-            self.line_custom_path.setText(folder)
+        if folder: self.line_custom_path.setText(folder)
+
+    def force_cleanup(self):
+        """Called by the Free VRAM button."""
+        self.cleanup_worker()
+        self.log_box.append("🧹 VRAM Cleanup requested.")
 
     def cleanup_worker(self):
+        """Safely detaches the worker without crashing the UI."""
         if self.worker:
+            # 1. Stop processing future images
             self.worker.stop()
-            del self.worker
+            
+            # 2. Disconnect signals so we don't get UI updates from zombie thread
+            try: self.worker.finished.disconnect()
+            except: pass
+            try: self.worker.progress.disconnect()
+            except: pass
+            try: self.worker.error.disconnect()
+            except: pass
+            
             self.worker = None
-        try:
-            import torch
-            if torch.cuda.is_available(): torch.cuda.empty_cache()
-            gc.collect()
-            self.log_box.append("🧹 VRAM/RAM Cleared.")
-        except: pass
+        
+        if self.thread:
+            if self.thread.isRunning():
+                # FIX: Do NOT delete or set self.thread = None immediately.
+                # Just add it to a list of stale threads and let it die when it finishes its blocking call.
+                # This prevents the "QThread Destroyed while running" crash.
+                self.stale_threads.append(self.thread)
+            else:
+                # If it's already done, we can clean it up
+                pass
+            
+            # Detach current reference
+            self.thread = None
+        
+        # Optional: Clean up the stale list (remove actually finished threads)
+        self.stale_threads = [t for t in self.stale_threads if t.isRunning()]
 
-    # ... [Rest of Existing Logic] ...
-    
     def abort_process(self):
         if self.is_processing:
             self.toggle_process_state()
 
+    def toggle_process_state(self):
+        if self.is_processing:
+            self.cleanup_worker()
+            self.log_box.append("🛑 Process Aborted.")
+            self.set_processing_ui(False)
+        else:
+            self.run_process()
+
+    # ... [Rest of logic remains the same] ...
     def load_api_presets(self):
         if os.path.exists(API_PRESETS_FILE):
             try:
@@ -411,8 +433,7 @@ class CaptionTab(QWidget):
 
     def toggle_prompt_edit(self, checked):
         self.prompt_input.setReadOnly(not checked)
-        if not checked:
-            self.apply_template()
+        if not checked: self.apply_template()
 
     def refresh_models(self):
         self.combo_model.clear()
@@ -488,14 +509,6 @@ class CaptionTab(QWidget):
         target = not all_selected
         for card in self.cards.values(): card.toggle_selection(target)
 
-    def toggle_process_state(self):
-        if self.is_processing:
-            self.cleanup_worker()
-            self.log_box.append("🛑 Process Aborted.")
-            self.set_processing_ui(False)
-        else:
-            self.run_process()
-
     def set_processing_ui(self, running):
         self.is_processing = running
         if running:
@@ -515,7 +528,6 @@ class CaptionTab(QWidget):
             self.log_box.append("⚠️ No images selected!")
             return
         
-        # Cleanup any existing worker first
         self.cleanup_worker()
         
         is_local = self.tab_source.currentIndex() == 0
@@ -523,18 +535,13 @@ class CaptionTab(QWidget):
         api_config = None
         
         if is_local:
-            # Check for Custom Path
             if self.chk_custom_path.isChecked():
                 custom_path = self.line_custom_path.text().strip()
                 if not os.path.exists(custom_path):
                     self.log_box.append("❌ Custom path does not exist.")
                     return
-                # Verify it looks like a model folder (basic check)
-                if not os.path.exists(os.path.join(custom_path, "config.json")):
-                    self.log_box.append("⚠️ Warning: config.json not found in custom path. It might fail.")
                 model_path = custom_path
             else:
-                # Standard Logic
                 data = self.combo_model.currentData()
                 models_dir = os.path.join(os.getcwd(), "models")
                 path = os.path.join(models_dir, data)

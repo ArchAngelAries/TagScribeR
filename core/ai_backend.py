@@ -1,10 +1,9 @@
 import os
+import platform
+import torch
 import gc
 from PySide6.QtCore import QObject, Signal
 from core.image_utils import image_to_base64
-
-# Note: Heavy imports (torch, transformers, openai) are lazy-loaded inside methods 
-# to prevent application startup lag.
 
 class QwenWorker(QObject):
     finished = Signal(str, str) # file_path, caption
@@ -16,9 +15,8 @@ class QwenWorker(QObject):
         self.file_paths = file_paths
         self.prompt = prompt
         self.params = params or {} 
-        self.api_config = api_config # {base_url, api_key, model_name}
+        self.api_config = api_config 
         
-        # Local Model Stuff
         self.model_path = model_path
         self.model = None
         self.processor = None
@@ -26,28 +24,19 @@ class QwenWorker(QObject):
         self.device = "cpu"
 
     def load_local_model(self):
-        """Loads the local Transformers model."""
-        # --- LAZY IMPORT ---
         import torch
-        import platform
         from transformers import AutoProcessor, AutoModelForImageTextToText
-        # -------------------
-
+        
         try:
             current_os = platform.system()
-            
-            # --- HARDWARE DETECTION ---
             if torch.cuda.is_available():
                 self.progress.emit(f"🚀 GPU Detected: {torch.cuda.get_device_name(0)}")
-                
                 if current_os == "Linux":
-                    # Linux handles device_map="auto" much better
                     self.device_map = "auto"
                     self.device = "cuda" 
                     self.dtype = torch.float16
                     self.progress.emit("✅ Mode: Linux Optimized (Accelerate Auto-Map)")
                 else:
-                    # Windows (ROCm/CUDA) often needs manual forcing
                     self.device_map = None 
                     self.device = "cuda"
                     self.dtype = torch.float16
@@ -58,14 +47,12 @@ class QwenWorker(QObject):
                 self.device = "cpu"
                 self.progress.emit("⚠️ GPU NOT DETECTED! Falling back to CPU.")
 
-            self.progress.emit(f"📂 Loading local model from: {self.model_path}")
+            self.progress.emit(f"📂 Loading model: {self.model_path}")
 
             if os.path.isfile(self.model_path):
                  self.model_path = os.path.dirname(self.model_path)
 
             self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
-            
-            # Load Model
             self.model = AutoModelForImageTextToText.from_pretrained(
                 self.model_path,
                 device_map=self.device_map,
@@ -77,19 +64,18 @@ class QwenWorker(QObject):
                 self.model.to(self.device)
             
             self.model.eval()
-            self.progress.emit("✅ Local Model loaded!")
+            self.progress.emit("✅ Model loaded!")
             return True
         except Exception as e:
             self.error.emit(f"Failed to load local model: {str(e)}")
             return False
 
     def run_api_inference(self, client, fpath):
-        """Handles OpenAI-Compatible API calls"""
         b64_img = image_to_base64(fpath)
-        if not b64_img:
-            raise Exception("Failed to encode image to Base64")
+        if not b64_img: raise Exception("Failed to encode image to Base64")
 
         try:
+            # Added timeout=60 to prevent infinite hanging
             response = client.chat.completions.create(
                 model=self.api_config['model_name'],
                 messages=[
@@ -97,51 +83,36 @@ class QwenWorker(QObject):
                         "role": "user",
                         "content": [
                             {"type": "text", "text": self.prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{b64_img}"
-                                },
-                            },
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}},
                         ],
                     }
                 ],
                 max_tokens=self.params.get('max_tokens', 512),
                 temperature=self.params.get('temperature', 0.7),
                 top_p=self.params.get('top_p', 0.9),
+                timeout=60 # <--- PREVENTS HANGS
             )
             
             if not response or not response.choices:
                 raise Exception("API returned empty response.")
-            
             return response.choices[0].message.content
             
         except Exception as e:
             raise Exception(f"API Call Failed: {e}")
 
     def run_local_inference(self, fpath):
-        """Handles Local Transformers Inference"""
-        # --- LAZY IMPORT ---
         import torch
         from qwen_vl_utils import process_vision_info
-        # -------------------
-
+        
         messages = [{
             "role": "user",
             "content": [{"type": "image", "image": fpath}, {"type": "text", "text": self.prompt}]
         }]
-        
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         image_inputs, video_inputs = process_vision_info(messages)
-        
         inputs = self.processor(
-            text=[text], 
-            images=image_inputs, 
-            videos=video_inputs, 
-            padding=True, 
-            return_tensors="pt"
+            text=[text], images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt"
         )
-        
         inputs = inputs.to(self.model.device)
 
         with torch.no_grad():
@@ -152,7 +123,6 @@ class QwenWorker(QObject):
                 temperature=self.params.get('temperature', 0.7),
                 top_p=self.params.get('top_p', 0.9)
             )
-        
         generated_ids_trimmed = [
             out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
@@ -161,30 +131,22 @@ class QwenWorker(QObject):
         )[0]
 
     def run(self):
-        # Check Mode
         is_api = self.api_config is not None
         
         if is_api:
-            # --- LAZY IMPORT ---
             from openai import OpenAI
-            # -------------------
             url = self.api_config['base_url'].strip()
             self.progress.emit(f"🌐 Connecting to API: {url}")
             try:
-                client = OpenAI(
-                    base_url=url,
-                    api_key=self.api_config['api_key']
-                )
+                client = OpenAI(base_url=url, api_key=self.api_config['api_key'])
             except Exception as e:
                 self.error.emit(f"API Init Error: {e}")
                 return
         else:
             if not self.model:
-                if not self.load_local_model():
-                    return
+                if not self.load_local_model(): return
 
         total = len(self.file_paths)
-        
         for i, fpath in enumerate(self.file_paths):
             if not self.running: break
             try:
@@ -193,21 +155,20 @@ class QwenWorker(QObject):
                 else:
                     output_text = self.run_local_inference(fpath)
                 
-                self.finished.emit(fpath, output_text)
-                self.progress.emit(f"({i+1}/{total}) Processed")
+                # Check running again after potentially long blocking call
+                if self.running: 
+                    self.finished.emit(fpath, output_text)
+                    self.progress.emit(f"({i+1}/{total}) Processed")
                 
             except Exception as e:
                 self.error.emit(f"Error on {os.path.basename(fpath)}: {str(e)}")
     
     def stop(self):
-        # --- LAZY IMPORT ---
+        self.running = False
         try:
             import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            if torch.cuda.is_available(): torch.cuda.empty_cache()
         except: pass
-        # -------------------
-        self.running = False
         self.model = None
         gc.collect()
 
@@ -222,13 +183,9 @@ class DownloadWorker(QObject):
         self.target_dir = target_dir
         
     def run(self):
-        # --- LAZY IMPORT ---
         from huggingface_hub import snapshot_download
-        # -------------------
         try:
             self.progress.emit(f"📥 Starting download for {self.repo_id}...")
-            self.progress.emit("This may take a while (several GBs)...")
-            
             snapshot_download(
                 repo_id=self.repo_id,
                 local_dir=self.target_dir,

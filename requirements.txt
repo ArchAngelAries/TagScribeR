@@ -8,3 +8,5 @@ qwen-vl-utils
 piexif
 huggingface_hub
 openai
+onnxruntime
+pandas

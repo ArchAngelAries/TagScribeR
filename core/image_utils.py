@@ -1,10 +1,13 @@
-import cv2
-import numpy as np
 import base64
+import logging
+
+import cv2
 from io import BytesIO
 from PIL import Image, ImageOps
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import Qt
+
+log = logging.getLogger(__name__)
 
 def cv2_to_qpixmap(cv_img):
     """Convert OpenCV BGR image to QPixmap."""
@@ -35,14 +38,15 @@ def pil_to_qpixmap(pil_img):
     return QPixmap.fromImage(qimg.copy())
 
 def load_thumbnail(path, size=(300, 300)):
-    """Efficiently load a thumbnail."""
+    """Efficiently load an upright thumbnail (JPEG draft decoding avoids full-size decodes)."""
     try:
-        img = Image.open(path)
-        img = ImageOps.exif_transpose(img) # Fix rotation
-        img.thumbnail(size, Image.Resampling.LANCZOS)
-        return pil_to_qpixmap(img)
+        with Image.open(path) as img:
+            img.draft("RGB", (size[0] * 2, size[1] * 2))  # no-op for non-JPEG formats
+            img = ImageOps.exif_transpose(img)
+            img.thumbnail(size, Image.Resampling.LANCZOS)
+            return pil_to_qpixmap(img)
     except Exception as e:
-        print(f"Error loading thumbnail {path}: {e}")
+        log.warning("Could not load thumbnail %s: %s", path, e)
         return QPixmap()
 
 def image_to_base64(image_path):

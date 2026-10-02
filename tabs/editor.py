@@ -1,27 +1,49 @@
 import os
+import shutil
+from pathlib import Path
+
 import cv2
 import numpy as np
 import traceback
 import gc
 from PIL import Image
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QScrollArea, QGridLayout, QFrame, QSplitter, QFileDialog, 
-    QMessageBox, QGroupBox, QSpinBox, QComboBox, QRadioButton, 
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QScrollArea, QGridLayout, QFrame, QSplitter, QFileDialog,
+    QMessageBox, QGroupBox, QSpinBox, QComboBox, QRadioButton,
     QCheckBox, QProgressBar, QTextEdit, QFormLayout, QSlider,
     QProgressDialog, QApplication
 )
 from PySide6.QtCore import Qt, Signal, QRunnable, QThreadPool, QObject, Slot
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence
-from core.image_utils import load_thumbnail
+from PIL import ImageOps
 
-# Determine Root Directory
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EDIT_DIR = os.path.join(BASE_DIR, "Image Edits")
+from core import dataset, fileops, paths
+from core.caption_io import caption_path
+from core.config import settings
+from core.image_utils import load_thumbnail
+from tabs.common import confirm
+
+
+def edits_root() -> str:
+    return str(settings().get("paths.edits_dir") or paths.DEFAULT_EDITS_DIR)
+
+
+def load_upright_bgr(path):
+    """Decode with EXIF orientation applied (cv2's IMREAD_UNCHANGED ignores it), as BGR(A)."""
+    with Image.open(path) as im:
+        im = ImageOps.exif_transpose(im)
+        if im.mode in ("RGBA", "LA", "PA") or (im.mode == "P" and "transparency" in im.info):
+            arr = np.asarray(im.convert("RGBA"))
+            return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGRA)
+        if im.mode in ("I;16", "I;16B", "I"):
+            return np.asarray(im)
+        arr = np.asarray(im.convert("RGB"))
+        return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
 
 # --- WORKER FOR THUMBNAILS (Keep this threaded, it's read-only and safe) ---
 class ThumbnailSignals(QObject):
-    loaded = Signal(str, QPixmap, str) 
+    loaded = Signal(str, QPixmap, str)
 
 class ThumbnailWorker(QRunnable):
     def __init__(self, path, size):
@@ -52,23 +74,23 @@ class EditorCard(QFrame):
         self.setFixedWidth(240)
         self.setFixedHeight(300)
         self.setFrameShape(QFrame.StyledPanel)
-        
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5,5,5,5)
-        
+
         self.lbl_res = QLabel("Loading...")
         self.lbl_res.setStyleSheet("color: #aaa; font-size: 11px; font-weight: bold;")
         self.lbl_res.setAlignment(Qt.AlignCenter)
-        
+
         self.lbl_image = QLabel()
         self.lbl_image.setAlignment(Qt.AlignCenter)
         self.lbl_image.setStyleSheet("background-color: #1e1e1e; border-radius: 4px;")
         self.lbl_image.setFixedHeight(220)
-        
+
         self.lbl_name = QLabel(os.path.basename(path))
         self.lbl_name.setAlignment(Qt.AlignCenter)
         self.lbl_name.setStyleSheet("color: #888; font-size: 10px;")
-        
+
         layout.addWidget(self.lbl_res)
         layout.addWidget(self.lbl_image)
         layout.addWidget(self.lbl_name)
@@ -104,14 +126,14 @@ class EditorTab(QWidget):
         self.selected_paths = set()
         self.thread_pool = QThreadPool()
         self.current_folder = ""
-        
+
         layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
 
         # LEFT
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        
+
         grid_tools = QHBoxLayout()
         self.btn_folder = QPushButton("📂 Open Folder")
         self.btn_folder.clicked.connect(self.load_folder)
@@ -121,7 +143,7 @@ class EditorTab(QWidget):
         grid_tools.addWidget(self.btn_select_all)
         grid_tools.addStretch()
         left_layout.addLayout(grid_tools)
-        
+
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.grid_container = QWidget()
@@ -135,14 +157,16 @@ class EditorTab(QWidget):
         right_scroll.setWidgetResizable(True)
         right_widget = QWidget()
         right_widget.setFixedWidth(340)
+        right_scroll.setMinimumWidth(362)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         right_layout = QVBoxLayout(right_widget)
         right_scroll.setWidget(right_widget)
 
         grp_out = QGroupBox("1. Output Settings")
         lyt_out = QVBoxLayout(grp_out)
-        self.rad_folder = QRadioButton("Save to 'Image Edits' (In App Root)")
+        self.rad_folder = QRadioButton("Save copies to 'Image Edits' (originals untouched)")
         self.rad_folder.setChecked(True)
-        self.rad_overwrite = QRadioButton("Overwrite Originals")
+        self.rad_overwrite = QRadioButton("Overwrite originals (asks first)")
         lyt_out.addWidget(self.rad_folder)
         lyt_out.addWidget(self.rad_overwrite)
         right_layout.addWidget(grp_out)
@@ -202,7 +226,7 @@ class EditorTab(QWidget):
         right_layout.addWidget(grp_conv)
 
         right_layout.addStretch()
-        
+
         self.progress = QProgressBar()
         right_layout.addWidget(self.progress)
         self.log_box = QTextEdit()
@@ -216,7 +240,7 @@ class EditorTab(QWidget):
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter)
-        
+
         self.setup_hotkeys()
 
     def setup_hotkeys(self):
@@ -231,16 +255,19 @@ class EditorTab(QWidget):
         self.refresh_grid()
 
     def refresh_grid(self):
-        for i in reversed(range(self.grid_layout.count())): 
+        for i in reversed(range(self.grid_layout.count())):
             self.grid_layout.itemAt(i).widget().setParent(None)
         self.cards.clear()
         self.selected_paths.clear()
-        
-        exts = ('.jpg', '.png', '.jpeg', '.webp', '.bmp', '.tiff')
-        files = [f for f in os.listdir(self.current_folder) if f.lower().endswith(exts)]
+
+        try:
+            files = dataset.scan_images(self.current_folder)
+        except OSError as e:
+            QMessageBox.critical(self, "Error", f"Could not read folder:\n{e}")
+            return
         cols = 3
         for i, f in enumerate(files):
-            path = os.path.join(self.current_folder, f)
+            path = str(f)
             card = EditorCard(path)
             card.selection_changed.connect(self.on_selection)
             self.grid_layout.addWidget(card, i // cols, i % cols)
@@ -293,8 +320,17 @@ class EditorTab(QWidget):
             return
 
         mode = 'overwrite' if self.rad_overwrite.isChecked() else 'folder'
-        output_folder = EDIT_DIR if mode == 'folder' else ""
-        
+        # Copies go to <Image Edits>/<source folder name>/ so files from different
+        # folders can't collide, and existing outputs are never overwritten.
+        output_folder = os.path.join(edits_root(), os.path.basename(os.path.normpath(self.current_folder))) \
+            if mode == 'folder' else ""
+        if mode == 'overwrite' and operation != 'convert':
+            if not confirm(self, "Overwrite originals?",
+                           f"This will permanently modify {len(self.selected_paths)} original image(s) "
+                           f"({operation}). This cannot be undone.\n\nTip: choose 'Save copies' to keep "
+                           "originals untouched.", destructive=True):
+                return
+
         if mode == 'folder':
             if not os.path.exists(output_folder):
                 try: os.makedirs(output_folder)
@@ -309,22 +345,21 @@ class EditorTab(QWidget):
         progress.show()
 
         processed_count = 0
-        
+
         for i, path in enumerate(paths):
             if progress.wasCanceled():
                 self.log_box.append("🛑 Batch Aborted.")
                 break
-            
+
             progress.setValue(i)
             QApplication.processEvents()
-            
+
             try:
-                img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-                if img is None:
-                    # Unicode fallback
-                    stream = np.fromfile(path, dtype=np.uint8)
-                    img = cv2.imdecode(stream, cv2.IMREAD_UNCHANGED)
-                
+                try:
+                    img = load_upright_bgr(path)
+                except Exception:
+                    img = None
+
                 if img is None:
                     self.log_box.append(f"❌ Failed load: {os.path.basename(path)}")
                     continue
@@ -348,7 +383,7 @@ class EditorTab(QWidget):
                         new_w, new_h = int(w * scale), int(h * scale)
                     else:
                         new_w, new_h = int(params['w']), int(params['h'])
-                    
+
                     new_w = max(1, new_w); new_h = max(1, new_h)
                     if new_w != w or new_h != h:
                         res_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
@@ -359,10 +394,10 @@ class EditorTab(QWidget):
                     if w < t_w or h < t_h:
                         self.log_box.append(f"⚠️ Too small: {os.path.basename(path)}")
                         continue
-                    
+
                     x = (w - t_w) // 2
                     y = (h - t_h) // 2
-                    
+
                     if focus == 'Top-Left': x, y = 0, 0
                     elif focus == 'Top-Center': x, y = (w - t_w)//2, 0
                     elif focus == 'Top-Right': x, y = w - t_w, 0
@@ -371,7 +406,7 @@ class EditorTab(QWidget):
                     elif focus == 'Bottom-Left': x, y = 0, h - t_h
                     elif focus == 'Bottom-Center': x, y = (w - t_w)//2, h - t_h
                     elif focus == 'Bottom-Right': x, y = w - t_w, h - t_h
-                    
+
                     x = max(0, min(x, w - t_w))
                     y = max(0, min(y, h - t_h))
                     res_img = img[y:y+t_h, x:x+t_w]
@@ -391,20 +426,30 @@ class EditorTab(QWidget):
                 if new_ext:
                     base = os.path.splitext(filename)[0]
                     filename = f"{base}{new_ext}"
-                
+
                 if mode == 'folder':
-                    save_path = os.path.join(output_folder, filename)
+                    save_path = str(fileops.unique_path(Path(output_folder) / filename))
                 else:
                     save_path = os.path.join(os.path.dirname(path), filename)
+                    if save_path != path and os.path.exists(save_path):
+                        save_path = str(fileops.unique_path(Path(save_path)))
 
                 ext = os.path.splitext(save_path)[1]
                 if not ext: ext = os.path.splitext(path)[1]
-                
+
                 success, encoded_img = cv2.imencode(ext, res_img, save_params)
                 if success:
                     with open(save_path, "wb") as f:
                         encoded_img.tofile(f)
                     processed_count += 1
+                    # Keep the image/caption pair together for derived files.
+                    src_cap = caption_path(path)
+                    dst_cap = caption_path(save_path)
+                    if save_path != path and src_cap.is_file() and not dst_cap.exists():
+                        try:
+                            shutil.copy2(src_cap, dst_cap)
+                        except OSError as e:
+                            self.log_box.append(f"⚠️ Caption not copied for {filename}: {e}")
                     if save_path == path:
                         self.reload_card_thumbnail(path)
                 else:
@@ -416,4 +461,5 @@ class EditorTab(QWidget):
                 self.log_box.append(f"❌ Error {os.path.basename(path)}: {e}")
 
         progress.setValue(count)
-        self.log_box.append(f"✅ Finished. Processed {processed_count} images.")
+        where = f" → {output_folder}" if mode == 'folder' else ""
+        self.log_box.append(f"✅ Finished. Processed {processed_count} images{where}.")

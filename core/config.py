@@ -43,6 +43,17 @@ DEFAULTS: dict[str, Any] = {
     "caption.custom_prompt": "",
     "caption.system_prompt": "",
     "caption.strip_thinking": True,
+    "caption.top_k": 0,
+    "caption.repetition_penalty": 1.05,
+    "caption.save_mode": "overwrite",
+    "caption.source": "local",       # local | api
+    "caption.last_model": "",
+    "caption.custom_model_path": "",
+    "api.concurrency": 1,
+    "api.last_profile": "",
+    "local.batch_size": 2,
+    "local.thinking": False,
+    "local.trust_remote_code": False,
     # Local inference
     "local.model_dirs": [],          # extra folders to scan for HF-format models
     "local.device": "auto",          # auto | cuda:N | cpu
@@ -60,6 +71,9 @@ DEFAULTS: dict[str, Any] = {
     "tagger.include_rating": False,
     "tagger.blacklist": "",
     "tagger.device": "auto",         # auto | cpu
+    "tagger.mode": "append",         # ignore | append | overwrite
+    "tagger.prepend": "",
+    "tagger.append": "",
     # Datasets / outputs
     "paths.collections_dir": "",     # '' = <app>/Dataset Collections
     "paths.edits_dir": "",           # '' = <app>/Image Edits

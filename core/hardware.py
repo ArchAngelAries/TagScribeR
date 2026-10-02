@@ -253,7 +253,7 @@ def describe_environment() -> str:
         for d in detect_devices():
             extra = f", arch {d.arch}" if d.arch else ""
             bf = ", bf16" if d.bf16 else ""
-            lines.append(f"  • {d.label}{extra}{bf}")
+            lines.append(f"  - {d.label}{extra}{bf}")
     for mod, label in (("transformers", "Transformers"), ("onnxruntime", "ONNX Runtime"),
                        ("bitsandbytes", "bitsandbytes"), ("flash_attn", "FlashAttention")):
         try:

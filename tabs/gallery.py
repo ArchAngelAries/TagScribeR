@@ -1,19 +1,21 @@
 import os
-import shutil
 import unicodedata
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QPushButton, 
-    QLineEdit, QGridLayout, QTextEdit, QSplitter, QFileDialog, QMessageBox, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QPushButton,
+    QLineEdit, QGridLayout, QTextEdit, QSplitter, QFileDialog, QMessageBox,
     QFrame, QListWidget, QProgressBar, QApplication, QInputDialog, QRadioButton,
     QGroupBox, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QRunnable, QThreadPool, QObject, Slot, QEvent
+from PySide6.QtCore import Qt, Signal, QThreadPool, QEvent, QTimer
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QIcon, QUndoStack, QUndoCommand
-from core.image_utils import load_thumbnail
-from core.tagger import WD14Tagger
-from core.widgets import TagEditorWidget, AutoTagDialog
+from pathlib import Path
 
-TAG_FILE = "user_tags.txt"
+from core import caption_io, captions, dataset, fileops, paths
+from core.config import load_quick_tags, save_quick_tags, settings
+from core.widgets import TagEditorWidget, AutoTagDialog
+from inference.base import CaptionRequest, ProviderSpec
+from inference.worker import SAVE_NONE, BatchJob, start_job
+from tabs.common import ThumbnailWorker, confirm, show_job_summary
 
 # --- UNDO COMMANDS ---
 class UpdateCaptionCommand(QUndoCommand):
@@ -35,11 +37,12 @@ class UpdateCaptionCommand(QUndoCommand):
             self.card.text_changed_internal.emit(self.card.path, self.old_text)
 
 class BatchUpdateCommand(QUndoCommand):
-    def __init__(self, cards, new_texts, description="Batch Update"):
+    def __init__(self, cards, new_texts, description="Batch Update", old_texts=None):
         super().__init__(description)
         self.cards = cards
         self.new_texts = new_texts
-        self.old_texts = [c.txt_caption.toPlainText() for c in cards]
+        # Callers that already applied the change must pass the true previous texts.
+        self.old_texts = old_texts if old_texts is not None else [c.txt_caption.toPlainText() for c in cards]
 
     def redo(self):
         for i, card in enumerate(self.cards):
@@ -53,57 +56,20 @@ class BatchUpdateCommand(QUndoCommand):
             if card.is_selected:
                 card.text_changed_internal.emit(card.path, self.old_texts[i])
 
-# --- WORKERS ---
-class ThumbnailSignals(QObject):
-    loaded = Signal(str, QPixmap) 
-
-class ThumbnailWorker(QRunnable):
-    def __init__(self, path, size):
-        super().__init__()
-        self.path = path
-        self.size = size
-        self.signals = ThumbnailSignals()
-
-    @Slot()
-    def run(self):
-        pix = load_thumbnail(self.path, self.size)
-        self.signals.loaded.emit(self.path, pix)
-
-class TaggerSignals(QObject):
-    finished = Signal(object, list)
-
-class TaggerWorker(QRunnable):
-    def __init__(self, tagger, card, settings):
-        super().__init__()
-        self.tagger = tagger
-        self.card = card
-        self.settings = settings
-        self.signals = TaggerSignals()
-        
-    @Slot()
-    def run(self):
-        tags = self.tagger.tag_image(
-            self.card.path, 
-            threshold=self.settings['threshold'],
-            max_tags=self.settings['max_tags'],
-            blacklist=self.settings['blacklist']
-        )
-        self.signals.finished.emit(self.card, tags)
-
 # --- IMAGE CARD ---
 class ImageCard(QFrame):
     selection_changed = Signal(str, bool)
-    text_changed_internal = Signal(str, str) 
-    undo_req = Signal(str, str, str) 
+    text_changed_internal = Signal(str, str)
+    undo_req = Signal(str, str, str)
 
     def __init__(self, path, parent=None):
         super().__init__(parent)
         self.path = path
         self.is_selected = False
-        self._cached_text = "" 
-        
+        self._cached_text = ""
+
         self.setFrameShape(QFrame.StyledPanel)
-        self.setFixedWidth(260) 
+        self.setFixedWidth(260)
         self.setFixedHeight(380)
 
         self.layout = QVBoxLayout(self)
@@ -113,8 +79,8 @@ class ImageCard(QFrame):
         self.lbl_image = QLabel("Loading...")
         self.lbl_image.setAlignment(Qt.AlignCenter)
         self.lbl_image.setStyleSheet("background-color: #1e1e1e; border-radius: 4px; color: #888;")
-        self.lbl_image.setFixedHeight(200) 
-        
+        self.lbl_image.setFixedHeight(200)
+
         self.txt_caption = QTextEdit()
         self.txt_caption.setPlaceholderText("Caption...")
         self.txt_caption.setStyleSheet("QTextEdit { background-color: #1e1e1e; border: 1px solid #333; border-radius: 4px; padding: 5px; color: #ddd; }")
@@ -145,19 +111,23 @@ class ImageCard(QFrame):
             self.lbl_image.setText("Error")
 
     def load_text(self):
-        txt_path = os.path.splitext(self.path)[0] + ".txt"
-        if os.path.exists(txt_path):
-            try:
-                with open(txt_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    self.txt_caption.setPlainText(content)
-                    self._cached_text = content
-            except: pass
+        content = caption_io.read_caption(self.path)
+        self.txt_caption.setPlainText(content)
+        self._cached_text = content
+        self._saved_text = content
 
-    def save_text(self):
-        txt_path = os.path.splitext(self.path)[0] + ".txt"
-        with open(txt_path, 'w', encoding='utf-8') as f:
-            f.write(self.txt_caption.toPlainText())
+    @property
+    def dirty(self) -> bool:
+        return self.txt_caption.toPlainText() != self._saved_text
+
+    def save_text(self) -> bool:
+        """Write the caption if it changed (atomic, backed up). Raises OSError on failure."""
+        text = self.txt_caption.toPlainText()
+        if text == self._saved_text:
+            return False
+        caption_io.write_caption(self.path, text)
+        self._saved_text = text
+        return True
 
     def clear_text(self):
         self.txt_caption.clear()
@@ -182,17 +152,17 @@ class ImageCard(QFrame):
 
 # --- GALLERY TAB ---
 class GalleryTab(QWidget):
-    image_selected = Signal(str) 
+    image_selected = Signal(str)
 
     def __init__(self):
         super().__init__()
         self.current_folder = ""
-        self.image_cards = {} 
+        self.image_cards = {}
         self.selected_paths = set()
-        self.thread_pool = QThreadPool() 
+        self.thread_pool = QThreadPool(self)
         self.undo_stack = QUndoStack(self)
-        self.tagger = WD14Tagger() 
-        self.active_card = None 
+        self.tag_worker = None
+        self.active_card = None
 
         main_layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
@@ -200,29 +170,29 @@ class GalleryTab(QWidget):
         # LEFT PANEL
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        
+
         # Tools
         toolbar = QHBoxLayout()
         self.btn_open = QPushButton("📂 Open Folder")
         self.btn_open.clicked.connect(self.select_folder)
         self.btn_open.setStyleSheet("background-color: #00b894; color: white; font-weight: bold;")
-        
+
         # Filter (Stretch 1)
         self.inp_filter = QLineEdit()
         self.inp_filter.setPlaceholderText("Filter tags/names...")
         self.inp_filter.textChanged.connect(self.apply_filter)
-        
+
         self.btn_select_all = QPushButton("Select All")
         self.btn_select_all.clicked.connect(self.select_all)
         self.btn_select_all.setMinimumWidth(80)
-        
+
         # Undo/Redo Buttons (Text Based for Visibility)
         self.btn_undo = QPushButton("Undo")
         self.btn_undo.setToolTip("Undo (Ctrl+Z)")
         self.btn_undo.clicked.connect(self.undo_stack.undo)
-        self.btn_undo.setEnabled(False) 
+        self.btn_undo.setEnabled(False)
         self.btn_undo.setMinimumWidth(50)
-        
+
         self.btn_redo = QPushButton("Redo")
         self.btn_redo.setToolTip("Redo (Ctrl+Y)")
         self.btn_redo.clicked.connect(self.undo_stack.redo)
@@ -231,7 +201,7 @@ class GalleryTab(QWidget):
 
         self.undo_stack.canUndoChanged.connect(self.btn_undo.setEnabled)
         self.undo_stack.canRedoChanged.connect(self.btn_redo.setEnabled)
-        
+
         self.btn_sanitize = QPushButton("Sanitize")
         self.btn_sanitize.setToolTip("Convert special characters (ä->a)")
         self.btn_sanitize.clicked.connect(self.sanitize_selection)
@@ -271,6 +241,8 @@ class GalleryTab(QWidget):
         right_scroll.setWidgetResizable(True)
         right_widget = QWidget()
         right_widget.setFixedWidth(320)
+        right_scroll.setMinimumWidth(342)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         right_layout = QVBoxLayout(right_widget)
         right_scroll.setWidget(right_widget)
 
@@ -294,7 +266,7 @@ class GalleryTab(QWidget):
         # 3. Quick Tags
         right_layout.addSpacing(10)
         right_layout.addWidget(QLabel("<b>Quick Tags (Presets)</b>"))
-        
+
         mode_layout = QHBoxLayout()
         self.rad_append = QRadioButton("Append")
         self.rad_prepend = QRadioButton("Prepend")
@@ -316,8 +288,8 @@ class GalleryTab(QWidget):
 
         self.tag_list = QListWidget()
         self.tag_list.itemClicked.connect(self.apply_tag_to_selection)
-        self.tag_list.setFixedHeight(200) 
-        self.load_tags() 
+        self.tag_list.setFixedHeight(200)
+        self.load_tags()
         right_layout.addWidget(self.tag_list)
 
         right_layout.addWidget(QLabel("<i>Click a preset to add to selection.</i>"))
@@ -328,7 +300,7 @@ class GalleryTab(QWidget):
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
         main_layout.addWidget(splitter)
-        
+
         self.setup_hotkeys()
         self.pending_tag_updates = {}
         self.total_tag_jobs = 0
@@ -350,7 +322,7 @@ class GalleryTab(QWidget):
             # Filter by Filename OR Caption content
             match = (search in os.path.basename(path).lower()) or \
                     (search in card.txt_caption.toPlainText().lower())
-            
+
             if not search: match = True
             card.setVisible(match)
 
@@ -358,13 +330,13 @@ class GalleryTab(QWidget):
         """Modified to respect Filter (Visibility)"""
         # Get visible cards only
         visible_cards = [c for c in self.image_cards.values() if not c.isHidden()]
-        
+
         if not visible_cards: return
 
         # If all visible are selected, deselect all visible. Otherwise select all visible.
         all_vis_selected = all(c.is_selected for c in visible_cards)
         target = not all_vis_selected
-        
+
         for card in visible_cards:
             card.toggle_selection(target)
 
@@ -405,86 +377,107 @@ class GalleryTab(QWidget):
 
     # --- AUTO TAGGER ---
     def run_auto_tagger(self):
+        if self.tag_worker is not None:
+            self.tag_worker.cancel()
+            self.btn_auto_tag.setText("Stopping…")
+            return
         if not self.selected_paths:
             QMessageBox.warning(self, "No Selection", "Please select images to tag.")
             return
 
         dlg = AutoTagDialog(self)
-        if dlg.exec():
-            self.auto_tag_settings = dlg.get_settings()
-            self.btn_auto_tag.setText("⏳ Tagging...")
-            self.btn_auto_tag.setEnabled(False)
-            self.pending_tag_updates = {}
-            self.total_tag_jobs = len(self.selected_paths)
+        if not dlg.exec():
+            return
+        st = self.auto_tag_settings = dlg.get_settings()
+        fmt = dict(general_threshold=st["threshold"], character_threshold=st["character_threshold"],
+                   max_tags=st["max_tags"], underscores_to_spaces=st["underscores_to_spaces"],
+                   escape_parentheses=st["escape_parentheses"], include_rating=st["include_rating"],
+                   blacklist=tuple(st["blacklist"]))
+        spec = ProviderSpec.make("wd_tagger", st["model"], format=tuple(sorted(fmt.items())),
+                                 device=settings().get("tagger.device"))
+        ordered = [p for p in self.image_cards if p in self.selected_paths]
+        if st["mode"] == "ignore":
+            ordered = [p for p in ordered if not self.image_cards[p].txt_caption.toPlainText().strip()]
+            if not ordered:
+                QMessageBox.information(self, "Nothing to tag", "All selected images already have tags.")
+                return
+        # Tags come back in memory (SAVE_NONE) so the result is undoable; Save writes them.
+        job = BatchJob(paths=[Path(p) for p in ordered], spec=spec,
+                       request=CaptionRequest(prompt="", max_image_side=0),
+                       save_mode=SAVE_NONE, tag_mode=True, title="Auto tagging")
+        self.pending_tag_updates = {}
+        self.total_tag_jobs = len(ordered)
+        self.btn_auto_tag.setText(f"⏳ Tagging 0/{len(ordered)}…  (click to stop)")
+        self.tag_worker = start_job(job)
+        self.tag_worker.item_done.connect(self.on_tagger_finished)
+        self.tag_worker.progress.connect(
+            lambda d, t: self.btn_auto_tag.setText(f"⏳ Tagging {d}/{t}…  (click to stop)"))
+        self.tag_worker.finished.connect(self.finalize_auto_tagging)
 
-            for path in self.selected_paths:
-                if path in self.image_cards:
-                    card = self.image_cards[path]
-                    worker = TaggerWorker(self.tagger, card, self.auto_tag_settings)
-                    worker.signals.finished.connect(self.on_tagger_finished)
-                    self.thread_pool.start(worker)
-
-    def on_tagger_finished(self, card, tags):
-        current_text = card.txt_caption.toPlainText().strip()
-        settings = self.auto_tag_settings
-        
-        all_tags = settings['prepend'] + tags + settings['append']
-        
-        if settings['mode'] == 'overwrite':
-            final_text = ", ".join(all_tags)
-        elif settings['mode'] == 'ignore':
-            if current_text: final_text = current_text
-            else: final_text = ", ".join(all_tags)
-        else: 
-            if current_text:
-                final_text = f"{current_text}, {', '.join(all_tags)}"
-            else:
-                final_text = ", ".join(all_tags)
-        
-        final_text = final_text.replace(", ,", ",").replace(" , ", ", ").strip(", ")
-
-        self.pending_tag_updates[card] = final_text
+    def on_tagger_finished(self, path, tag_text):
+        card = self.image_cards.get(path)
+        if card is None:
+            return
+        st = self.auto_tag_settings
+        current = card.txt_caption.toPlainText()
+        final_text = captions.merge_generated_tags(current, captions.split_tags(tag_text), st["mode"],
+                                                   prepend=st["prepend"], append=st["append"])
+        if card not in self.pending_tag_updates:
+            self.pending_tag_updates[card] = current  # remember the true original for undo
         card.txt_caption.setPlainText(final_text)
-        
         if self.active_card == card:
             self.tag_editor.set_tags(final_text)
 
-        if len(self.pending_tag_updates) >= self.total_tag_jobs:
-            self.finalize_auto_tagging()
-
-    def finalize_auto_tagging(self):
+    def finalize_auto_tagging(self, summary=None):
+        self.tag_worker = None
         cards = list(self.pending_tag_updates.keys())
-        new_texts = list(self.pending_tag_updates.values())
-        cmd = BatchUpdateCommand(cards, new_texts, "Auto Tag (WD14)")
-        self.undo_stack.push(cmd)
+        if cards:
+            old_texts = list(self.pending_tag_updates.values())
+            new_texts = [c.txt_caption.toPlainText() for c in cards]
+            self.undo_stack.push(BatchUpdateCommand(cards, new_texts, "Auto Tag", old_texts=old_texts))
         self.btn_auto_tag.setText("✨ Auto Tag Selected...")
-        self.btn_auto_tag.setEnabled(True)
         self.pending_tag_updates = {}
+        if summary is not None:
+            show_job_summary(self, summary)
+            if cards and not summary.fatal:
+                self.btn_auto_tag.setToolTip(f"{summary.text()} — remember to Save (Ctrl+S)")
 
     # --- STANDARD LOGIC ---
+    def has_unsaved_changes(self) -> bool:
+        return any(c.dirty for c in self.image_cards.values())
+
     def select_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Image Folder")
+        if self.has_unsaved_changes() and not confirm(
+                self, "Unsaved changes", "You have unsaved caption changes in this folder.\n"
+                "Discard them and open another folder?", destructive=True):
+            return
+        folder = QFileDialog.getExistingDirectory(self, "Select Image Folder", settings().get("ui.last_folder"))
         if folder:
+            settings().set("ui.last_folder", folder)
             self.current_folder = folder
             self.load_grid()
 
     def load_grid(self):
         self.undo_stack.clear()
-        for i in reversed(range(self.grid_layout.count())): 
-            self.grid_layout.itemAt(i).widget().setParent(None)
+        self.thread_pool.clear()
+        while self.grid_layout.count():
+            w = self.grid_layout.takeAt(0).widget()
+            if w:
+                w.deleteLater()
         self.image_cards.clear()
         self.selected_paths.clear()
+        self.active_card = None
+        self.tag_editor.set_tags("")
 
-        exts = ('.jpg', '.jpeg', '.png', '.webp')
         try:
-            files = [f for f in os.listdir(self.current_folder) if f.lower().endswith(exts)]
+            files = dataset.scan_images(self.current_folder)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to read directory: {e}")
             return
 
         cols = 4
         for i, f in enumerate(files):
-            path = os.path.join(self.current_folder, f)
+            path = str(f)
             card = ImageCard(path)
             card.selection_changed.connect(self.on_card_selection)
             card.undo_req.connect(self.handle_manual_text_change)
@@ -506,7 +499,7 @@ class GalleryTab(QWidget):
                 if path in self.image_cards:
                     cards.append(self.image_cards[path])
                     new_texts.append("")
-            
+
             if cards:
                 cmd = BatchUpdateCommand(cards, new_texts, "Clear Captions")
                 self.undo_stack.push(cmd)
@@ -523,7 +516,7 @@ class GalleryTab(QWidget):
                 if org != clean:
                     cards.append(card)
                     new_texts.append(clean)
-        
+
         if cards:
             cmd = BatchUpdateCommand(cards, new_texts, "Sanitize Text")
             self.undo_stack.push(cmd)
@@ -543,73 +536,69 @@ class GalleryTab(QWidget):
             if card:
                 current = card.txt_caption.toPlainText().strip()
                 new_t = ""
-                
+
                 if not current:
                     new_t = tag
                 else:
                     tags = [t.strip() for t in current.split(',')]
                     if tag in tags: continue # Skip if exists
-                    
+
                     if self.rad_prepend.isChecked():
                         new_t = f"{tag}, {current}"
                     else:
                         new_t = f"{current}, {tag}"
-                
+
                 cards.append(card)
                 new_texts.append(new_t)
-        
+
         if cards:
             cmd = BatchUpdateCommand(cards, new_texts, f"Add Tag: {tag}")
             self.undo_stack.push(cmd)
 
     def save_all(self):
-        count = 0
+        saved, failed = 0, []
         for card in self.image_cards.values():
-            card.save_text()
-            count += 1
-        QMessageBox.information(self, "Saved", f"Saved captions for {count} images.")
+            try:
+                if card.save_text():
+                    saved += 1
+            except OSError as e:
+                failed.append(f"{os.path.basename(card.path)}: {e}")
+        if failed:
+            QMessageBox.critical(self, "Some captions were not saved", "\n".join(failed[:20]))
+        self.btn_save_all.setText(f"💾 Saved {saved}" if saved else "💾 No changes")
+        QTimer.singleShot(2500, lambda: self.btn_save_all.setText("💾 Save"))
 
     def save_to_dataset(self):
         if not self.selected_paths:
             QMessageBox.warning(self, "No Selection", "Please select images.")
             return
-        name, ok = QInputDialog.getText(self, "New Dataset", "Enter Dataset Collection Name:")
-        if not ok or not name.strip(): return
-        
-        dataset_root = os.path.join(os.getcwd(), "Dataset Collections")
-        target_dir = os.path.join(dataset_root, name.strip())
-        if not os.path.exists(target_dir): os.makedirs(target_dir)
-            
-        count = 0
-        for path in self.selected_paths:
-            if path in self.image_cards: self.image_cards[path].save_text()
+        root = Path(settings().get("paths.collections_dir") or paths.DEFAULT_COLLECTIONS_DIR)
+        existing = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
+        name, ok = QInputDialog.getItem(self, "Copy to Collection", "Collection name (new or existing):",
+                                        existing, 0, True)
+        if not ok or not name.strip():
+            return
+        report = fileops.CopyReport()
+        for path in sorted(self.selected_paths):
+            card = self.image_cards.get(path)
             try:
-                shutil.copy2(path, target_dir)
-                txt_path = os.path.splitext(path)[0] + ".txt"
-                if os.path.exists(txt_path): shutil.copy2(txt_path, target_dir)
-                count += 1
-            except Exception as e: print(f"Error copying {path}: {e}")
-        QMessageBox.information(self, "Success", f"Successfully copied {count} items to '{name}'.")
+                if card:
+                    card.save_text()  # copy what the user sees
+            except OSError as e:
+                report.failed.append((Path(path), f"caption not saved: {e}"))
+                continue
+            fileops.copy_image_with_caption(Path(path), root / name.strip(), report=report)
+        msg = f"Collection '{name.strip()}': {report.summary()}."
+        if report.failed:
+            msg += "\n\n" + "\n".join(f"{p.name}: {e}" for p, e in report.failed[:20])
+            QMessageBox.warning(self, "Copy to Collection", msg)
+        else:
+            QMessageBox.information(self, "Copy to Collection", msg)
 
     # --- TAG MANAGER LOGIC ---
     def load_tags(self):
-        defaults = ["masterpiece", "best quality", "4k", "photo", "illustration", 
-                    "scenery", "portrait", "simple background", "solo", "1girl", "1boy"]
-        tags_to_load = defaults
-        if os.path.exists(TAG_FILE):
-            try:
-                with open(TAG_FILE, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                    tags_to_load = [line.strip() for line in lines if line.strip()]
-            except: pass
         self.tag_list.clear()
-        self.tag_list.addItems(tags_to_load)
-
-    def save_tags_to_file(self, tags):
-        try:
-            with open(TAG_FILE, "w", encoding="utf-8") as f:
-                for tag in tags: f.write(f"{tag}\n")
-        except: pass
+        self.tag_list.addItems(load_quick_tags())
 
     def add_custom_tag(self):
         tag = self.inp_new_tag.text().strip()
@@ -618,6 +607,7 @@ class GalleryTab(QWidget):
             if tag not in items:
                 self.tag_list.addItem(tag)
                 try:
-                    with open(TAG_FILE, "a", encoding="utf-8") as f: f.write(f"{tag}\n")
-                except: pass
+                    save_quick_tags(items + [tag])
+                except OSError as e:
+                    QMessageBox.warning(self, "Quick Tags", f"Could not save quick tags: {e}")
             self.inp_new_tag.clear()

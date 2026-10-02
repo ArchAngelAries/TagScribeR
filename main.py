@@ -121,6 +121,9 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    scale = settings().get("ui.scale")
+    if scale and abs(scale - 1.0) > 0.01 and "QT_SCALE_FACTOR" not in os.environ:
+        os.environ["QT_SCALE_FACTOR"] = f"{max(0.75, min(2.5, scale)):.2f}"
     if os.name == "nt":
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)

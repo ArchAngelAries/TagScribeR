@@ -29,6 +29,7 @@ DEFAULTS: dict[str, Any] = {
     # Appearance
     "ui.theme": "dark_teal.xml",
     "ui.thumbnail_size": 220,
+    "ui.scale": 1.0,                 # whole-interface zoom (accessibility); applied at startup
     "ui.last_folder": "",
     "ui.recent_folders": [],
     "ui.recursive_scan": False,

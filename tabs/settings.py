@@ -49,6 +49,17 @@ class SettingsTab(QWidget):
             self.combo_theme.setCurrentIndex(i)
         self.combo_theme.currentTextChanged.connect(self._on_theme)
         f_app.addRow("Theme:", self.combo_theme)
+        self.combo_scale = QComboBox()
+        for pct in (100, 115, 125, 150, 175, 200):
+            self.combo_scale.addItem(f"{pct}%", pct / 100)
+        current = self.cfg.get("ui.scale")
+        self.combo_scale.setCurrentIndex(min(range(self.combo_scale.count()),
+                                             key=lambda i: abs(self.combo_scale.itemData(i) - current)))
+        self.combo_scale.setToolTip("Enlarges all text, buttons and inputs. Takes effect after restarting TagScribeR.")
+        self.combo_scale.currentIndexChanged.connect(self._on_scale)
+        f_app.addRow("Interface scale:", self.combo_scale)
+        f_app.addRow(hint_label("Thumbnail size is adjusted in the Gallery (Size slider, Ctrl + mouse wheel, "
+                                "Ctrl+= / Ctrl+-)."))
         main.addWidget(grp_app)
 
         # --- AI defaults ---
@@ -142,6 +153,14 @@ class SettingsTab(QWidget):
     def _on_theme(self, theme: str):
         apply_theme(theme)
         self.cfg.set("ui.theme", theme)
+
+    def _on_scale(self):
+        value = self.combo_scale.currentData()
+        if abs(value - self.cfg.get("ui.scale")) < 0.01:
+            return
+        self.cfg.set("ui.scale", value)
+        QMessageBox.information(self, "Interface scale",
+                                f"Interface scale set to {int(value * 100)}%. Restart TagScribeR to apply it.")
 
     def _add_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Add model folder")

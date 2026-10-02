@@ -33,9 +33,16 @@ class _Task(QRunnable):
             result = self.fn()
         except Exception as e:
             log.debug("Background task failed:\n%s", traceback.format_exc())
-            self.signals.failed.emit(str(e))
+            self._emit(self.signals.failed, str(e))
             return
-        self.signals.done.emit(result)
+        self._emit(self.signals.done, result)
+
+    @staticmethod
+    def _emit(signal, value):
+        try:
+            signal.emit(value)
+        except RuntimeError:
+            pass  # receiver/app already shut down (task finished during exit)
 
 
 def run_in_background(fn: Callable[[], Any], on_done: Callable[[Any], None] | None = None,

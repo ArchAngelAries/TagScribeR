@@ -22,45 +22,51 @@ from core.image_utils import load_qimage
 
 log = logging.getLogger(__name__)
 
-BASE_SIZE = 384  # stored thumbnail size; the grid scales down from this
+# Stored thumbnail tiers; the grid scales down from the smallest tier that's
+# at least as large as the card, so big cards (zoomed in) stay sharp.
+TIERS = (384, 768)
 
 
-def _disk_path(path: str, mtime: float, size: int) -> Path:
-    h = hashlib.sha1(f"{os.path.normcase(path)}|{mtime:.3f}|{size}|{BASE_SIZE}".encode("utf-8")).hexdigest()
+def tier_for(display_px: int) -> int:
+    return next((t for t in TIERS if t >= display_px), TIERS[-1])
+
+
+def _disk_path(path: str, mtime: float, size: int, tier: int) -> Path:
+    h = hashlib.sha1(f"{os.path.normcase(path)}|{mtime:.3f}|{size}|{tier}".encode("utf-8")).hexdigest()
     return paths.THUMBNAIL_CACHE_DIR / h[:2] / f"{h}.jpg"
 
 
 class _Emitter(QObject):
-    done = Signal(str, QImage, int, int)   # key, image, orig width, orig height
-    failed = Signal(str)
+    done = Signal(str, int, QImage, int, int)   # key, tier, image, orig width, orig height
+    failed = Signal(str, int)
 
 
 class _Job(QRunnable):
-    def __init__(self, key: str, mtime: float, fsize: int, emitter: _Emitter, generation: int, loader):
+    def __init__(self, key: str, mtime: float, fsize: int, tier: int, emitter: _Emitter, generation: int, loader):
         super().__init__()
-        self.key, self.mtime, self.fsize = key, mtime, fsize
+        self.key, self.mtime, self.fsize, self.tier = key, mtime, fsize, tier
         self.emitter, self.generation, self.loader = emitter, generation, loader
 
     def run(self):
         if self.generation != self.loader.generation:
             return  # folder changed while queued
-        cache_file = _disk_path(self.key, self.mtime, self.fsize)
+        cache_file = _disk_path(self.key, self.mtime, self.fsize, self.tier)
         try:
             if cache_file.is_file():
                 img = QImage(str(cache_file))
                 if not img.isNull():
-                    self.emitter.done.emit(self.key, img, 0, 0)
+                    self.emitter.done.emit(self.key, self.tier, img, 0, 0)
                     return
-            img, (w, h) = load_qimage(self.key, (BASE_SIZE, BASE_SIZE))
+            img, (w, h) = load_qimage(self.key, (self.tier, self.tier))
             try:
                 cache_file.parent.mkdir(parents=True, exist_ok=True)
                 img.save(str(cache_file), "JPG", 88)
             except Exception as e:  # cache is an optimisation only
                 log.debug("Thumbnail cache write failed: %s", e)
-            self.emitter.done.emit(self.key, img, w, h)
+            self.emitter.done.emit(self.key, self.tier, img, w, h)
         except Exception as e:
             log.info("Thumbnail failed for %s: %s", self.key, e)
-            self.emitter.failed.emit(self.key)
+            self.emitter.failed.emit(self.key, self.tier)
 
 
 class ThumbnailLoader(QObject):
@@ -69,11 +75,11 @@ class ThumbnailLoader(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        QPixmapCache.setCacheLimit(300 * 1024)  # KB
+        QPixmapCache.setCacheLimit(400 * 1024)  # KB
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(max(2, (os.cpu_count() or 4) // 2))
         self.generation = 0
-        self._pending: set[str] = set()
+        self._pending: set[tuple[str, int]] = set()
         self._failed: set[str] = set()
         self._priority = 0
         self._emitter = _Emitter()
@@ -81,8 +87,8 @@ class ThumbnailLoader(QObject):
         self._emitter.failed.connect(self._on_failed)
 
     @staticmethod
-    def _cache_key(key: str) -> str:
-        return f"ws|{key}"
+    def _cache_key(key: str, tier: int) -> str:
+        return f"ws|{tier}|{key}"
 
     def reset(self) -> None:
         """Forget queued work (e.g. when another folder is opened)."""
@@ -92,30 +98,43 @@ class ThumbnailLoader(QObject):
         self._failed.clear()
 
     def invalidate(self, key: str) -> None:
-        QPixmapCache.remove(self._cache_key(key))
+        for t in TIERS:
+            QPixmapCache.remove(self._cache_key(key, t))
         self._failed.discard(key)
 
-    def pixmap(self, key: str, mtime: float = 0.0, fsize: int = 0) -> QPixmap | None:
-        pm = QPixmapCache.find(self._cache_key(key))
+    def pixmap(self, key: str, mtime: float = 0.0, fsize: int = 0, display_px: int = 0) -> QPixmap | None:
+        """Best available pixmap for the display size; requests a sharper tier if needed.
+
+        While a larger tier loads, a smaller cached one is returned so cards
+        never go blank when zooming in.
+        """
+        want = tier_for(display_px or TIERS[0])
+        pm = QPixmapCache.find(self._cache_key(key, want))
         if pm is not None and not pm.isNull():
             return pm
-        if key not in self._pending and key not in self._failed:
-            self._pending.add(key)
+        job_id = (key, want)
+        if job_id not in self._pending and key not in self._failed:
+            self._pending.add(job_id)
             self._priority += 1  # later requests (what's on screen now) run first
-            self.pool.start(_Job(key, mtime, fsize, self._emitter, self.generation, self), self._priority)
+            self.pool.start(_Job(key, mtime, fsize, want, self._emitter, self.generation, self), self._priority)
+        for t in TIERS:  # fallback: any tier we already have
+            if t != want:
+                fallback = QPixmapCache.find(self._cache_key(key, t))
+                if fallback is not None and not fallback.isNull():
+                    return fallback
         return None
 
     def is_failed(self, key: str) -> bool:
         return key in self._failed
 
-    def _on_done(self, key: str, img: QImage, w: int, h: int) -> None:
-        self._pending.discard(key)
-        QPixmapCache.insert(self._cache_key(key), QPixmap.fromImage(img))
+    def _on_done(self, key: str, tier: int, img: QImage, w: int, h: int) -> None:
+        self._pending.discard((key, tier))
+        QPixmapCache.insert(self._cache_key(key, tier), QPixmap.fromImage(img))
         if w and h:
             self.dimensions.emit(key, w, h)
         self.ready.emit(key)
 
-    def _on_failed(self, key: str) -> None:
-        self._pending.discard(key)
+    def _on_failed(self, key: str, tier: int) -> None:
+        self._pending.discard((key, tier))
         self._failed.add(key)
         self.ready.emit(key)

@@ -32,6 +32,11 @@ class CardDelegate(QStyledItemDelegate):
 
     def set_card_width(self, w: int) -> None:
         self.card_width = w
+        # Text grows gently with the card (readability when zoomed in) but is
+        # bounded so every card keeps the same, predictable layout.
+        scale = max(1.0, min(1.6, (w / 220) ** 0.5))
+        self._font.setPointSizeF(8.5 * scale)
+        self._small.setPointSizeF(7.5 * scale)
 
     def text_height(self) -> int:
         if not self.show_captions:
@@ -63,7 +68,8 @@ class CardDelegate(QStyledItemDelegate):
         side = r.width() - 10
         thumb_rect = QRect(r.left() + 5, r.top() + 5, side, side)
         painter.fillRect(thumb_rect, THUMB_BG)
-        pm = self.loader.pixmap(e.key, e.mtime, e.file_size)
+        dpr = painter.device().devicePixelRatioF() if painter.device() else 1.0
+        pm = self.loader.pixmap(e.key, e.mtime, e.file_size, int(side * dpr))
         if pm is not None:
             scaled = pm.size().scaled(thumb_rect.size(), Qt.KeepAspectRatio)
             target = QRect(0, 0, scaled.width(), scaled.height())

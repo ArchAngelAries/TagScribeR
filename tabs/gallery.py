@@ -31,6 +31,8 @@ from tabs.workspace.thumbs import ThumbnailLoader
 
 log = logging.getLogger(__name__)
 
+MIN_CARD, MAX_CARD, DEFAULT_CARD, ZOOM_STEP = 100, 720, 220, 40
+
 QUERY_HELP = (
     "Filter examples:\n"
     "  smile                  caption or file name contains 'smile'\n"
@@ -165,10 +167,10 @@ class GalleryTab(QWidget):
         self.chk_captions.setToolTip("Show caption text on cards")
         self.chk_captions.toggled.connect(self._toggle_captions)
         self.slider = QSlider(Qt.Horizontal)
-        self.slider.setRange(120, 400)
-        self.slider.setValue(self.cfg.get("ui.thumbnail_size"))
-        self.slider.setFixedWidth(130)
-        self.slider.setToolTip("Thumbnail size")
+        self.slider.setRange(MIN_CARD, MAX_CARD)
+        self.slider.setValue(max(MIN_CARD, min(MAX_CARD, self.cfg.get("ui.thumbnail_size"))))
+        self.slider.setFixedWidth(150)
+        self.slider.setToolTip("Thumbnail size — also Ctrl + mouse wheel over the grid, Ctrl+= / Ctrl+- / Ctrl+0")
         self.slider.valueChanged.connect(self._set_card_size)
         bar2.addWidget(self.btn_undo)
         bar2.addWidget(self.btn_redo)
@@ -199,7 +201,7 @@ class GalleryTab(QWidget):
         self.view.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self.view.doubleClicked.connect(lambda _: self.inspector.editor.setFocus())
         self.view.setStyleSheet("QListView { background-color: #1f1f1f; border: none; }")
-        self.view.setToolTip("")
+        self.view.viewport().installEventFilter(self)
         ll.addWidget(self.view, 1)
         self.lbl_status = QLabel("Open a folder to start.")
         self.lbl_status.setStyleSheet("color: #9a9a9a; padding: 2px;")
@@ -243,6 +245,8 @@ class GalleryTab(QWidget):
         splitter.setSizes([1100, 420])
         root.addWidget(splitter)
 
+        self._size_save_timer = QTimer(self, singleShot=True, interval=600)
+        self._size_save_timer.timeout.connect(lambda: self.cfg.set("ui.thumbnail_size", self.slider.value()))
         self._stats_timer = QTimer(self, singleShot=True, interval=400)
         self._stats_timer.timeout.connect(self._refresh_tag_stats)
         self._set_card_size(self.slider.value())
@@ -266,6 +270,10 @@ class GalleryTab(QWidget):
         sc("Ctrl+Shift+C", self.copy_caption)
         sc("Ctrl+Shift+V", self.paste_caption)
         sc("F2", lambda: self.inspector.editor.setFocus())
+        sc("Ctrl+=", lambda: self.zoom(1))
+        sc("Ctrl++", lambda: self.zoom(1))
+        sc("Ctrl+-", lambda: self.zoom(-1))
+        sc("Ctrl+0", lambda: self.slider.setValue(DEFAULT_CARD))
         # Grid-only keys (don't hijack text editing)
         for seq, fn in (("Del", self.delete_text_selection), ("Shift+Del", self.trash_selection)):
             s = QShortcut(QKeySequence(seq), self.view)
@@ -364,7 +372,17 @@ class GalleryTab(QWidget):
         self.delegate.set_card_width(w)
         self.view.setGridSize(QSize(w, w + self.delegate.text_height()))
         self.view.doItemsLayout()
-        self.cfg.set("ui.thumbnail_size", w, save=False)
+        self._size_save_timer.start()  # persist once the user stops adjusting
+
+    def zoom(self, direction: int):
+        self.slider.setValue(self.slider.value() + direction * ZOOM_STEP)
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj is self.view.viewport() and event.type() == QEvent.Wheel and event.modifiers() & Qt.ControlModifier:
+            self.zoom(1 if event.angleDelta().y() > 0 else -1)
+            return True
+        return super().eventFilter(obj, event)
 
     def _toggle_captions(self, on: bool):
         self.delegate.show_captions = on

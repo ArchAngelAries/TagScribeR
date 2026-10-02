@@ -6,17 +6,16 @@ BatchWorker); this module is only UI. Loaded models are reused across runs.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
-                               QGridLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+                               QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QMessageBox, QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter,
                                QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
-from core import caption_io, dataset, fileops, paths
+from core import paths
 from core.config import settings
 from core.secrets import ApiProfile, ApiProfileStore
 from inference import models as model_catalog
@@ -25,8 +24,9 @@ from inference.manager import manager
 from inference.prompts import DEFAULT_PRESET, PROMPT_PRESETS
 from inference.worker import (SAVE_APPEND, SAVE_OVERWRITE, SAVE_PREPEND, SAVE_SKIP_EXISTING, BatchJob,
                               start_job)
-from tabs.common import (CollapsibleSection, ThumbnailWorker, confirm, hint_label, run_in_background,
-                         show_job_summary)
+from tabs.common import CollapsibleSection, confirm, hint_label, run_in_background, show_job_summary
+from tabs.workspace.browser import DatasetBrowser
+from tabs.workspace.context import JOB_FAILED, JOB_QUEUED, JOB_WORKING, workspace
 
 log = logging.getLogger(__name__)
 
@@ -38,82 +38,12 @@ SAVE_MODES = [
 ]
 
 
-class CaptionCard(QFrame):
-    selection_changed = Signal(str, bool)
-
-    def __init__(self, path: str):
-        super().__init__()
-        self.path = path
-        self.is_selected = False
-        self.setFixedSize(240, 340)
-        self.setFrameShape(QFrame.StyledPanel)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        self.lbl_image = QLabel("Loading…")
-        self.lbl_image.setAlignment(Qt.AlignCenter)
-        self.lbl_image.setStyleSheet("background-color: #1e1e1e; border-radius: 4px;")
-        self.lbl_image.setFixedHeight(180)
-        self.txt_caption = QTextEdit()
-        self.txt_caption.setPlaceholderText("No caption yet")
-        self.txt_caption.setStyleSheet("background-color: #151515; border: 1px solid #333; color: #ccc;")
-        layout.addWidget(self.lbl_image)
-        layout.addWidget(self.txt_caption)
-        self.reload_text()
-        self.update_style()
-
-    def set_image(self, _path, pix):
-        if not pix.isNull():
-            self.lbl_image.setPixmap(pix)
-            self.lbl_image.setText("")
-        else:
-            self.lbl_image.setText("Unreadable image")
-
-    def reload_text(self):
-        self.txt_caption.setPlainText(caption_io.read_caption(self.path))
-        self.txt_caption.document().setModified(False)
-
-    def set_status(self, state: str):
-        colors = {"working": "#fdcb6e", "failed": "#d63031", "done": None}
-        self._status_color = colors.get(state)
-        self.update_style()
-
-    def show_result(self, text: str):
-        self.txt_caption.setPlainText(text)
-        self.txt_caption.document().setModified(False)
-
-    @property
-    def dirty(self) -> bool:
-        return self.txt_caption.document().isModified()
-
-    def save_text(self) -> bool:
-        """Persist manual edits. Returns True if the file changed."""
-        changed = caption_io.write_caption(self.path, self.txt_caption.toPlainText())
-        self.txt_caption.document().setModified(False)
-        return changed
-
-    def toggle_selection(self, state=None):
-        self.is_selected = (not self.is_selected) if state is None else state
-        self.update_style()
-        self.selection_changed.emit(self.path, self.is_selected)
-
-    def update_style(self):
-        border = getattr(self, "_status_color", None) or ("#00b894" if self.is_selected else "transparent")
-        self.setStyleSheet(f"CaptionCard {{ background-color: #2b2b2b; border: 2px solid {border}; border-radius: 8px; }}")
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.toggle_selection()
-        super().mousePressEvent(event)
-
-
 class CaptionTab(QWidget):
     def __init__(self):
         super().__init__()
         self.cfg = settings()
-        self.cards: dict[str, CaptionCard] = {}
-        self.selected_paths: set[str] = set()
-        self.thumb_pool = QThreadPool(self)
-        self.thumb_pool.setMaxThreadCount(max(2, (os.cpu_count() or 4) // 2))
+        self.ctx = workspace()
+        self.selected_paths: list[str] = []
         self.worker = None
         self.profiles = ApiProfileStore()
         self._local_entries: list[tuple[str, str, float, str]] = []  # (label, model id/path, GB, notes)
@@ -121,31 +51,14 @@ class CaptionTab(QWidget):
         layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
 
-        # ---------------- LEFT: image grid ----------------
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        tools = QHBoxLayout()
-        self.btn_folder = QPushButton("📂 Open Folder")
-        self.btn_folder.clicked.connect(self.load_folder)
-        self.btn_select_all = QPushButton("Select All")
-        self.btn_select_all.clicked.connect(self.select_all)
+        # ---------------- LEFT: shared dataset browser ----------------
+        self.browser = DatasetBrowser(self.ctx, size_key="ui.caption_thumbnail_size")
+        self.browser.selection_changed.connect(self.on_selection)
         self.btn_select_uncaptioned = QPushButton("Select Uncaptioned")
         self.btn_select_uncaptioned.setToolTip("Select every image that has no caption yet")
         self.btn_select_uncaptioned.clicked.connect(self.select_uncaptioned)
-        self.lbl_folder = QLabel("")
-        self.lbl_folder.setStyleSheet("color: #888;")
-        tools.addWidget(self.btn_folder)
-        tools.addWidget(self.btn_select_all)
-        tools.addWidget(self.btn_select_uncaptioned)
-        tools.addWidget(self.lbl_folder, 1)
-        left_layout.addLayout(tools)
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.grid_container = QWidget()
-        self.grid_layout = QGridLayout(self.grid_container)
-        self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.scroll.setWidget(self.grid_container)
-        left_layout.addWidget(self.scroll)
+        self.browser.extra_toolbar.addWidget(self.btn_select_uncaptioned)
+        left = self.browser
 
         # ---------------- RIGHT: controls ----------------
         right_scroll = QScrollArea()
@@ -241,18 +154,6 @@ class CaptionTab(QWidget):
         self.lbl_status.setWordWrap(True)
         self.lbl_status.setStyleSheet("color: #aaa;")
         rl.addWidget(self.lbl_status)
-
-        # 5. Manual actions
-        manual = QHBoxLayout()
-        self.btn_save_sel = QPushButton("💾 Save Edits")
-        self.btn_save_sel.setToolTip("Save captions you edited by hand (Ctrl+S)")
-        self.btn_save_sel.clicked.connect(self.save_edits)
-        self.btn_dataset = QPushButton("📦 Copy to Collection")
-        self.btn_dataset.setToolTip("Copy the selected images and captions into a Dataset Collection")
-        self.btn_dataset.clicked.connect(self.save_to_dataset)
-        manual.addWidget(self.btn_save_sel)
-        manual.addWidget(self.btn_dataset)
-        rl.addLayout(manual)
 
         self.sec_log = CollapsibleSection("Log")
         self.log_box = QTextEdit()
@@ -442,8 +343,6 @@ class CaptionTab(QWidget):
 
     # ------------------------------------------------------------------ hotkeys
     def setup_hotkeys(self):
-        QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(self.select_all)
-        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.save_edits)
         QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self.run_process)
         QShortcut(QKeySequence("Ctrl+Enter"), self).activated.connect(self.run_process)
         QShortcut(QKeySequence("Esc"), self).activated.connect(self.abort_process)
@@ -690,62 +589,24 @@ class CaptionTab(QWidget):
 
     # ------------------------------------------------------------------ grid
     def load_folder(self):
-        if self._has_unsaved() and not confirm(self, "Unsaved edits", "You have unsaved caption edits. "
-                                               "Discard them and open another folder?", destructive=True):
-            return
-        start = self.cfg.get("ui.last_folder") or ""
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder", start)
-        if folder:
-            self.open_folder(folder)
+        self.browser.select_folder()
 
     def open_folder(self, folder: str):
-        self.thumb_pool.clear()
-        while self.grid_layout.count():
-            w = self.grid_layout.takeAt(0).widget()
-            if w:
-                w.deleteLater()
-        self.cards.clear()
-        self.selected_paths.clear()
-        try:
-            files = dataset.scan_images(folder)
-        except OSError as e:
-            QMessageBox.critical(self, "Error", f"Could not read folder:\n{e}")
-            return
-        self.cfg.set("ui.last_folder", folder)
-        self.lbl_folder.setText(f"{folder}  —  {len(files)} images")
-        cols = 3
-        for i, path in enumerate(files):
-            p = str(path)
-            card = CaptionCard(p)
-            card.selection_changed.connect(self.on_selection)
-            self.grid_layout.addWidget(card, i // cols, i % cols)
-            self.cards[p] = card
-            worker = ThumbnailWorker(p, (230, 170))
-            worker.signals.loaded.connect(card.set_image)
-            self.thumb_pool.start(worker)
-        self._update_run_button()
+        if self.ctx.confirm_discard(self):
+            self.ctx.open_folder(folder, self.browser.chk_recursive.isChecked(), self)
 
-    def on_selection(self, path, is_selected):
-        if is_selected:
-            self.selected_paths.add(path)
-        else:
-            self.selected_paths.discard(path)
+    def on_selection(self, keys: list[str]):
+        self.selected_paths = keys
         self._update_run_button()
 
     def select_all(self):
-        target = not (self.cards and len(self.selected_paths) == len(self.cards))
-        for card in self.cards.values():
-            card.toggle_selection(target)
+        self.browser.select_all()
 
     def select_uncaptioned(self):
-        for card in self.cards.values():
-            card.toggle_selection(not card.txt_caption.toPlainText().strip())
-
-    def _has_unsaved(self) -> bool:
-        return any(c.dirty for c in self.cards.values())
+        self.browser.select_matching("missing:caption")
 
     def has_unsaved_changes(self) -> bool:
-        return self._has_unsaved()
+        return self.ctx.has_unsaved()
 
     # ------------------------------------------------------------------ run
     def _update_run_button(self):
@@ -756,7 +617,7 @@ class CaptionTab(QWidget):
             n = len(self.selected_paths)
             self.btn_run.setText(f"🚀 Caption {n} Selected  (Ctrl+Enter)" if n else "Select images to caption")
             self.btn_run.setStyleSheet("background-color: #d63031; font-weight: bold; font-size: 14px;")
-        self.btn_folder.setEnabled(self.worker is None)
+        self.browser.btn_open.setEnabled(self.worker is None)
 
     def abort_process(self):
         if self.worker is not None:
@@ -808,16 +669,19 @@ class CaptionTab(QWidget):
         if spec is None:
             return
         mode = self.combo_save.currentData()
-        ordered = [p for p in self.cards if p in self.selected_paths]  # grid order
-        # Hand-edited captions are saved first so merge modes build on what the user sees.
-        for p in ordered:
-            if self.cards[p].dirty:
-                try:
-                    self.cards[p].save_text()
-                except OSError as e:
-                    self.log(f"Could not save edit for {Path(p).name}: {e}")
+        ordered = list(self.selected_paths)  # grid order
+        session = self.ctx.session
+        self.ctx.commit_pending_edits()
+        dirty = [k for k in ordered if session.get(k) and session.get(k).dirty]
+        if dirty:
+            # Merge modes must build on what the user sees, so unsaved edits are saved first.
+            if not confirm(self, "Unsaved edits",
+                           f"{len(dirty)} selected caption(s) have unsaved edits. Save them before captioning?"):
+                return
+            if not self.ctx.save(self, dirty):
+                return
         if mode == SAVE_OVERWRITE:
-            existing = sum(1 for p in ordered if self.cards[p].txt_caption.toPlainText().strip())
+            existing = sum(1 for k in ordered if session.get(k) and session.get(k).has_caption)
             if existing and not confirm(
                     self, "Overwrite captions?",
                     f"{existing} of the {len(ordered)} selected images already have captions, which will be "
@@ -834,8 +698,9 @@ class CaptionTab(QWidget):
         tag_mode = self.combo_template.currentText() in ("Booru Tags", "Stable Diffusion Tags")
         job = BatchJob(paths=[Path(p) for p in ordered], spec=spec, request=request, save_mode=mode,
                        tag_mode=tag_mode, title="Captioning")
-        for p in ordered:
-            self.cards[p].set_status("working")
+        self.ctx.set_job_state(ordered, JOB_QUEUED)
+        self._job_keys = ordered
+        self._job_generation = self.ctx.generation
         self.progress_bar.setMaximum(len(ordered))
         self.progress_bar.setValue(0)
         self.worker = start_job(job)
@@ -844,30 +709,37 @@ class CaptionTab(QWidget):
         self.worker.progress.connect(lambda done, total: self.progress_bar.setValue(done))
         self.worker.item_done.connect(self.on_item_done)
         self.worker.item_failed.connect(self.on_item_failed)
-        self.worker.item_skipped.connect(lambda p, r: self._card_status(p, "done"))
+        self.worker.item_skipped.connect(lambda p, r: self._mark(p, None))
+        self.worker.items_started.connect(lambda keys: self._mark_many(keys, JOB_WORKING))
         self.worker.finished.connect(self.on_job_finished)
         self._update_run_button()
         self.log(f"▶ Captioning {len(ordered)} image(s) with {spec.model}")
 
-    def _card_status(self, path, state):
-        if path in self.cards:
-            self.cards[path].set_status(state)
+    def _same_folder(self) -> bool:
+        return self.ctx.generation == getattr(self, "_job_generation", -1)
+
+    def _mark(self, path, state):
+        if self._same_folder():
+            self.ctx.set_job_state([path], state)
+
+    def _mark_many(self, keys, state):
+        if self._same_folder():
+            self.ctx.set_job_state(keys, state)
 
     def on_item_done(self, path, text):
-        card = self.cards.get(path)
-        if card:
-            card.show_result(text)
-            card.set_status("done")
+        if self._same_folder():
+            self.ctx.reload_from_disk([path])  # the worker already saved it safely
+            self.ctx.set_job_state([path], None)
 
     def on_item_failed(self, path, reason):
-        self._card_status(path, "failed")
+        self._mark(path, JOB_FAILED)
         self.log(f"❌ {Path(path).name}: {reason}")
 
     def on_job_finished(self, summary):
         self.worker = None
-        for card in self.cards.values():
-            if getattr(card, "_status_color", None) == "#fdcb6e":  # still marked working (cancelled)
-                card.set_status("done")
+        if self._same_folder():
+            leftover = [k for k in getattr(self, "_job_keys", []) if self.ctx.job_state.get(k) in (JOB_QUEUED, JOB_WORKING)]
+            self.ctx.set_job_state(leftover, None)
         self._update_run_button()
         self.set_status(summary.text())
         self.log(("✅ " if not summary.failed and not summary.fatal else "⚠ ") + summary.text())
@@ -877,35 +749,7 @@ class CaptionTab(QWidget):
 
     # ------------------------------------------------------------------ manual actions
     def save_edits(self):
-        changed = 0
-        try:
-            for card in self.cards.values():
-                if card.dirty and card.save_text():
-                    changed += 1
-        except OSError as e:
-            QMessageBox.critical(self, "Save failed", str(e))
-        self.set_status(f"Saved {changed} edited caption(s)." if changed else "No unsaved edits.")
-
-    def save_to_dataset(self):
-        if not self.selected_paths:
-            QMessageBox.information(self, "No selection", "Select images first.")
-            return
-        root = Path(self.cfg.get("paths.collections_dir") or paths.DEFAULT_COLLECTIONS_DIR)
-        existing = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
-        name, ok = QInputDialog.getItem(self, "Copy to collection", "Collection name (new or existing):",
-                                        existing, editable=True)
-        if not ok or not name.strip():
-            return
-        for p in self.selected_paths:
-            if self.cards[p].dirty:
-                self.cards[p].save_text()
-        report = fileops.CopyReport()
-        for p in sorted(self.selected_paths):
-            fileops.copy_image_with_caption(Path(p), root / name.strip(), report=report)
-        self.set_status(f"Collection '{name.strip()}': {report.summary()}")
-        if report.failed:
-            QMessageBox.warning(self, "Some copies failed",
-                                "\n".join(f"{Path(p).name}: {e}" for p, e in report.failed[:20]))
+        return self.browser.save()
 
     # ------------------------------------------------------------------ log
     def set_status(self, msg: str):

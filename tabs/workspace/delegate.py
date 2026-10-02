@@ -20,9 +20,10 @@ SUBTLE = QColor("#8a8a8a")
 class CardDelegate(QStyledItemDelegate):
     TEXT_LINES = 3
 
-    def __init__(self, loader, parent=None):
+    def __init__(self, loader, parent=None, job_state: dict | None = None):
         super().__init__(parent)
         self.loader = loader
+        self.job_state = job_state if job_state is not None else {}
         self.card_width = 220
         self.show_captions = True
         self._font = QFont()
@@ -60,7 +61,14 @@ class CardDelegate(QStyledItemDelegate):
         path = QPainterPath()
         path.addRoundedRect(QRectF(r), 8, 8)
         painter.fillPath(path, CARD_HOVER if hover and not selected else CARD_BG)
-        if selected:
+        job = self.job_state.get(e.key)
+        if job == "working":
+            painter.setPen(QPen(UNSAVED, 2.5))
+            painter.drawPath(path)
+        elif job == "failed":
+            painter.setPen(QPen(MISSING, 2.5))
+            painter.drawPath(path)
+        elif selected:
             painter.setPen(QPen(ACCENT, 2.5))
             painter.drawPath(path)
 
@@ -89,6 +97,11 @@ class CardDelegate(QStyledItemDelegate):
             painter.drawEllipse(thumb_rect.left() + 6, thumb_rect.top() + 6, 10, 10)
         if not e.has_caption:
             self._pill(painter, "NO CAPTION", MISSING, thumb_rect.left() + (22 if e.dirty else 6), thumb_rect.top() + 4)
+        if job:
+            label = {"working": "AI WORKING…", "queued": "QUEUED", "failed": "FAILED"}.get(job, job.upper())
+            color = {"working": QColor("#b7791f"), "queued": QColor(60, 60, 60, 220), "failed": MISSING}.get(job, SUBTLE)
+            fm = QFontMetrics(self._small)
+            self._pill(painter, label, color, thumb_rect.right() - fm.horizontalAdvance(label) - 14, thumb_rect.top() + 4)
         if e.width:
             dims = f"{e.width}×{e.height}"
             fm = QFontMetrics(self._small)

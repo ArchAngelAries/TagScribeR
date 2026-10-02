@@ -99,6 +99,7 @@ class BatchWorker(QObject):
     item_done = Signal(str, str)           # path, caption text (as saved, or generated if SAVE_NONE)
     item_failed = Signal(str, str)         # path, reason
     item_skipped = Signal(str, str)        # path, reason
+    items_started = Signal(list)           # paths now being processed (for live UI badges)
     finished = Signal(object)              # JobSummary
 
     def __init__(self, job: BatchJob):

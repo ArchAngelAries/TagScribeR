@@ -95,19 +95,10 @@ class MainWindow(QMainWindow):
         from inference import worker
         from inference.manager import manager
 
-        unsaved = [name for name, tab in (("Gallery", self.tab_gallery), ("Auto Caption", self.tab_caption))
-                   if tab.has_unsaved_changes()]
-        if unsaved:
-            reply = QMessageBox.warning(
-                self, "Unsaved changes", f"You have unsaved caption edits in: {', '.join(unsaved)}.\n\n"
-                "Save them before closing?", QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save)
-            if reply == QMessageBox.Cancel:
-                event.ignore()
-                return
-            if reply == QMessageBox.Save:
-                self.tab_gallery.save_all()
-                self.tab_caption.save_edits()
+        from tabs.workspace.context import workspace
+        if not workspace().confirm_discard(self):  # one shared dataset, so one prompt
+            event.ignore()
+            return
         if worker.any_running():
             reply = QMessageBox.question(
                 self, "Job running", "A captioning/tagging job is still running. Stop it and quit?\n"

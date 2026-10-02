@@ -56,6 +56,7 @@ class CaptionTab(QWidget):
         self.browser = DatasetBrowser(self.ctx, size_key="ui.caption_thumbnail_size")
         self.browser.selection_changed.connect(self.on_selection)
         self.ctx.session_changed.connect(lambda: self._on_session_changed_review())
+        self.ctx.session_changed.connect(lambda: self._load_project_settings())
         self.btn_select_uncaptioned = QPushButton("Select Uncaptioned")
         self.btn_select_uncaptioned.setToolTip("Select every image that has no caption yet")
         self.btn_select_uncaptioned.clicked.connect(self.select_uncaptioned)
@@ -908,6 +909,7 @@ class CaptionTab(QWidget):
                     destructive=True):
                 return
         self._save_settings()
+        self._store_project_settings()
         request = CaptionRequest(
             prompt=prompt, system_prompt=self.system_input.toPlainText(),
             params=GenerationParams(max_new_tokens=self.spin_tokens.value(), temperature=self.spin_temp.value(),
@@ -971,6 +973,36 @@ class CaptionTab(QWidget):
             return
         self.ctx.reload_from_disk([path])  # the worker already saved it safely
         self.ctx.set_job_state([path], None)
+
+    # ------------------------------------------------------------------ per-folder settings
+    def _load_project_settings(self):
+        """Each dataset remembers its own trigger word, preset and tag-hint choice."""
+        p = self.ctx.project
+        if p is None:
+            return
+        # The subject is dataset-specific: always take it from this folder (empty if none), so one
+        # dataset's trigger word can never leak into another's captions.
+        self.inp_subject.setText(p.get("subject", ""))
+        self.chk_subject_first.setChecked(p.get("subject_first", False))
+        self.chk_tag_hints.setChecked(p.get("tag_hints", False))
+        preset = p.get("caption_preset")
+        if preset and self.presets.get(preset) is not None and preset != self.combo_template.currentData():
+            self._fill_presets(preset)
+            self.apply_template()
+        if self.inp_subject.text() or self.chk_tag_hints.isChecked():
+            self.sec_subject.toggle.setChecked(True)
+        if p.get("subject") or preset:
+            self.log(f"Loaded this folder's caption settings (subject: {p.get('subject') or '—'}).")
+
+    def _store_project_settings(self):
+        p = self.ctx.project
+        if p is None:
+            return
+        for key, value in (("subject", self.inp_subject.text().strip()),
+                           ("subject_first", self.chk_subject_first.isChecked()),
+                           ("tag_hints", self.chk_tag_hints.isChecked()),
+                           ("caption_preset", self.combo_template.currentData() or "")):
+            p.set(key, value)
 
     # ------------------------------------------------------------------ review queue
     def _review_item(self, key: str) -> tuple[str, str, str]:

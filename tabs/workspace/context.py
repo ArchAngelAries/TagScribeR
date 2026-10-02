@@ -77,6 +77,7 @@ class WorkspaceContext(QObject):
         self.undo_stack = QUndoStack(self)
         self.job_state: dict[str, str] = {}
         self.health_report = None
+        self.project = None                 # per-folder settings (core.projects.Project)
         self.health_cache: dict[tuple[str, float, int], object] = {}
         self._commit_hooks: list[Callable[[], None]] = []
         self._info_signals = _InfoSignals()
@@ -126,6 +127,8 @@ class WorkspaceContext(QObject):
         self.undo_stack.clear()
         self.job_state.clear()
         self.health_report = None
+        from core.projects import Project
+        self.project = Project(folder)
         self.session = session
         self.folder = folder
         self.model.set_session(session)

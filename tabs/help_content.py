@@ -102,7 +102,10 @@ Untick <b>Captions</b> to show images only. For larger text everywhere, see <i>A
     "filter": ("Filtering images", "Gallery", "<h2>Filtering</h2><p>Type in the filter box (Ctrl+F) to show only matching "
                "images. The box turns red if part of the filter isn't understood — hover it for details.</p>"
                + FILTER_SYNTAX +
-               "<p>Tip: in <i>Batch</i>, choose <b>All shown</b> to apply an operation to everything the filter shows.</p>"),
+               "<p>Tip: in <i>Batch</i>, choose <b>All shown</b> to apply an operation to everything the filter shows.</p>"
+               "<h3>Saved filters (★)</h3><p>The ★ button next to the filter box offers ready-made filters (missing "
+               "captions, unsaved edits, health flags, small images…) and lets you <b>save the current filter</b> under a "
+               "name for this folder. Saved filters belong to the dataset and come back whenever you open it.</p>"),
     "inspect": ("Inspecting & editing", "Gallery", """
 <h2>Inspecting &amp; editing captions</h2>
 <p>Select one image to see a large preview, its size, and its caption.</p>
@@ -193,6 +196,10 @@ TagScribeR adds it.</li>
 Auto Tag</i>; then caption here. The tags ground the model on details (eye color, clothing, objects) and it writes a
 natural caption. Choose <i>Append</i> under “If captioned” to keep the tags and add the caption after them.</li>
 </ul>
+<p><b>Per-folder memory:</b> the subject, “start with it”, tag hints and the chosen preset are remembered for each
+dataset folder separately — opening another folder loads its own settings (an empty subject if none was set), so one
+dataset's trigger word never ends up in another's captions. These settings live in <code>user_data\\projects\\</code>;
+nothing is written into your dataset folders.</p>
 <h3>Caption length</h3>
 <p>The Gallery's caption editor shows an estimated <b>CLIP token</b> count. SD1.5 and SDXL read captions in 75-token
 chunks, so very long captions matter less there; Flux, Qwen-Image and other models with T5/LLM text encoders handle

@@ -85,6 +85,12 @@ class DatasetBrowser(QWidget):
         for w in (self.btn_open, self.btn_recent, self.chk_recursive):
             bar.addWidget(w)
         bar.addWidget(self.inp_filter, 1)
+        self.btn_filters = QToolButton(text="★")
+        self.btn_filters.setToolTip("Saved filters — built-in shortcuts plus filters you save for this folder")
+        self.btn_filters.setPopupMode(QToolButton.InstantPopup)
+        self.btn_filters.setMenu(QMenu(self.btn_filters))
+        self.btn_filters.menu().aboutToShow.connect(self._fill_filter_menu)
+        bar.addWidget(self.btn_filters)
         from tabs.help import help_button
         bar.addWidget(help_button("filter", self, "Filter syntax and examples"))
         bar.addWidget(self.combo_sort)
@@ -244,6 +250,36 @@ class DatasetBrowser(QWidget):
     def set_filter(self, text: str):
         self.inp_filter.setText(text)
         self.apply_filter()
+
+    def _fill_filter_menu(self):
+        from core.projects import BUILTIN_FILTERS
+        menu = self.btn_filters.menu()
+        menu.clear()
+        for name, q in BUILTIN_FILTERS.items():
+            menu.addAction(name, lambda q=q: self.set_filter(q))
+        project = self.ctx.project
+        saved = project.filters() if project else {}
+        if saved:
+            menu.addSeparator()
+            for name, q in saved.items():
+                menu.addAction(f"★ {name}", lambda q=q: self.set_filter(q)).setToolTip(q)
+        menu.addSeparator()
+        a = menu.addAction("Save current filter for this folder…", self._save_filter)
+        a.setEnabled(bool(project and self.inp_filter.text().strip()))
+        if saved:
+            sub = menu.addMenu("Delete saved filter")
+            for name in saved:
+                sub.addAction(name, lambda n=name: project.delete_filter(n))
+
+    def _save_filter(self):
+        from PySide6.QtWidgets import QInputDialog
+        q = self.inp_filter.text().strip()
+        if not q or not self.ctx.project:
+            return
+        name, ok = QInputDialog.getText(self, "Save filter", f"Name for “{q}”:")
+        if ok and name.strip():
+            self.ctx.project.save_filter(name, q)
+            self.flash(f"Saved filter '{name.strip()}' for this folder.")
 
     def apply_filter(self, *_):
         errors = self.proxy.set_query(self.inp_filter.text())

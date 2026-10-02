@@ -144,6 +144,13 @@ class GalleryTab(QWidget):
 
     def _on_session_changed(self):
         self.inspector.show_entries([])
+        p = self.ctx.project
+        if p is not None and p.get("health_resolution"):
+            i = self.health.combo_res.findData(p.get("health_resolution"))
+            if i >= 0:
+                self.health.combo_res.blockSignals(True)
+                self.health.combo_res.setCurrentIndex(i)
+                self.health.combo_res.blockSignals(False)
         self._health_stats = []
         self.health.tree.clear()
         self.health.table.setRowCount(0)
@@ -219,6 +226,8 @@ class GalleryTab(QWidget):
 
     def _rebuild_health(self):
         from core import health
+        if self.ctx.project is not None:
+            self.ctx.project.set("health_resolution", self.health.resolution())
         if not self._health_stats or not self.ctx.session:
             return
         report = health.build_report(self._health_stats, resolution=self.health.resolution(),

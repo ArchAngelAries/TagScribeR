@@ -39,9 +39,13 @@ TagScribeR gets a `training/` package that ports that layer. It's Apache-2.0, po
 | Phase | Family | Basis | Why this order |
 |---|---|---|---|
 | T1 | Training core + **Qwen-Image 2.1** | Direct port of Fizgig's standard layer and its existing family | Proves the port against a family Fizgig already runs on that layer |
-| T2 | **SDXL family**: SDXL, PonyXL, IllustriousXL, NoobAI | New `SDXLDriver` (ε- and v-prediction variants; dual CLIP; UNet input/middle/output block map; Conv2d LoRA) | The most-requested older models; architecture facts from SDXL references, behaviour from Fizgig |
-| T3 | **Anima** (Cosmos-Predict2-2B finetune) | New `AnimaDriver` (DiT; reuses the Qwen-Image VAE path) | Architecture facts from Anima / Cosmos references |
-| T4 | **Krea 2, MiniMax H3, FLUX.2 Klein** | Fizgig's standalone trainers moved onto the family layer | The largest ports; done once the shared layer is proven |
+| T2 | **Krea 2** | Fizgig's standalone Krea 2 trainer moved onto the family layer, without changing what it does | The owner's main training model; Fizgig's most mature recipe (measured presets, EMA, Turbo-LoRA previews, loss watch); shares much with Qwen 2.1 |
+| T3 | **SDXL family**: SDXL, PonyXL, IllustriousXL, NoobAI | New `SDXLDriver` (ε- and v-prediction variants; dual CLIP; UNet input/middle/output block map; Conv2d LoRA) | The most-used older models; architecture facts from SDXL references, behaviour from Fizgig |
+| T4 | **MiniMax H3, FLUX.2 Klein** | Fizgig's standalone trainers moved onto the family layer | The largest ports; done once the layer has carried Krea 2 |
+| T5 | **Anima** (Cosmos-Predict2-2B finetune) | New `AnimaDriver` (DiT; reuses the Qwen-Image VAE path) | The least-used of the older families; architecture facts from Anima / Cosmos references |
+
+**Reordered (2026-10-02):** the owner's main focus is Krea 2, so it moved from T4 to T2. The modern families (Krea 2,
+Qwen 2.1, MiniMax H3) come first; the older families stay supported for the people who still use them.
 
 ## 3. Training UI in TagScribeR
 
@@ -58,7 +62,7 @@ TagScribeR's own captioners take over the loss watch's auto-recaption role, wher
 
 **Decided (2026-10-02):** all three recommendations accepted:
 - caption shuffle and dropout as an optional extension, off by default
-- build order T1 → T4 as listed
+- build order T1 → T4 as listed (since reordered: see section 2)
 - use `diffusers` for the SDXL family
 
 The options as originally presented:
@@ -93,7 +97,7 @@ The options as originally presented:
 
   It has Help Center topics, Ctrl+6, command-palette entries and a quit guard. It is verified by an offscreen
   test that runs the real child processes on the CPU test family, including pause and resume.
-- **T2 SDXL family:** next.
+- **T2 Krea 2:** next.
 
 ## 6. Verification policy
 

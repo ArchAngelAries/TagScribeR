@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFormLayout
 from qt_material import apply_stylesheet, list_themes
 
 from core import paths
-from core.config import load_quick_tags, save_quick_tags, settings
+from core.config import settings
 from inference.models import stability_matrix_llm_dirs
 from tabs.common import hint_label, run_in_background
 
@@ -109,21 +109,13 @@ class SettingsTab(QWidget):
         # --- Quick tags ---
         grp_tags = QGroupBox("Quick tags")
         lt = QVBoxLayout(grp_tags)
-        lt.addWidget(hint_label("Presets shown in the Gallery's Quick Tags list."))
-        self.list_tags = QListWidget()
-        self.list_tags.setMaximumHeight(180)
-        lt.addWidget(self.list_tags)
-        row = QHBoxLayout()
-        b_refresh = QPushButton("Refresh")
-        b_refresh.clicked.connect(self.refresh_tag_list)
-        b_del = QPushButton("Delete selected")
-        b_del.clicked.connect(self.delete_selected_tag)
-        row.addWidget(b_refresh)
-        row.addWidget(b_del)
-        row.addStretch()
-        lt.addLayout(row)
+        lt.addWidget(hint_label("One-click tags shown in Gallery → Batch. Saved immediately and kept until you "
+                                "remove them. An entry can hold several tags (\"ohwx, 1girl\")."))
+        from tabs.common import QuickTagList
+        self.quick_tags = QuickTagList()
+        self.quick_tags.list.setMaximumHeight(200)
+        lt.addWidget(self.quick_tags)
         main.addWidget(grp_tags)
-        self.refresh_tag_list()
 
         # --- Diagnostics ---
         grp_diag = QGroupBox("System & diagnostics")
@@ -176,22 +168,6 @@ class SettingsTab(QWidget):
             dirs = [d for d in self.cfg.get("local.model_dirs") if d != item.text()]
             self.cfg.set("local.model_dirs", dirs)
             self.list_dirs.takeItem(self.list_dirs.row(item))
-
-    def refresh_tag_list(self):
-        self.list_tags.clear()
-        self.list_tags.addItems(load_quick_tags())
-
-    def delete_selected_tag(self):
-        item = self.list_tags.currentItem()
-        if not item:
-            return
-        tags = [t for t in load_quick_tags() if t != item.text()]
-        try:
-            save_quick_tags(tags)
-        except OSError as e:
-            QMessageBox.warning(self, "Quick tags", f"Could not save: {e}")
-            return
-        self.refresh_tag_list()
 
     @staticmethod
     def _open(folder):

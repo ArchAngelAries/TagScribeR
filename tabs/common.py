@@ -101,6 +101,96 @@ class CollapsibleSection(QWidget):
         self.body.setVisible(on)
 
 
+class QuickTagList(QWidget):
+    """Persistent quick-tag list: add, remove (right-click / Delete), drag to reorder.
+
+    Every change is written to user_data immediately and all open lists refresh,
+    so the Gallery and Settings never disagree. ``tag_clicked`` emits the entry's
+    tags (an entry may hold several, e.g. "ohwx, 1girl").
+    """
+
+    tag_clicked = Signal(list)
+
+    def __init__(self, parent=None, show_input: bool = True, click_hint: str = ""):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QLineEdit, QListWidget
+        from core import config
+        self._config = config
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        if show_input:
+            row = QHBoxLayout()
+            self.input = QLineEdit()
+            self.input.setPlaceholderText("New quick tag (Enter) — e.g. 'ohwx, 1girl' adds both")
+            self.input.returnPressed.connect(self._add)
+            row.addWidget(self.input, 1)
+            lay.addLayout(row)
+        self.list = QListWidget()
+        self.list.setDragDropMode(QAbstractItemView.InternalMove)
+        self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.list.setToolTip((click_hint + "\n" if click_hint else "") +
+                             "Drag to reorder · right-click or Delete to remove")
+        self.list.itemClicked.connect(self._clicked)
+        self.list.model().rowsMoved.connect(self._save_order)
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._menu)
+        lay.addWidget(self.list)
+        from PySide6.QtGui import QKeySequence, QShortcut
+        sc = QShortcut(QKeySequence("Del"), self.list)
+        sc.setContext(Qt.WidgetShortcut)
+        sc.activated.connect(self._remove_selected)
+        config.on_quick_tags_changed(self.reload)
+        self.reload()
+
+    def reload(self):
+        try:
+            tags = self._config.load_quick_tags()
+            self.list.blockSignals(True)
+            self.list.clear()
+            self.list.addItems(tags)
+            self.list.blockSignals(False)
+        except RuntimeError:
+            pass  # this widget was already destroyed
+
+    def _clicked(self, item):
+        from core import captions
+        tags = captions.split_tags(item.text())
+        if tags:
+            self.tag_clicked.emit(tags)
+
+    def _add(self):
+        text = self.input.text().strip()
+        if text:
+            try:
+                self._config.add_quick_tag(text)
+            except OSError as e:
+                QMessageBox.warning(self, "Quick tags", f"Could not save quick tags: {e}")
+        self.input.clear()
+
+    def _remove_selected(self):
+        tags = [i.text() for i in self.list.selectedItems()]
+        if tags:
+            try:
+                self._config.remove_quick_tags(tags)
+            except OSError as e:
+                QMessageBox.warning(self, "Quick tags", f"Could not save quick tags: {e}")
+
+    def _save_order(self, *_):
+        order = [self.list.item(i).text() for i in range(self.list.count())]
+        try:
+            self._config.save_quick_tags(order)
+        except OSError as e:
+            QMessageBox.warning(self, "Quick tags", f"Could not save quick tags: {e}")
+
+    def _menu(self, pos):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        n = len(self.list.selectedItems())
+        a = menu.addAction(f"Remove {n} quick tag(s)" if n > 1 else "Remove quick tag", self._remove_selected)
+        a.setEnabled(n > 0)
+        menu.exec(self.list.viewport().mapToGlobal(pos))
+
+
 def hint_label(text: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setWordWrap(True)

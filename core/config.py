@@ -43,7 +43,9 @@ DEFAULTS: dict[str, Any] = {
     "caption.top_p": 0.9,
     "caption.max_image_side": 1536,
     "caption.prompt_template": "Detailed Description",
-    "caption.custom_prompt": "",
+    "caption.custom_prompt": "",     # legacy (migrated to a named preset)
+    "caption.working_prompt": "",    # current instruction text, possibly edited
+    "caption.tag_output": False,
     "caption.system_prompt": "",
     "caption.strip_thinking": True,
     "caption.top_k": 0,
@@ -76,6 +78,7 @@ DEFAULTS: dict[str, Any] = {
     "tagger.device": "auto",         # auto | cpu
     "tagger.mode": "append",         # ignore | append | overwrite
     "tagger.prepend": "",
+    "tagger.last_preset": "",
     "tagger.append": "",
     # Datasets / outputs
     "paths.collections_dir": "",     # '' = <app>/Dataset Collections
@@ -230,5 +233,39 @@ def load_quick_tags() -> list[str]:
     return list(DEFAULT_QUICK_TAGS)
 
 
+_quick_tag_listeners: list = []
+
+
+def on_quick_tags_changed(fn) -> None:
+    """Register a callback run after the quick-tag list changes (keeps every open list in sync)."""
+    _quick_tag_listeners.append(fn)
+
+
 def save_quick_tags(tags: list[str]) -> None:
+    """Replace the whole list (order is preserved; duplicates and blanks dropped)."""
     atomic_write_text(paths.QUICK_TAGS_FILE, "\n".join(dict.fromkeys(t.strip() for t in tags if t.strip())) + "\n")
+    for fn in list(_quick_tag_listeners):
+        try:
+            fn()
+        except Exception:
+            log.exception("Quick-tag listener failed")
+
+
+# Edits always start from what's on disk, so a stale list in one panel can never
+# resurrect a tag deleted in another.
+def add_quick_tag(tag: str) -> bool:
+    tag = tag.strip()
+    tags = load_quick_tags()
+    if not tag or tag in tags:
+        return False
+    save_quick_tags(tags + [tag])
+    return True
+
+
+def remove_quick_tags(remove: list[str]) -> int:
+    drop = {t.strip() for t in remove}
+    tags = load_quick_tags()
+    kept = [t for t in tags if t not in drop]
+    if len(kept) != len(tags):
+        save_quick_tags(kept)
+    return len(tags) - len(kept)

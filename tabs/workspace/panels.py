@@ -4,11 +4,10 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout,
-                               QHeaderView, QLabel, QLineEdit, QListWidget, QMenu, QPlainTextEdit, QPushButton,
+                               QHeaderView, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton,
                                QRadioButton, QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from core import captions
-from core.config import load_quick_tags, save_quick_tags
 from core.dataset_session import Entry
 from core.image_utils import load_qimage
 from core.widgets import TagEditorWidget
@@ -364,21 +363,19 @@ class BatchPanel(QWidget):
         g = QGroupBox("Quick tags")
         v = QVBoxLayout(g)
         row = QHBoxLayout()
-        self.inp_quick = QLineEdit()
-        self.inp_quick.setPlaceholderText("new quick tag")
-        self.inp_quick.returnPressed.connect(self._add_quick)
+        row.addWidget(QLabel("Click to"))
         self.combo_quick_pos = QComboBox()
         self.combo_quick_pos.addItems(["Append", "Prepend"])
-        row.addWidget(self.inp_quick, 1)
         row.addWidget(self.combo_quick_pos)
+        row.addWidget(QLabel("to the selection"))
+        row.addStretch()
         v.addLayout(row)
-        self.list_quick = QListWidget()
-        self.list_quick.setMaximumHeight(170)
-        self.list_quick.itemClicked.connect(
-            lambda it: self.quick_tag.emit(it.text(), self.combo_quick_pos.currentText().lower()))
-        self.list_quick.addItems(load_quick_tags())
-        v.addWidget(self.list_quick)
-        v.addWidget(hint_label("Click a quick tag to add it to the selection."))
+        from tabs.common import QuickTagList
+        self.quick_tags = QuickTagList(click_hint="Click to add to the selected images")
+        self.quick_tags.list.setMaximumHeight(190)
+        self.quick_tags.tag_clicked.connect(
+            lambda tags: self.quick_tag.emit(", ".join(tags), self.combo_quick_pos.currentText().lower()))
+        v.addWidget(self.quick_tags)
         lay.addWidget(g)
         lay.addStretch()
 
@@ -442,16 +439,6 @@ class BatchPanel(QWidget):
             dedupe=self.chk_dedupe.isChecked(), sort=self.chk_sort.isChecked(),
             escape_parentheses=self.chk_escape.isChecked()))
 
-    def _add_quick(self):
-        tag = self.inp_quick.text().strip()
-        items = [self.list_quick.item(i).text() for i in range(self.list_quick.count())]
-        if tag and tag not in items:
-            self.list_quick.addItem(tag)
-            try:
-                save_quick_tags(items + [tag])
-            except OSError:
-                pass
-        self.inp_quick.clear()
 
 
 # --------------------------------------------------------------------------- tag statistics

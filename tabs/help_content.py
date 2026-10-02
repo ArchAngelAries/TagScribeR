@@ -126,7 +126,9 @@ removes that tag from all of them; adding a tag adds it to all of them.</p>
 <li><b>Cleanup &amp; normalize</b> — underscores → spaces, lowercase, remove duplicates, sort, escape parentheses,
 accents → ASCII, or clear captions.</li>
 <li><b>Auto Tag</b> — run a WD tagger (see <i>Auto tagging</i>).</li>
-<li><b>Quick tags</b> — click to add a favourite tag to the selection. Manage the list in Settings.</li>
+<li><b>Quick tags</b> — click to add a favourite tag (or a group like <code>ohwx, 1girl</code>) to the selection.
+Type a new one and press Enter to add it; right-click or Delete removes; drag to reorder. Saved instantly and shared with
+Settings.</li>
 </ul>
 <p>Every batch operation is a single undo step and stays unsaved until you press Save.</p>
 """),
@@ -147,8 +149,8 @@ everywhere (type an existing tag's name to merge), or <b>delete</b> it everywher
 <ol>
 <li>Pick a <b>model</b> (Local model tab) or a <b>server</b> (API / Server tab).</li>
 <li>Select images in the grid — <i>Select Uncaptioned</i> picks every image without a caption.</li>
-<li>Choose <b>Instructions</b>: a preset (training caption, booru tags, character, clothing, composition…) or write your own.
-Editing a preset switches it to “Custom”, which is remembered.</li>
+<li>Choose <b>Instructions</b>: a preset (training caption, booru tags, character, clothing, composition…) or write your own
+(see <i>Caption presets</i>).</li>
 <li>Choose what happens to <b>existing captions</b>: overwrite, skip, append or prepend.</li>
 <li>Press <b>Caption</b> (Ctrl+Enter). Cards show QUEUED / AI WORKING / FAILED. Esc aborts.</li>
 </ol>
@@ -162,6 +164,22 @@ fail, a report lists them with the reason; everything else is kept.</p>
 <li><b>Max image size</b> (Advanced sampling) trades detail for speed and memory.</li>
 <li><b>🧹 Free VRAM</b> unloads the model, e.g. before using ComfyUI. Settings can unload it automatically when idle.</li>
 </ul>
+"""),
+    "presets": ("Caption presets", "AI", """
+<h2>Caption presets</h2>
+<p>A preset stores caption instructions so you can reuse them. Built-in presets come first in the list;
+<b>★</b> marks your own.</p>
+<ul>
+<li><b>Use one</b> — pick it from the list. Your own presets can also restore their saved generation settings.</li>
+<li><b>Edit freely</b> — change the text; the hint shows <b>● Edited</b>. Your working text is remembered even if you don't save it.</li>
+<li><b>💾 Save</b> — store the current instructions under a name. Tick <i>Also save generation settings</i> to include tokens,
+temperature, sampling and what to do with existing captions. Built-in presets can't be overwritten — save your version
+under a new name.</li>
+<li><b>⋯ menu</b> — rename or delete your preset, revert edited text, and <b>import / export</b> presets as a .json file to
+share them or move them to another PC.</li>
+<li><b>Output is a tag list</b> — tick for tag-style presets so Append/Prepend merges tags without duplicates.</li>
+</ul>
+<p>Your presets live in <code>user_data\caption_presets.json</code> and stay until you delete them.</p>
 """),
     "models": ("Choosing a model", "AI", """
 <h2>Choosing a captioning model</h2>
@@ -201,6 +219,8 @@ not in a file.</li>
 <li><b>Character threshold</b> — kept high so the tagger doesn't invent character names.</li>
 <li><b>Blacklist</b>, <b>Force prepend</b> (e.g. your trigger word) and <b>Force append</b>.</li>
 <li>Formatting: underscores → spaces, escape parentheses, include a rating tag.</li>
+<li><b>Presets</b> — pick a built-in (Balanced, Precise, Broad, No character names) or <b>Save…</b> your own settings
+(model, thresholds, blacklist, trigger words) under a name. Your presets stay until you delete them.</li>
 </ul>
 <p>Results stay unsaved and undoable — review them, then Save.</p>
 """),

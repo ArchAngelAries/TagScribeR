@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QMenu, QToolButton, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QMessageBox, QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter,
                                QTabWidget, QTextEdit, QVBoxLayout, QWidget)
@@ -21,7 +21,8 @@ from core.secrets import ApiProfile, ApiProfileStore
 from inference import models as model_catalog
 from inference.base import CaptionRequest, GenerationParams, ProviderSpec
 from inference.manager import manager
-from inference.prompts import DEFAULT_PRESET, PROMPT_PRESETS
+from core.presets import PresetError, caption_presets
+from inference.prompts import DEFAULT_PRESET
 from inference.worker import (SAVE_APPEND, SAVE_OVERWRITE, SAVE_PREPEND, SAVE_SKIP_EXISTING, BatchJob,
                               start_job)
 from tabs.common import CollapsibleSection, confirm, hint_label, run_in_background, show_job_summary
@@ -90,18 +91,38 @@ class CaptionTab(QWidget):
         row_help.addWidget(hint_label("Tell the model what to write. Presets are tuned for common dataset styles."), 1)
         row_help.addWidget(help_button("caption", grp_prompt, "How Auto Caption works"))
         lp.addLayout(row_help)
+        self.presets = caption_presets()
+        preset_row = QHBoxLayout()
         self.combo_template = QComboBox()
-        self.combo_template.addItems(list(PROMPT_PRESETS.keys()) + ["Custom"])
-        self.combo_template.setToolTip("Pick a caption style; you can edit the text below freely.")
+        self.combo_template.setToolTip("Caption preset. Built-in presets are listed first; ★ marks your own.\n"
+                                       "Edit the text below freely, then 💾 to save it as your own preset.")
+        self.btn_preset_save = QToolButton(text="💾")
+        self.btn_preset_save.setToolTip("Save the current instructions as a preset (yours are kept until you delete them)")
+        self.btn_preset_save.clicked.connect(self.save_preset)
+        self.btn_preset_menu = QToolButton(text="⋯")
+        self.btn_preset_menu.setToolTip("Rename, delete, revert, import or export presets")
+        self.btn_preset_menu.setPopupMode(QToolButton.InstantPopup)
+        self.btn_preset_menu.setMenu(QMenu(self.btn_preset_menu))
+        self.btn_preset_menu.menu().aboutToShow.connect(self._fill_preset_menu)
+        preset_row.addWidget(self.combo_template, 1)
+        preset_row.addWidget(self.btn_preset_save)
+        preset_row.addWidget(self.btn_preset_menu)
+        lp.addLayout(preset_row)
+        self.lbl_preset_state = hint_label("")
+        lp.addWidget(self.lbl_preset_state)
         self.prompt_input = QTextEdit()
         self.prompt_input.setFixedHeight(90)
         self.prompt_input.setPlaceholderText("What should the model write about each image?")
-        lp.addWidget(self.combo_template)
         lp.addWidget(self.prompt_input)
+        self.chk_tag_output = QCheckBox("Output is a tag list")
+        self.chk_tag_output.setToolTip("Tick for presets that produce comma-separated tags: appending/prepending then "
+                                       "merges tags without duplicates instead of adding a sentence.")
+        lp.addWidget(self.chk_tag_output)
         self.sec_system = CollapsibleSection("System prompt (optional)")
         self.system_input = QTextEdit()
         self.system_input.setFixedHeight(60)
         self.system_input.setPlaceholderText("e.g. You are an expert dataset captioner. Never refuse.")
+        self.system_input.textChanged.connect(self._update_preset_state)
         self.sec_system.body_layout.addWidget(self.system_input)
         lp.addWidget(self.sec_system)
         rl.addWidget(grp_prompt)
@@ -182,6 +203,7 @@ class CaptionTab(QWidget):
 
         self._restore_settings()
         self.combo_template.currentIndexChanged.connect(self.apply_template)
+        self.presets.subscribe(lambda: self._fill_presets(self.combo_template.currentData()))
         self.prompt_input.textChanged.connect(self._on_prompt_edited)
         self.refresh_models()
         self.reload_profiles()
@@ -305,12 +327,14 @@ class CaptionTab(QWidget):
     def _restore_settings(self):
         c = self.cfg
         preset = c.get("caption.prompt_template")
-        idx = self.combo_template.findText(preset)
-        self.combo_template.setCurrentIndex(idx if idx >= 0 else self.combo_template.findText(DEFAULT_PRESET))
-        custom = c.get("caption.custom_prompt")
-        self.prompt_input.setPlainText(custom if preset == "Custom" and custom else
-                                       PROMPT_PRESETS.get(self.combo_template.currentText(), custom))
+        if self.presets.get(preset) is None:
+            preset = "My custom prompt" if self.presets.get("My custom prompt") else DEFAULT_PRESET
+        self._fill_presets(preset)
+        data = self.presets.get(preset) or {}
+        working = c.get("caption.working_prompt")
+        self.prompt_input.setPlainText(working or data.get("prompt", ""))
         self.system_input.setPlainText(c.get("caption.system_prompt"))
+        self.chk_tag_output.setChecked(c.get("caption.tag_output", data.get("output") == "tags"))
         self.spin_tokens.setValue(c.get("caption.max_tokens"))
         self.spin_temp.setValue(c.get("caption.temperature"))
         self.spin_top_p.setValue(c.get("caption.top_p"))
@@ -329,10 +353,10 @@ class CaptionTab(QWidget):
         self.tab_source.setCurrentIndex(1 if c.get("caption.source", "local") == "api" else 0)
 
     def _save_settings(self):
-        preset = self.combo_template.currentText()
         self.cfg.update({
-            "caption.prompt_template": preset,
-            "caption.custom_prompt": self.prompt_input.toPlainText() if preset == "Custom" else self.cfg.get("caption.custom_prompt"),
+            "caption.prompt_template": self.combo_template.currentData() or DEFAULT_PRESET,
+            "caption.working_prompt": self.prompt_input.toPlainText(),
+            "caption.tag_output": self.chk_tag_output.isChecked(),
             "caption.system_prompt": self.system_input.toPlainText(),
             "caption.max_tokens": self.spin_tokens.value(),
             "caption.temperature": self.spin_temp.value(),
@@ -582,21 +606,157 @@ class CaptionTab(QWidget):
         run_in_background(fetch, done, failed)
 
     # ------------------------------------------------------------------ prompt
+    def _fill_presets(self, select: str | None = None):
+        self.combo_template.blockSignals(True)
+        self.combo_template.clear()
+        for name in self.presets.names():
+            self.combo_template.addItem(name if self.presets.is_builtin(name) else f"★ {name}", name)
+        i = self.combo_template.findData(select) if select else -1
+        self.combo_template.setCurrentIndex(i if i >= 0 else max(0, self.combo_template.findData(DEFAULT_PRESET)))
+        self.combo_template.blockSignals(False)
+        self._update_preset_state()
+
     def apply_template(self):
-        name = self.combo_template.currentText()
-        if name in PROMPT_PRESETS:
-            self.prompt_input.blockSignals(True)
-            self.prompt_input.setPlainText(PROMPT_PRESETS[name])
-            self.prompt_input.blockSignals(False)
-        elif name == "Custom":
-            self.prompt_input.setPlainText(self.cfg.get("caption.custom_prompt"))
+        """Load the chosen preset into the editor (and its saved generation settings, if any)."""
+        name = self.combo_template.currentData()
+        data = self.presets.get(name) if name else None
+        if not data:
+            return
+        self.prompt_input.blockSignals(True)
+        self.prompt_input.setPlainText(data.get("prompt", ""))
+        self.prompt_input.blockSignals(False)
+        if not self.presets.is_builtin(name):
+            self.system_input.setPlainText(data.get("system_prompt", ""))  # built-ins leave yours alone
+        self.chk_tag_output.setChecked(data.get("output") == "tags")
+        for key, widget in (("max_tokens", self.spin_tokens), ("temperature", self.spin_temp),
+                            ("top_p", self.spin_top_p), ("top_k", self.spin_top_k),
+                            ("repetition_penalty", self.spin_rep)):
+            if key in data:
+                widget.setValue(data[key])
+        if "save_mode" in data:
+            i = self.combo_save.findData(data["save_mode"])
+            if i >= 0:
+                self.combo_save.setCurrentIndex(i)
+        self._update_preset_state()
 
     def _on_prompt_edited(self):
-        name = self.combo_template.currentText()
-        if name in PROMPT_PRESETS and self.prompt_input.toPlainText() != PROMPT_PRESETS[name]:
-            self.combo_template.blockSignals(True)
-            self.combo_template.setCurrentText("Custom")
-            self.combo_template.blockSignals(False)
+        self._update_preset_state()
+
+    def _update_preset_state(self):
+        if not hasattr(self, "lbl_preset_state"):
+            return
+        name = self.combo_template.currentData()
+        data = self.presets.get(name) if name else None
+        builtin = bool(name) and self.presets.is_builtin(name)
+        edited = bool(data) and (self.prompt_input.toPlainText() != data.get("prompt", "") or
+                                 (not builtin and self.system_input.toPlainText() != data.get("system_prompt", "")))
+        if edited:
+            self.lbl_preset_state.setText("● Edited — 💾 saves it as " + ("a new preset." if builtin else
+                                                                          "this preset or a new one."))
+        else:
+            self.lbl_preset_state.setText("Built-in preset" if builtin else ("Your preset" if data else ""))
+
+    def _current_preset_data(self, include_generation: bool) -> dict:
+        data = {"prompt": self.prompt_input.toPlainText().strip(),
+                "system_prompt": self.system_input.toPlainText().strip(),
+                "output": "tags" if self.chk_tag_output.isChecked() else "prose"}
+        if include_generation:
+            data.update(max_tokens=self.spin_tokens.value(), temperature=self.spin_temp.value(),
+                        top_p=self.spin_top_p.value(), top_k=self.spin_top_k.value(),
+                        repetition_penalty=self.spin_rep.value(), save_mode=self.combo_save.currentData())
+        return data
+
+    def save_preset(self):
+        if not self.prompt_input.toPlainText().strip():
+            QMessageBox.information(self, "Save preset", "Write some instructions first.")
+            return
+        current = self.combo_template.currentData() or ""
+        suggested = current if current and not self.presets.is_builtin(current) else \
+            self.presets.unique_name(f"{current} (mine)" if current else "My preset")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Save caption preset")
+        form = QFormLayout(dlg)
+        name_edit = QLineEdit(suggested)
+        name_edit.selectAll()
+        chk_gen = QCheckBox("Also save generation settings (tokens, temperature, sampling, existing-caption mode)")
+        chk_gen.setChecked(bool(self.presets.get(current) and "temperature" in self.presets.get(current)))
+        form.addRow("Name:", name_edit)
+        form.addRow(chk_gen)
+        form.addRow(hint_label("Your presets are stored in user_data\\caption_presets.json and stay until you delete "
+                               "them. Built-in presets can't be overwritten."))
+        btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        form.addRow(btns)
+        if not dlg.exec():
+            return
+        name = name_edit.text().strip()
+        if self.presets.get(name) is not None and not self.presets.is_builtin(name) and name != current:
+            if not confirm(self, "Replace preset?", f"A preset named '{name}' already exists. Replace it?"):
+                return
+        try:
+            saved = self.presets.save(name, self._current_preset_data(chk_gen.isChecked()))
+        except PresetError as e:
+            QMessageBox.warning(self, "Save preset", str(e))
+            return
+        self._fill_presets(saved)
+        self.log(f"Saved caption preset '{saved}'.")
+
+    def _fill_preset_menu(self):
+        menu = self.btn_preset_menu.menu()
+        menu.clear()
+        name = self.combo_template.currentData()
+        mine = bool(name) and not self.presets.is_builtin(name)
+        a = menu.addAction("Rename preset…", self.rename_preset)
+        a.setEnabled(mine)
+        a = menu.addAction("Delete preset…", self.delete_preset)
+        a.setEnabled(mine)
+        menu.addAction("Revert text to saved preset", self.apply_template)
+        menu.addSeparator()
+        menu.addAction("Import presets…", self.import_presets)
+        a = menu.addAction("Export my presets…", self.export_presets)
+        a.setEnabled(bool(self.presets.user))
+
+    def rename_preset(self):
+        old = self.combo_template.currentData()
+        new, ok = QInputDialog.getText(self, "Rename preset", "New name:", text=old)
+        if ok and new.strip() and new.strip() != old:
+            try:
+                self._fill_presets(self.presets.rename(old, new))
+            except PresetError as e:
+                QMessageBox.warning(self, "Rename preset", str(e))
+
+    def delete_preset(self):
+        name = self.combo_template.currentData()
+        if name and confirm(self, "Delete preset", f"Delete your preset '{name}'? This can't be undone.",
+                            destructive=True):
+            try:
+                self.presets.delete(name)
+            except PresetError as e:
+                QMessageBox.warning(self, "Delete preset", str(e))
+                return
+            self._fill_presets(DEFAULT_PRESET)
+            self.apply_template()
+
+    def import_presets(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import caption presets", "", "TagScribeR presets (*.json)")
+        if not path:
+            return
+        try:
+            added = self.presets.import_file(Path(path))
+        except PresetError as e:
+            QMessageBox.warning(self, "Import presets", str(e))
+            return
+        QMessageBox.information(self, "Import presets",
+                                f"Imported {len(added)} preset(s)." + ("\n" + "\n".join(added) if added else
+                                                                     "\nAll of them were already present."))
+
+    def export_presets(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export my caption presets", "tagscriber_caption_presets.json",
+                                              "TagScribeR presets (*.json)")
+        if path:
+            n = self.presets.export(Path(path))
+            self.log(f"Exported {n} preset(s) to {path}")
 
     # ------------------------------------------------------------------ grid
     def load_folder(self):
@@ -706,7 +866,7 @@ class CaptionTab(QWidget):
                                     top_p=self.spin_top_p.value(), top_k=self.spin_top_k.value(),
                                     repetition_penalty=self.spin_rep.value()),
             max_image_side=self.spin_max_side.value(), strip_thinking=self.cfg.get("caption.strip_thinking"))
-        tag_mode = self.combo_template.currentText() in ("Booru Tags", "Stable Diffusion Tags")
+        tag_mode = self.chk_tag_output.isChecked()
         job = BatchJob(paths=[Path(p) for p in ordered], spec=spec, request=request, save_mode=mode,
                        tag_mode=tag_mode, title="Captioning")
         self.ctx.set_job_state(ordered, JOB_QUEUED)

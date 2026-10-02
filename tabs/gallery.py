@@ -61,7 +61,7 @@ class GalleryTab(QWidget):
         self.batch.operation.connect(self.browser.run_operation)
         self.batch.auto_tag.connect(self.run_auto_tagger)
         self.batch.quick_tag.connect(lambda tag, pos: self.browser.run_operation(
-            f"Add tag: {tag}", op_add_tags([tag], pos)))
+            f"Add tag: {tag}", op_add_tags(captions.split_tags(tag), pos)))
 
         self.tags = TagStatsPanel()
         self.tags.filter_requested.connect(self.browser.set_filter)

@@ -173,7 +173,21 @@ class AutoTagDialog(QDialog):
         self.resize(460, 520)
         layout = QVBoxLayout(self)
 
+        from core.presets import tagger_presets
+        self.presets = tagger_presets()
         form_model = QFormLayout()
+        preset_row = QHBoxLayout()
+        self.combo_preset = QComboBox()
+        self.combo_preset.setToolTip("Load saved settings. ★ marks your own presets.")
+        self.btn_save_preset = QPushButton("Save…")
+        self.btn_save_preset.setToolTip("Save these settings as a named preset (kept until you delete it)")
+        self.btn_save_preset.clicked.connect(self._save_preset)
+        self.btn_del_preset = QPushButton("Delete")
+        self.btn_del_preset.clicked.connect(self._delete_preset)
+        preset_row.addWidget(self.combo_preset, 1)
+        preset_row.addWidget(self.btn_save_preset)
+        preset_row.addWidget(self.btn_del_preset)
+        form_model.addRow("Preset:", preset_row)
         self.combo_model = QComboBox()
         for repo, label in KNOWN_TAGGERS.items():
             self.combo_model.addItem(label, repo)
@@ -238,6 +252,90 @@ class AutoTagDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
+        self._fill_presets(self.cfg.get("tagger.last_preset", ""))
+        self.combo_preset.activated.connect(lambda _i: self._load_preset(self.combo_preset.currentData()))
+
+    # -- presets -------------------------------------------------------------
+    def _fill_presets(self, select: str = ""):
+        self.combo_preset.blockSignals(True)
+        self.combo_preset.clear()
+        self.combo_preset.addItem("(current settings)", "")
+        for name in self.presets.names():
+            self.combo_preset.addItem(name if self.presets.is_builtin(name) else f"★ {name}", name)
+        i = self.combo_preset.findData(select)
+        self.combo_preset.setCurrentIndex(max(0, i))
+        self.combo_preset.blockSignals(False)
+        self.btn_del_preset.setEnabled(bool(select) and not self.presets.is_builtin(select))
+
+    def _load_preset(self, name: str):
+        self.btn_del_preset.setEnabled(bool(name) and not self.presets.is_builtin(name))
+        data = self.presets.get(name) if name else None
+        if not data:
+            return
+        if "model" in data:
+            i = self.combo_model.findData(data["model"])
+            if i >= 0:
+                self.combo_model.setCurrentIndex(i)
+        if "mode" in data:
+            for i, (key, _label) in enumerate(self.MODES):
+                if key == data["mode"]:
+                    self.bg_mode.button(i).setChecked(True)
+        for key, spin in (("max_tags", self.spin_max), ("general_threshold", self.spin_thresh),
+                          ("character_threshold", self.spin_char)):
+            if key in data:
+                spin.setValue(data[key])
+        for key, line in (("blacklist", self.line_blacklist), ("prepend", self.line_prepend),
+                          ("append", self.line_append)):
+            if key in data:
+                line.setText(data[key])
+        for key, chk in (("underscores_to_spaces", self.chk_underscores), ("escape_parentheses", self.chk_escape),
+                         ("include_rating", self.chk_rating)):
+            if key in data:
+                chk.setChecked(data[key])
+
+    def _current_data(self) -> dict:
+        return {
+            "model": self.combo_model.currentData(),
+            "mode": self.MODES[max(0, self.bg_mode.checkedId())][0],
+            "max_tags": self.spin_max.value(),
+            "general_threshold": self.spin_thresh.value(),
+            "character_threshold": self.spin_char.value(),
+            "blacklist": self.line_blacklist.text(),
+            "prepend": self.line_prepend.text(),
+            "append": self.line_append.text(),
+            "underscores_to_spaces": self.chk_underscores.isChecked(),
+            "escape_parentheses": self.chk_escape.isChecked(),
+            "include_rating": self.chk_rating.isChecked(),
+        }
+
+    def _save_preset(self):
+        from PySide6.QtWidgets import QInputDialog, QMessageBox
+        from core.presets import PresetError
+        current = self.combo_preset.currentData() or ""
+        default = current if current and not self.presets.is_builtin(current) else ""
+        name, ok = QInputDialog.getText(self, "Save auto-tag preset", "Preset name:", text=default)
+        if not ok or not name.strip():
+            return
+        if self.presets.get(name.strip()) is not None and not self.presets.is_builtin(name.strip()) \
+                and name.strip() != current:
+            if QMessageBox.question(self, "Replace preset?", f"Replace your preset '{name.strip()}'?") != QMessageBox.Yes:
+                return
+        try:
+            saved = self.presets.save(name, self._current_data())
+        except PresetError as e:
+            QMessageBox.warning(self, "Save preset", str(e))
+            return
+        self._fill_presets(saved)
+
+    def _delete_preset(self):
+        from PySide6.QtWidgets import QMessageBox
+        name = self.combo_preset.currentData()
+        if not name or self.presets.is_builtin(name):
+            return
+        if QMessageBox.question(self, "Delete preset", f"Delete your preset '{name}'?") == QMessageBox.Yes:
+            self.presets.delete(name)
+            self._fill_presets("")
+
     @staticmethod
     def _split(text):
         return [t.strip() for t in text.split(',') if t.strip()]
@@ -245,6 +343,7 @@ class AutoTagDialog(QDialog):
     def get_settings(self):
         mode = self.MODES[max(0, self.bg_mode.checkedId())][0]
         self.cfg.update({
+            "tagger.last_preset": self.combo_preset.currentData() or "",
             "tagger.model": self.combo_model.currentData(),
             "tagger.mode": mode,
             "tagger.max_tags": self.spin_max.value(),

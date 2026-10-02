@@ -20,7 +20,7 @@ from inference.worker import SAVE_NONE, BatchJob, start_job
 from tabs.common import confirm, show_job_summary
 from tabs.workspace.browser import DatasetBrowser
 from tabs.workspace.context import JOB_WORKING, workspace
-from tabs.workspace.panels import BatchPanel, InspectorPanel, TagStatsPanel
+from tabs.workspace.panels import BatchPanel, HealthPanel, InspectorPanel, TagStatsPanel
 
 log = logging.getLogger(__name__)
 
@@ -75,15 +75,24 @@ class GalleryTab(QWidget):
         self.side.addTab(self.inspector, "Inspect")
         self.side.addTab(self.batch, "Batch")
         self.side.addTab(self.tags, "Tags")
+        self.health = HealthPanel()
+        self.health.scan_requested.connect(self.scan_health)
+        self.health.cancel_requested.connect(lambda: self.health_job and self.health_job.cancel())
+        self.health.settings_changed.connect(self._rebuild_health)
+        self.health.select_requested.connect(self._select_health_result)
+        self.side.addTab(self.health, "Health")
+        self.health_job = None
+        self._health_stats: list = []
         self.side.setTabToolTip(0, "View and edit the selected image's caption")
         self.side.setTabToolTip(1, "Apply tag/text operations to many images at once")
         self.side.setTabToolTip(2, "Tag frequency statistics; rename, merge or delete tags everywhere")
+        self.side.setTabToolTip(3, "Find duplicates, blurry and low-resolution images, and check training buckets")
         self.side.currentChanged.connect(lambda i: self._refresh_tag_stats() if i == 2 else None)
         from tabs.help import HelpDialog, help_button
         corner = help_button("inspect", self.side, "Help for this panel")
         corner.clicked.disconnect()
-        corner.clicked.connect(lambda: HelpDialog.open_topic(self.window(),
-                                                             ("inspect", "batch", "tags")[self.side.currentIndex()]))
+        corner.clicked.connect(lambda: HelpDialog.open_topic(
+            self.window(), ("inspect", "batch", "tags", "health")[self.side.currentIndex()]))
         self.side.setCornerWidget(corner, Qt.TopRightCorner)
 
         splitter.addWidget(self.browser)
@@ -135,6 +144,9 @@ class GalleryTab(QWidget):
 
     def _on_session_changed(self):
         self.inspector.show_entries([])
+        self._health_stats = []
+        self.health.tree.clear()
+        self.health.table.setRowCount(0)
         self._stats_timer.start()
 
     def _on_entries_changed(self, _keys):
@@ -154,6 +166,67 @@ class GalleryTab(QWidget):
             return
         keys = self.browser.keys_for_scope(self.tags.scope())
         self.tags.set_counts(self.ctx.session.tag_counts(keys), len(keys))
+
+    # ------------------------------------------------------------------ dataset health
+    def scan_health(self):
+        from core import health
+        from tabs.workspace.jobs import start_file_job
+        s = self.ctx.session
+        if not s or not len(s):
+            QMessageBox.information(self, "Dataset health", "Open a folder first.")
+            return
+        if self.health_job is not None:
+            return
+        cache = self.ctx.health_cache
+        results: dict[str, object] = {}
+        todo = []
+        for e in s.entries:
+            ck = (e.key, e.mtime, e.file_size)
+            if ck in cache:
+                results[e.key] = cache[ck]
+            else:
+                todo.append(e.key)
+        meta = {e.key: (e.mtime, e.file_size) for e in s.entries}
+        generation = self.ctx.generation
+
+        def analyze(key):
+            st = health.analyze(key)
+            results[key] = st
+            cache[(key, *meta[key])] = st
+            return None
+
+        self.health.set_busy(len(todo))
+        if not todo:
+            self._health_done(results, generation)
+            return
+        self.health_job = start_file_job(todo, analyze, "Health scan")
+        self.health_job.progress.connect(lambda d, t: self.health.progress.setValue(d))
+        self.health_job.finished.connect(lambda summary: self._health_done(results, generation, summary))
+
+    def _select_health_result(self, keys: list[str]):
+        if self.browser.select_keys(keys) < len(keys) and self.browser.inp_filter.text():
+            self.browser.set_filter("")  # some results were hidden by the filter
+            self.browser.select_keys(keys)
+
+    def _health_done(self, results, generation, summary=None):
+        self.health_job = None
+        self.health.set_busy(None)
+        if generation != self.ctx.generation or (summary is not None and summary.cancelled):
+            self.browser.flash("Health scan cancelled." if summary and summary.cancelled else "Folder changed — scan again.")
+            return
+        self._health_stats = list(results.values())
+        self._rebuild_health()
+
+    def _rebuild_health(self):
+        from core import health
+        if not self._health_stats or not self.ctx.session:
+            return
+        report = health.build_report(self._health_stats, resolution=self.health.resolution(),
+                                     similarity=self.health.similarity())
+        self.ctx.apply_health(report)
+        self.health.show_report(report, len(self._health_stats))
+        n = sum(1 for e in self.ctx.session.entries if e.flags)
+        self.browser.flash(f"Health scan: {n} image(s) flagged — click results or filter with flag:any.")
 
     def _delete_tag_everywhere(self, tag: str):
         if confirm(self, "Delete tag", f"Remove '{tag}' from every caption in this folder? (You can undo this.)"):

@@ -31,6 +31,7 @@ QUERY_HELP = (
     "  ar:>1.5                wide images (width/height)\n"
     "  tags:>40  len:<20      tag count / caption length\n"
     "  name:img_*  ext:png    file name / type\n"
+    "  flag:blurry            Health scan results (duplicate, similar, blurry, lowres, crop, any)\n"
     "Combine terms with spaces; prefix any term with - to negate it."
 )
 
@@ -212,7 +213,7 @@ class DatasetBrowser(QWidget):
         self.selection_changed.emit([])
 
     def _on_dimensions(self, _keys):
-        if self.proxy.query.needs_info or self.combo_sort.currentText() in ("Width", "Height", "Megapixels",
+        if self.proxy.query.needs_info or "flag:" in self.proxy.query_text or self.combo_sort.currentText() in ("Width", "Height", "Megapixels",
                                                                              "Aspect ratio"):
             self.proxy.invalidate()
             self.update_status()
@@ -280,6 +281,21 @@ class DatasetBrowser(QWidget):
             idx = self.proxy.index(r, 0)
             if q.predicate(idx.data(ENTRY_ROLE)):
                 sel.select(idx, QItemSelectionModel.Select)
+
+    def select_keys(self, keys) -> int:
+        """Select exactly these images (those currently shown); returns how many were selected."""
+        wanted = set(keys)
+        sel = self.view.selectionModel()
+        sel.clearSelection()
+        first = None
+        for r in range(self.proxy.rowCount()):
+            idx = self.proxy.index(r, 0)
+            if idx.data(KEY_ROLE) in wanted:
+                sel.select(idx, QItemSelectionModel.Select)
+                first = first or idx
+        if first is not None:
+            self.view.scrollTo(first)
+        return len(self.selected_keys())
 
     def navigate(self, step: int):
         n = self.proxy.rowCount()

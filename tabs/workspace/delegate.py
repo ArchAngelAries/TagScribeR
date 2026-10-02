@@ -97,6 +97,15 @@ class CardDelegate(QStyledItemDelegate):
             painter.drawEllipse(thumb_rect.left() + 6, thumb_rect.top() + 6, 10, 10)
         if not e.has_caption:
             self._pill(painter, "NO CAPTION", MISSING, thumb_rect.left() + (22 if e.dirty else 6), thumb_rect.top() + 4)
+        if getattr(e, "flags", None):
+            names = {"duplicate": "DUPLICATE", "similar": "SIMILAR", "blurry": "BLURRY", "lowres": "LOW-RES",
+                     "crop": "CROP"}
+            x = thumb_rect.left() + 4
+            fm = QFontMetrics(self._small)
+            for f in sorted(e.flags):
+                label = names.get(f, f.upper())
+                self._pill(painter, label, QColor(155, 89, 182, 220), x, thumb_rect.bottom() - fm.height() - 6)
+                x += fm.horizontalAdvance(label) + 14
         if job:
             label = {"working": "AI WORKING…", "queued": "QUEUED", "failed": "FAILED"}.get(job, job.upper())
             color = {"working": QColor("#b7791f"), "queued": QColor(60, 60, 60, 220), "failed": MISSING}.get(job, SUBTLE)

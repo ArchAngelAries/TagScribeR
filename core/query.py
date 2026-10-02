@@ -11,6 +11,7 @@ Examples::
     ar:>1.5                     aspect ratio (width / height) above 1.5
     name:img_00*  ext:png       filename pattern / extension
     tags:>40  len:<20           tag count / caption length in characters
+    flag:blurry                 Health scan results: duplicate, similar, blurry, lowres, crop
 
 Terms are ANDed; prefix any term with ``-`` to negate it. Pure Python so it
 can be unit tested and reused by a future training dataset filter.
@@ -82,6 +83,14 @@ def _term(key: str, value: str) -> tuple[Callable[[EntryLike], bool] | None, boo
         if v in ("prose", "sentence", "natural"):
             return (lambda e: bool(e.text.strip()) and not captions.looks_like_tags(e.text)), False
         return None, False
+    if key == "flag":
+        f = value.lower()
+        aliases = {"dup": "duplicate", "duplicates": "duplicate", "near": "similar", "blur": "blurry",
+                   "low": "lowres", "small": "lowres", "any": "*"}
+        f = aliases.get(f, f)
+        if f == "*":
+            return (lambda e: bool(getattr(e, "flags", None))), False
+        return (lambda e: f in getattr(e, "flags", set())), False
     if key == "name":
         pat = value.lower()
         if any(c in pat for c in "*?["):

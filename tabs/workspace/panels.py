@@ -543,3 +543,151 @@ class TagStatsPanel(QWidget):
     def _show_rare(self) -> None:
         for r in range(self.table.rowCount()):
             self.table.setRowHidden(r, self.table.item(r, 1).data(Qt.DisplayRole) != 1)
+
+
+# --------------------------------------------------------------------------- dataset health
+class HealthPanel(QWidget):
+    """Scan the folder for duplicates, blur, low resolution and bucket fit; click results to select."""
+
+    scan_requested = Signal()
+    settings_changed = Signal()
+    select_requested = Signal(list)
+    filter_requested = Signal(str)
+    cancel_requested = Signal()
+
+    RESOLUTIONS = (512, 768, 1024, 1280, 1536)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QProgressBar, QSlider, QTreeWidget
+        from core.config import settings
+        self.cfg = settings()
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.addWidget(hint_label("Find problems before training: duplicate and near-duplicate images, blurry or "
+                                 "low-resolution images, and images that would lose a lot to cropping when bucketed."))
+        f = QFormLayout()
+        self.combo_res = QComboBox()
+        for r in self.RESOLUTIONS:
+            self.combo_res.addItem(f"{r} px  ({'SD1.5' if r == 512 else 'SDXL / Flux / most 2025+ models' if r == 1024 else 'custom'})", r)
+        self.combo_res.setCurrentIndex(max(0, self.combo_res.findData(self.cfg.get("health.resolution", 1024))))
+        self.combo_res.setToolTip("Training resolution: sets the aspect-ratio buckets and what counts as low resolution "
+                                  "(shorter side under half of it).")
+        self.slider_sim = QSlider(Qt.Horizontal)
+        self.slider_sim.setRange(2, 14)
+        self.slider_sim.setValue(self.cfg.get("health.similarity", 6))
+        self.lbl_sim = QLabel()
+        self.slider_sim.valueChanged.connect(self._sim_label)
+        self._sim_label(self.slider_sim.value())
+        row = QHBoxLayout()
+        row.addWidget(self.slider_sim, 1)
+        row.addWidget(self.lbl_sim)
+        f.addRow("Training size:", self.combo_res)
+        f.addRow("Near-duplicates:", row)
+        lay.addLayout(f)
+        self.combo_res.currentIndexChanged.connect(self._changed)
+        self.slider_sim.sliderReleased.connect(self._changed)
+
+        brow = QHBoxLayout()
+        self.btn_scan = QPushButton("🔍 Scan folder")
+        self.btn_scan.setToolTip("Analyze every image in the open folder (results are cached; rescans are quick)")
+        self.btn_scan.clicked.connect(self.scan_requested.emit)
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.setEnabled(False)
+        self.btn_cancel.clicked.connect(self.cancel_requested.emit)
+        brow.addWidget(self.btn_scan, 1)
+        brow.addWidget(self.btn_cancel)
+        lay.addLayout(brow)
+        self.progress = QProgressBar()
+        self.progress.setFormat("%v / %m")
+        self.progress.setVisible(False)
+        lay.addWidget(self.progress)
+
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.itemClicked.connect(self._clicked)
+        self.tree.setToolTip("Click a result to select those images in the grid. Review in Inspect; Shift+Del moves "
+                             "unwanted copies to the Recycle Bin.")
+        lay.addWidget(self.tree, 2)
+        lay.addWidget(QLabel("<b>Aspect-ratio buckets</b>"))
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Bucket", "Shape", "Images"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        lay.addWidget(self.table, 1)
+        self.lbl_tip = hint_label("Tip: filter with flag:blurry, flag:duplicate, flag:similar, flag:lowres, "
+                                  "flag:crop or flag:any.")
+        lay.addWidget(self.lbl_tip)
+
+    def _sim_label(self, v):
+        self.lbl_sim.setText("strict" if v <= 4 else "loose" if v >= 10 else "balanced")
+
+    def _changed(self, *_):
+        self.cfg.update({"health.resolution": self.combo_res.currentData(), "health.similarity": self.slider_sim.value()})
+        self.settings_changed.emit()
+
+    def resolution(self) -> int:
+        return self.combo_res.currentData()
+
+    def similarity(self) -> int:
+        return self.slider_sim.value()
+
+    def set_busy(self, total: int | None):
+        busy = total is not None
+        self.btn_scan.setEnabled(not busy)
+        self.btn_cancel.setEnabled(busy)
+        self.progress.setVisible(busy)
+        if busy:
+            self.progress.setMaximum(max(1, total))
+            self.progress.setValue(0)
+
+    def show_report(self, r, total_images: int):
+        from PySide6.QtWidgets import QTreeWidgetItem
+        from pathlib import Path as _P
+        self.tree.clear()
+
+        def add(title, keys, groups=None, query=None):
+            top = QTreeWidgetItem([title])
+            top.setData(0, Qt.UserRole, list(keys))
+            top.setData(0, Qt.UserRole + 1, query)
+            if groups:
+                for i, g in enumerate(groups, 1):
+                    child = QTreeWidgetItem([f"Group {i}: " + ", ".join(_P(k).name for k in g)])
+                    child.setData(0, Qt.UserRole, list(g))
+                    top.addChild(child)
+            self.tree.addTopLevelItem(top)
+            return top
+
+        from core.health import keeper_order
+        dup_copies = [k for g in r.exact for k in keeper_order(g)[1:]]
+        sim_keys = [k for g in r.similar for k in g]
+        if not any((dup_copies, sim_keys, r.blurry, r.low_res, r.heavy_crop, r.unreadable)):
+            add(f"✓ No problems found in {total_images} images", [])
+        if r.exact:
+            add(f"⚠ Exact duplicates: {len(dup_copies)} extra copies in {len(r.exact)} group(s)",
+                dup_copies, r.exact, "flag:duplicate")
+        if r.similar:
+            add(f"≈ Near-duplicates: {len(sim_keys)} images in {len(r.similar)} group(s)",
+                sim_keys, r.similar, "flag:similar")
+        if r.blurry:
+            add(f"◌ Blurry / soft: {len(r.blurry)}", r.blurry, None, "flag:blurry")
+        if r.low_res:
+            add(f"▫ Low resolution (shorter side < {self.resolution() // 2} px): {len(r.low_res)}",
+                r.low_res, None, "flag:lowres")
+        if r.heavy_crop:
+            add(f"✂ Would lose >20% to bucket cropping: {len(r.heavy_crop)}", r.heavy_crop, None, "flag:crop")
+        if r.unreadable:
+            add(f"✖ Unreadable files: {len(r.unreadable)}", r.unreadable)
+        self.table.setRowCount(len(r.bucket_counts))
+        for i, ((w, h), n) in enumerate(r.bucket_counts.items()):
+            shape = "square" if w == h else ("landscape" if w > h else "portrait")
+            for c, val in enumerate((f"{w}×{h}", f"{shape} {w / h:.2f}", n)):
+                it = QTableWidgetItem()
+                it.setData(Qt.DisplayRole, val)
+                self.table.setItem(i, c, it)
+
+    def _clicked(self, item, _col):
+        keys = item.data(0, Qt.UserRole) or []
+        if keys:
+            self.select_requested.emit(keys)

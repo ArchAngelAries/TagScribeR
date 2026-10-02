@@ -30,6 +30,7 @@ class Entry:
     file_size: int = 0
     mtime: float = 0.0
     info_loaded: bool = False
+    flags: set = field(default_factory=set)   # health-check results, e.g. {"blurry", "duplicate"}
 
     @property
     def key(self) -> str:

@@ -76,6 +76,8 @@ class WorkspaceContext(QObject):
         self.loader = ThumbnailLoader(self)
         self.undo_stack = QUndoStack(self)
         self.job_state: dict[str, str] = {}
+        self.health_report = None
+        self.health_cache: dict[tuple[str, float, int], object] = {}
         self._commit_hooks: list[Callable[[], None]] = []
         self._info_signals = _InfoSignals()
         self._info_signals.batch.connect(self._on_info_batch)
@@ -123,6 +125,7 @@ class WorkspaceContext(QObject):
         self.loader.reset()
         self.undo_stack.clear()
         self.job_state.clear()
+        self.health_report = None
         self.session = session
         self.folder = folder
         self.model.set_session(session)
@@ -248,6 +251,21 @@ class WorkspaceContext(QObject):
         if parent is not None and not self.confirm_discard(parent):
             return False
         return self.open_folder(self.folder, self.cfg.get("ui.recursive_scan", False), parent)
+
+    def apply_health(self, report) -> None:
+        """Attach health-check flags to entries (used by cards and the flag: filter)."""
+        self.health_report = report
+        flags = report.flags()
+        if not self.session:
+            return
+        changed = []
+        for e in self.session.entries:
+            new = flags.get(e.key, set())
+            if new != e.flags:
+                e.flags = set(new)
+                changed.append(e.key)
+        self.model.refresh(changed)
+        self.dimensions_loaded.emit(changed)  # lets filters using flag: re-evaluate
 
     def remove_entries(self, keys: list[str]) -> None:
         self.undo_stack.clear()  # history may reference removed images

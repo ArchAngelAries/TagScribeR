@@ -133,7 +133,12 @@ def main():
     window = MainWindow()
     window.show()
     log.info("TagScribeR started")
-    sys.exit(app.exec())
+    code = app.exec()
+    # Let short background tasks finish (e.g. a first-time torch import started at
+    # launch) so interpreter shutdown doesn't tear modules down mid-import.
+    from PySide6.QtCore import QThreadPool
+    QThreadPool.globalInstance().waitForDone(10000)
+    sys.exit(code)
 
 
 if __name__ == "__main__":

@@ -43,6 +43,7 @@ FILTER_SYNTAX = """
 <tr><td><code>ar:&gt;1.5</code></td><td>aspect ratio (width ÷ height) — wide images</td></tr>
 <tr><td><code>tags:&gt;40</code> / <code>len:&lt;20</code></td><td>number of tags / caption length in characters</td></tr>
 <tr><td><code>name:img_*</code> / <code>ext:png</code></td><td>file name pattern / file type</td></tr>
+<tr><td><code>flag:blurry</code></td><td>Health scan results: duplicate, similar, blurry, lowres, crop, or any</td></tr>
 </table>
 <p>Combine terms with spaces — all must match. Example: <code>tag:1girl -tag:blurry missing:caption res:&lt;1024</code></p>
 """
@@ -143,6 +144,26 @@ everywhere (type an existing tag's name to merge), or <b>delete</b> it everywher
 <li><b>Show only tags used once</b> finds typos and noise tags quickly.</li>
 </ul>
 <p>Why it matters: consistent tags train better. Merge spelling variants and remove one-off noise before training.</p>
+"""),
+    "health": ("Dataset health", "Gallery", """
+<h2>Dataset health</h2>
+<p><i>Gallery → Health</i> checks the open folder for problems that hurt training:</p>
+<ul>
+<li><b>Exact duplicates</b> — identical files. The first of each group is kept; the extra copies are flagged.</li>
+<li><b>Near-duplicates</b> — the same picture resized, re-saved or slightly edited (perceptual hashing). The slider
+sets how similar images must be (strict → loose).</li>
+<li><b>Blurry / soft</b> — images much less sharp than the rest of the dataset.</li>
+<li><b>Low resolution</b> — shorter side under half the training size.</li>
+<li><b>Heavy crop</b> — images whose shape would lose more than 20% when fitted to the nearest training bucket.</li>
+<li><b>Aspect-ratio buckets</b> — how your images spread over SDXL-style buckets (64 px steps) at the chosen training
+size. Many tiny buckets with 1–2 images train less efficiently; consider cropping outliers to common shapes in the
+Image Editor (<i>Crop to aspect ratio</i>).</li>
+</ul>
+<p>Click a result (or a group under it) to select those images. Compare them in <i>Inspect</i>, then move unwanted copies
+to the Recycle Bin with <b>Shift+Del</b>. Cards show purple badges, and you can filter with <code>flag:duplicate</code>,
+<code>flag:similar</code>, <code>flag:blurry</code>, <code>flag:lowres</code>, <code>flag:crop</code> or <code>flag:any</code>.</p>
+<p>Scans run in the background and are cached — changing the training size or similarity updates the results instantly,
+and rescanning only analyzes new or changed images.</p>
 """),
     "caption": ("Auto Caption", "AI", """
 <h2>Auto Caption</h2>

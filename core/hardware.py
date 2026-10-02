@@ -22,6 +22,7 @@ import importlib.util
 import logging
 import os
 import platform
+import threading
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -104,8 +105,14 @@ def _expose_pip_rocm_sdk() -> None:
         os.environ["PATH"] = os.pathsep.join(prepend + [current])
 
 
+# torch's first import is not thread-safe (concurrent imports can corrupt its op
+# registry), and several background tasks may want it at startup.
+_torch_lock = threading.RLock()
+
+
 def _torch():
-    import torch  # noqa: PLC0415 - deliberate lazy import
+    with _torch_lock:
+        import torch  # noqa: PLC0415 - deliberate lazy import
     return torch
 
 
@@ -123,6 +130,11 @@ def is_rocm() -> bool:
 @lru_cache(maxsize=1)
 def detect_devices() -> tuple[DeviceInfo, ...]:
     """All usable compute devices, best first; CPU is always last."""
+    with _torch_lock:  # serialize first-time detection across threads
+        return _detect_devices()
+
+
+def _detect_devices() -> tuple[DeviceInfo, ...]:
     devices: list[DeviceInfo] = []
     if torch_installed():
         try:

@@ -1,57 +1,34 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# TagScribeR installer (Linux). Creates venv/ with Python 3.12, then runs
+# tools/install.py which detects the GPU and installs the matching PyTorch build
+# (AMD ROCm multi-arch / NVIDIA CUDA / CPU). Options pass through, e.g.
+#   ./install.sh --backend rocm --arch gfx1100
+set -euo pipefail
+cd "$(dirname "$0")"
 
-echo "==================================================="
-echo "       TagScribeR v2.1 - Linux Installer"
-echo "==================================================="
-echo ""
-
-# 1. Check Python
-if ! command -v python3 &> /dev/null; then
-    echo "[ERROR] python3 could not be found."
+PY=""
+for c in python3.12 python3 python; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; raise SystemExit(0 if sys.version_info[:2]==(3,12) else 1)'; then
+        PY="$c"; break
+    fi
+done
+if [[ -z "$PY" ]]; then
+    echo "ERROR: Python 3.12 not found (try your distro's python3.12 package or uv python install 3.12)." >&2
     exit 1
 fi
 
-# 2. Check System Dependencies (The fix the user mentioned)
-echo "[INFO] Checking for Qt dependencies..."
-if dpkg -l | grep -q libxcb-cursor0; then
-    echo " - libxcb-cursor0 is installed."
-else
-    echo " - Missing libxcb-cursor0. Attempting install (requires sudo)..."
-    sudo apt-get update && sudo apt-get install -y libxcb-cursor0 libxcb-xinerama0
+# Qt needs libxcb-cursor0 on X11 / Debian-based distros.
+if command -v dpkg >/dev/null 2>&1 && ! dpkg -s libxcb-cursor0 >/dev/null 2>&1; then
+    echo "Note: Qt needs libxcb-cursor0. Install it with: sudo apt-get install libxcb-cursor0"
 fi
 
-# 3. Create Venv
-if [ ! -d "venv" ]; then
-    echo "[INFO] Creating virtual environment..."
-    python3 -m venv venv
+if [[ -x venv/bin/python ]] && ! venv/bin/python -c 'import sys; raise SystemExit(0 if sys.version_info[:2]==(3,12) else 1)'; then
+    echo "Existing venv/ uses another Python version; moving it to venv-old/."
+    [[ -e venv-old ]] && { echo "ERROR: venv-old/ exists; remove it first." >&2; exit 1; }
+    mv venv venv-old
 fi
+[[ -x venv/bin/python ]] || "$PY" -m venv venv
 
-# 4. Activate
-source venv/bin/activate
-
-# 5. Install Core Requirements (No Torch yet)
-echo ""
-echo "[INFO] Installing core dependencies..."
-pip install -r requirements.txt
-
-# 6. GPU Detection
-echo ""
-echo "[INFO] Detecting Hardware..."
-
-if command -v nvidia-smi &> /dev/null; then
-    echo "[DETECTED] NVIDIA GPU"
-    echo "[INFO] Installing PyTorch (CUDA 12.4)..."
-    pip install torch torchvision torchaudio
-elif command -v rocminfo &> /dev/null; then
-    echo "[DETECTED] AMD GPU (ROCm)"
-    echo "[INFO] Installing PyTorch (ROCm 6.2)..."
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
-else
-    echo "[WARNING] No dedicated GPU detected. Defaulting to CPU."
-    pip install torch torchvision torchaudio
-fi
-
-echo ""
-echo "==================================================="
-echo "   Installation Complete! Run: python3 main.py"
-echo "==================================================="
+venv/bin/python -m pip install --upgrade pip uv
+venv/bin/python tools/install.py "$@"
+echo "Installation complete. Launch with ./start.sh"

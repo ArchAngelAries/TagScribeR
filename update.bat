@@ -1,48 +1,36 @@
 @echo off
 title TagScribeR Updater
-cls
+cd /d "%~dp0"
 
-echo ===================================================
-echo          TagScribeR Update Utility
-echo ===================================================
-echo.
-
-REM 1. Check for Git
 git --version >nul 2>&1
-if %errorlevel% neq 0 (
+if errorlevel 1 (
     echo [ERROR] Git is not installed or not in PATH.
-    echo Please install Git to use the auto-updater.
     pause
-    exit /b
+    exit /b 1
 )
 
-REM 2. Pull latest code
-echo [INFO] Pulling latest changes from GitHub...
-git pull origin main
-if %errorlevel% neq 0 (
+echo [INFO] Pulling latest changes...
+git pull --ff-only
+if errorlevel 1 (
     echo.
-    echo [ERROR] Git pull failed. You might have local file changes.
-    echo Try backing up your config files and re-cloning if this persists.
+    echo [ERROR] git pull failed - you may have local changes. Your settings in
+    echo user_data\ are not tracked by git and are safe.
     pause
-    exit /b
+    exit /b 1
 )
 
-REM 3. Check Venv
-if not exist "venv" (
+if not exist "venv\Scripts\python.exe" (
     echo [ERROR] Virtual environment not found. Please run install.bat first.
     pause
-    exit /b
+    exit /b 1
 )
 
-REM 4. Update Dependencies (Safe Mode)
+echo [INFO] Updating dependencies (your PyTorch / GPU build is left untouched)...
+"venv\Scripts\python.exe" tools\install.py --deps-only
+if errorlevel 1 (
+    pause
+    exit /b 1
+)
 echo.
-echo [INFO] Checking for new dependencies...
-echo (This will NOT overwrite your existing PyTorch/GPU setup)
-call venv\Scripts\activate
-pip install -r requirements.txt
-
-echo.
-echo ===================================================
-echo           Update Complete! 
-echo ===================================================
+echo Update complete.
 pause

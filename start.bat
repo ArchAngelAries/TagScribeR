@@ -1,11 +1,16 @@
 @echo off
-title TagScribeR v2
-if not exist "venv" (
+title TagScribeR
+cd /d "%~dp0"
+if not exist "venv\Scripts\python.exe" (
     echo [ERROR] Virtual environment not found. Please run install.bat first.
     pause
-    exit /b
+    exit /b 1
 )
-
-call venv\Scripts\activate
-python main.py
-pause
+REM ROCm / allocator environment defaults are applied inside the app
+REM (core/hardware.py) before PyTorch loads, so no extra env script is needed.
+"venv\Scripts\python.exe" main.py %*
+if errorlevel 1 (
+    echo.
+    echo TagScribeR exited with an error. Details: user_data\logs\tagscriber.log
+    pause
+)

@@ -226,19 +226,33 @@ not in a file.</li>
 """),
     "editor": ("Image Editor", "Tools", """
 <h2>Image Editor</h2>
-<p>Batch rotate, resize, crop and convert the selected images.</p>
-<ul><li><b>Save copies</b> (default) writes to <code>Image Edits\\&lt;source folder&gt;\\</code> — originals are untouched,
-names never collide, and each copy keeps its caption file.</li>
-<li><b>Overwrite originals</b> changes the files in place and asks for confirmation first.</li>
-<li>Photo orientation (EXIF rotation) is respected.</li></ul>
+<p>Works on the folder open in the workspace. Select images in the grid, then:</p>
+<ul>
+<li><b>Rotate / flip</b> — buttons apply immediately to the selection (Ctrl+R / Ctrl+Shift+R rotate).</li>
+<li><b>Resize</b> — by longest side, shortest side, exact size or percent. Images already smaller than the target are
+<b>skipped</b> unless <i>Allow upscaling</i> is ticked, so nothing gets blurry by accident.</li>
+<li><b>Crop to aspect ratio</b> — keeps as much of the image as possible at 1:1, 2:3, 3:2, 16:9… (handy for training
+buckets). <b>Crop to exact size</b> cuts a fixed rectangle. <i>Keep</i> chooses which part survives (center, top, left…).</li>
+<li><b>Convert</b> — JPG / PNG / WEBP / BMP / TIFF with a quality setting for JPG and WEBP.</li>
+</ul>
+<h3>Preview</h3>
+<p>Changing any Resize / Crop setting shows a before → after preview of the selected image with the resulting size.</p>
+<h3>Where results go</h3>
+<ul><li><b>Save edited copies</b> (default): <code>Image Edits\\&lt;source folder&gt;\\</code>. Originals are untouched, names never
+collide, and each copy gets its caption file. <i>Open</i> shows the folder.</li>
+<li><b>Overwrite originals</b> asks first. Color profiles and EXIF data are kept; photo rotation is applied to the pixels.
+Converting with overwrite selected writes the new file next to the original — originals are never deleted.</li></ul>
+<p>Edits run in the background with a progress bar and <b>Cancel</b>. Skipped images are listed with the reason.</p>
 """),
     "datasets": ("Dataset Collections", "Tools", """
 <h2>Dataset Collections</h2>
-<p>Collections are folders (in <code>Dataset Collections\\</code>) where you gather finished images and captions for training.</p>
-<ul><li><b>New</b> creates a collection; double-click one to browse it.</li>
-<li>Load a source folder, filter and select images, then <b>Add to Collection</b> — images and captions are copied;
-name clashes are renamed, never overwritten.</li>
-<li>Deleting images or collections moves them to the Recycle Bin.</li></ul>
+<p>Collections are folders (in <code>Dataset Collections\\</code>, configurable) where you gather finished images and
+captions for training. The panel shows how many images each holds and how many still lack captions.</p>
+<ul><li><b>New</b> (Ctrl+N), <b>Rename</b>, <b>Delete</b> (Recycle Bin), <b>Show in Explorer</b>.</li>
+<li>Select images in the grid and press <b>Add to Collection</b> (Ctrl+Enter). Images and captions are copied; name clashes are
+renamed, never overwritten. Unsaved caption edits are saved first so the copy matches what you see.</li>
+<li><b>Double-click</b> a collection (or <i>Open in workspace</i>) to open it in every tab — e.g. to review its captions in the
+Gallery or caption the rest in Auto Caption.</li></ul>
 """),
     "metadata": ("Metadata", "Tools", """
 <h2>Metadata</h2>

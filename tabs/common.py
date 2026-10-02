@@ -42,17 +42,31 @@ class _Task(QRunnable):
         try:
             signal.emit(value)
         except RuntimeError:
-            pass  # receiver/app already shut down (task finished during exit)
+            pass  # app is shutting down (task finished during exit)
+
+
+# Tasks are held here until their result has been delivered on the UI thread.
+# Without a strong reference Python may garbage-collect a running task (and its
+# signal object), silently dropping the result.
+_live_tasks: set[_Task] = set()
 
 
 def run_in_background(fn: Callable[[], Any], on_done: Callable[[Any], None] | None = None,
                       on_error: Callable[[str], None] | None = None, pool: QThreadPool | None = None) -> None:
     """Run a short blocking function on the global thread pool; callbacks run on the UI thread."""
     task = _Task(fn)
+    task.setAutoDelete(False)  # Python owns it; released below once the result is delivered
+    _live_tasks.add(task)
+
+    def release(*_):
+        _live_tasks.discard(task)
+
     if on_done:
         task.signals.done.connect(on_done)
     if on_error:
         task.signals.failed.connect(on_error)
+    task.signals.done.connect(release)
+    task.signals.failed.connect(release)
     (pool or QThreadPool.globalInstance()).start(task)
 
 

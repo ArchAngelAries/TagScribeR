@@ -1,465 +1,424 @@
+"""Image Editor: batch rotate / flip / resize / crop / convert with a live before-after preview.
+
+Works on the shared workspace folder. Copies (default) go to
+<Image Edits>/<source folder>/ with unique names and their captions; overwriting
+originals asks first. Processing runs in the background and can be cancelled.
+"""
+from __future__ import annotations
+
+import logging
 import os
 import shutil
 from pathlib import Path
 
-import cv2
-import numpy as np
-import traceback
-import gc
-from PIL import Image
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QScrollArea, QGridLayout, QFrame, QSplitter, QFileDialog,
-    QMessageBox, QGroupBox, QSpinBox, QComboBox, QRadioButton,
-    QCheckBox, QProgressBar, QTextEdit, QFormLayout, QSlider,
-    QProgressDialog, QApplication
-)
-from PySide6.QtCore import Qt, Signal, QRunnable, QThreadPool, QObject, Slot
-from PySide6.QtGui import QPixmap, QShortcut, QKeySequence
-from PIL import ImageOps
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
+                               QProgressBar, QPushButton, QRadioButton, QScrollArea, QSlider, QSpinBox, QSplitter,
+                               QStackedWidget, QVBoxLayout, QWidget)
 
-from core import dataset, fileops, paths
+from core import fileops, image_ops, paths
 from core.caption_io import caption_path
 from core.config import settings
-from core.image_utils import load_thumbnail
-from tabs.common import confirm
+from core.image_ops import ASPECTS, FOCUS_POINTS, FORMATS, Operation
+from core.image_utils import pil_to_qimage
+from tabs.common import confirm, hint_label, run_in_background, show_job_summary
+from tabs.workspace.browser import DatasetBrowser
+from tabs.workspace.context import workspace
+from tabs.workspace.jobs import start_file_job
+
+log = logging.getLogger(__name__)
 
 
 def edits_root() -> str:
     return str(settings().get("paths.edits_dir") or paths.DEFAULT_EDITS_DIR)
 
 
-def load_upright_bgr(path):
-    """Decode with EXIF orientation applied (cv2's IMREAD_UNCHANGED ignores it), as BGR(A)."""
-    with Image.open(path) as im:
-        im = ImageOps.exif_transpose(im)
-        if im.mode in ("RGBA", "LA", "PA") or (im.mode == "P" and "transparency" in im.info):
-            arr = np.asarray(im.convert("RGBA"))
-            return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGRA)
-        if im.mode in ("I;16", "I;16B", "I"):
-            return np.asarray(im)
-        arr = np.asarray(im.convert("RGB"))
-        return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-
-# --- WORKER FOR THUMBNAILS (Keep this threaded, it's read-only and safe) ---
-class ThumbnailSignals(QObject):
-    loaded = Signal(str, QPixmap, str)
-
-class ThumbnailWorker(QRunnable):
-    def __init__(self, path, size):
-        super().__init__()
-        self.path = path
-        self.size = size
-        self.signals = ThumbnailSignals()
-
-    @Slot()
-    def run(self):
-        pix = load_thumbnail(self.path, self.size)
-        info = "?"
-        try:
-            with Image.open(self.path) as img:
-                w, h = img.size
-                info = f"{w} x {h}"
-        except: pass
-        self.signals.loaded.emit(self.path, pix, info)
-
-# --- VISUAL CARD ---
-class EditorCard(QFrame):
-    selection_changed = Signal(str, bool)
-
-    def __init__(self, path):
-        super().__init__()
-        self.path = path
-        self.is_selected = False
-        self.setFixedWidth(240)
-        self.setFixedHeight(300)
-        self.setFrameShape(QFrame.StyledPanel)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(5,5,5,5)
-
-        self.lbl_res = QLabel("Loading...")
-        self.lbl_res.setStyleSheet("color: #aaa; font-size: 11px; font-weight: bold;")
-        self.lbl_res.setAlignment(Qt.AlignCenter)
-
-        self.lbl_image = QLabel()
-        self.lbl_image.setAlignment(Qt.AlignCenter)
-        self.lbl_image.setStyleSheet("background-color: #1e1e1e; border-radius: 4px;")
-        self.lbl_image.setFixedHeight(220)
-
-        self.lbl_name = QLabel(os.path.basename(path))
-        self.lbl_name.setAlignment(Qt.AlignCenter)
-        self.lbl_name.setStyleSheet("color: #888; font-size: 10px;")
-
-        layout.addWidget(self.lbl_res)
-        layout.addWidget(self.lbl_image)
-        layout.addWidget(self.lbl_name)
-        self.update_style()
-
-    def set_data(self, path, pix, info):
-        if not pix.isNull():
-            self.lbl_image.setPixmap(pix)
-        self.lbl_res.setText(info)
-
-    def toggle_selection(self, state=None):
-        if state is not None:
-            self.is_selected = state
-        else:
-            self.is_selected = not self.is_selected
-        self.update_style()
-        self.selection_changed.emit(self.path, self.is_selected)
-
-    def update_style(self):
-        border = "#e17055" if self.is_selected else "transparent"
-        self.setStyleSheet(f"EditorCard {{ background-color: #2b2b2b; border: 2px solid {border}; border-radius: 8px; }}")
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.toggle_selection()
-        super().mousePressEvent(event)
-
-# --- MAIN EDITOR TAB ---
 class EditorTab(QWidget):
     def __init__(self):
         super().__init__()
-        self.cards = {}
-        self.selected_paths = set()
-        self.thread_pool = QThreadPool()
-        self.current_folder = ""
+        self.ctx = workspace()
+        self.job = None
+        self.preview_op: Operation | None = None
+        self._preview_key = ""
 
-        layout = QHBoxLayout(self)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(6, 6, 6, 6)
         splitter = QSplitter(Qt.Horizontal)
+        self.browser = DatasetBrowser(self.ctx, size_key="ui.editor_thumbnail_size")
+        self.browser.selection_changed.connect(self._on_selection)
+        self.browser.current_changed.connect(lambda _k: self._schedule_preview())
+        splitter.addWidget(self.browser)
 
-        # LEFT
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
+        panel = QWidget()
+        pl = QVBoxLayout(panel)
 
-        grid_tools = QHBoxLayout()
-        self.btn_folder = QPushButton("📂 Open Folder")
-        self.btn_folder.clicked.connect(self.load_folder)
-        self.btn_select_all = QPushButton("Select All")
-        self.btn_select_all.clicked.connect(self.select_all)
-        grid_tools.addWidget(self.btn_folder)
-        grid_tools.addWidget(self.btn_select_all)
-        grid_tools.addStretch()
-        left_layout.addLayout(grid_tools)
+        # Preview
+        g = QGroupBox("Preview")
+        gl = QVBoxLayout(g)
+        row = QHBoxLayout()
+        self.lbl_before = self._preview_label("Before")
+        self.lbl_after = self._preview_label("After")
+        row.addWidget(self.lbl_before)
+        row.addWidget(self.lbl_after)
+        gl.addLayout(row)
+        self.lbl_preview_info = hint_label("Select an image and adjust an operation to preview it.")
+        gl.addWidget(self.lbl_preview_info)
+        pl.addWidget(g)
 
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.grid_container = QWidget()
-        self.grid_layout = QGridLayout(self.grid_container)
-        self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.scroll.setWidget(self.grid_container)
-        left_layout.addWidget(self.scroll)
-
-        # RIGHT
-        right_scroll = QScrollArea()
-        right_scroll.setWidgetResizable(True)
-        right_widget = QWidget()
-        right_widget.setFixedWidth(340)
-        right_scroll.setMinimumWidth(362)
-        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        right_layout = QVBoxLayout(right_widget)
-        right_scroll.setWidget(right_widget)
-
-        grp_out = QGroupBox("1. Output Settings")
-        lyt_out = QVBoxLayout(grp_out)
-        self.rad_folder = QRadioButton("Save copies to 'Image Edits' (originals untouched)")
-        self.rad_folder.setChecked(True)
+        # Output
+        g = QGroupBox("Output")
+        gl = QVBoxLayout(g)
+        self.rad_copies = QRadioButton("Save edited copies (originals untouched)")
+        self.rad_copies.setChecked(True)
         self.rad_overwrite = QRadioButton("Overwrite originals (asks first)")
-        lyt_out.addWidget(self.rad_folder)
-        lyt_out.addWidget(self.rad_overwrite)
-        right_layout.addWidget(grp_out)
+        self.rad_copies.setToolTip("Copies keep their caption files and never overwrite anything.")
+        self.rad_overwrite.setToolTip("Replaces the original files. Color profile and EXIF data are kept.")
+        out_row = QHBoxLayout()
+        self.lbl_out = hint_label("")
+        b_open = QPushButton("Open")
+        b_open.setToolTip("Open the output folder")
+        b_open.clicked.connect(self._open_output)
+        out_row.addWidget(self.lbl_out, 1)
+        out_row.addWidget(b_open)
+        gl.addWidget(self.rad_copies)
+        gl.addLayout(out_row)
+        gl.addWidget(self.rad_overwrite)
+        pl.addWidget(g)
 
-        grp_rot = QGroupBox("2. Batch Rotate")
-        lyt_rot = QHBoxLayout(grp_rot)
-        self.btn_ccw = QPushButton("⟲ Left")
-        self.btn_cw = QPushButton("⟳ Right")
-        self.btn_ccw.clicked.connect(lambda: self.run_batch_main_thread('rotate', {'direction': 'ccw'}))
-        self.btn_cw.clicked.connect(lambda: self.run_batch_main_thread('rotate', {'direction': 'cw'}))
-        lyt_rot.addWidget(self.btn_ccw)
-        lyt_rot.addWidget(self.btn_cw)
-        right_layout.addWidget(grp_rot)
+        # Rotate / flip (instant actions)
+        g = QGroupBox("Rotate / flip")
+        from PySide6.QtWidgets import QGridLayout
+        gl = QGridLayout(g)
+        for label, tip, op in (("⟲ Left", "Rotate 90° left (Ctrl+Shift+R)", Operation("rotate", {"direction": "ccw"})),
+                               ("⟳ Right", "Rotate 90° right (Ctrl+R)", Operation("rotate", {"direction": "cw"})),
+                               ("180°", "Rotate 180°", Operation("rotate", {"direction": "180"})),
+                               ("⇋ Flip H", "Mirror left-right", Operation("flip", {"axis": "h"})),
+                               ("⇵ Flip V", "Mirror top-bottom", Operation("flip", {"axis": "v"}))):
+            b = QPushButton(label)
+            b.setToolTip(tip + " — applies to the selected images")
+            b.clicked.connect(lambda _=False, o=op: self.run(o))
+            n = gl.count()
+            gl.addWidget(b, n // 3, n % 3)
+        pl.addWidget(g)
 
-        grp_res = QGroupBox("3. Batch Resize")
-        lyt_res = QVBoxLayout(grp_res)
-        self.rad_longest = QRadioButton("Scale Longest Side")
-        self.rad_longest.setChecked(True)
-        self.rad_force = QRadioButton("Force Dimensions")
-        self.spin_long = QSpinBox(); self.spin_long.setRange(64, 8192); self.spin_long.setValue(1024); self.spin_long.setSuffix(" px")
-        self.wid_force = QWidget(); l_force = QHBoxLayout(self.wid_force)
-        self.spin_w = QSpinBox(); self.spin_w.setRange(64, 8192); self.spin_w.setValue(512); self.spin_w.setPrefix("W: ")
-        self.spin_h = QSpinBox(); self.spin_h.setRange(64, 8192); self.spin_h.setValue(512); self.spin_h.setPrefix("H: ")
-        l_force.addWidget(self.spin_w); l_force.addWidget(self.spin_h)
-        self.wid_force.hide()
-        self.rad_longest.toggled.connect(lambda: (self.spin_long.show(), self.wid_force.hide()))
-        self.rad_force.toggled.connect(lambda: (self.spin_long.hide(), self.wid_force.show()))
-        self.btn_resize = QPushButton("Apply Resize")
-        self.btn_resize.clicked.connect(self.prep_resize)
-        self.btn_resize.setStyleSheet("background-color: #e17055; color: white;")
-        lyt_res.addWidget(self.rad_longest); lyt_res.addWidget(self.rad_force); lyt_res.addWidget(self.spin_long); lyt_res.addWidget(self.wid_force); lyt_res.addWidget(self.btn_resize)
-        right_layout.addWidget(grp_res)
+        # Resize
+        g = QGroupBox("Resize")
+        f = QFormLayout(g)
+        self.combo_resize = QComboBox()
+        for label, val in (("Longest side", "longest"), ("Shortest side", "shortest"),
+                           ("Exact size", "force"), ("Percent", "scale")):
+            self.combo_resize.addItem(label, val)
+        self.stack_resize = QStackedWidget()
+        self.spin_side = self._spin(64, 8192, 1024, " px")
+        self.spin_side2 = self._spin(64, 8192, 1024, " px")
+        exact = QWidget()
+        el = QHBoxLayout(exact)
+        el.setContentsMargins(0, 0, 0, 0)
+        self.spin_w = self._spin(16, 8192, 1024, " w")
+        self.spin_h = self._spin(16, 8192, 1024, " h")
+        el.addWidget(self.spin_w)
+        el.addWidget(self.spin_h)
+        self.spin_pct = self._spin(1, 800, 50, " %")
+        for w in (self.spin_side, self.spin_side2, exact, self.spin_pct):
+            self.stack_resize.addWidget(w)
+        self.combo_resize.currentIndexChanged.connect(self.stack_resize.setCurrentIndex)
+        self.chk_upscale = QCheckBox("Allow upscaling")
+        self.chk_upscale.setToolTip("Off: images already smaller than the target are skipped, never enlarged.")
+        b = QPushButton("Apply resize")
+        b.clicked.connect(lambda: self.run(self._resize_op()))
+        f.addRow("Mode:", self.combo_resize)
+        f.addRow("Size:", self.stack_resize)
+        f.addRow(self.chk_upscale)
+        f.addRow(b)
+        self._watch(self._resize_op, self.combo_resize, self.spin_side, self.spin_side2, self.spin_w, self.spin_h,
+                    self.spin_pct, self.chk_upscale)
+        pl.addWidget(g)
 
-        grp_crop = QGroupBox("4. Batch Crop")
-        lyt_crop = QVBoxLayout(grp_crop)
-        crop_dim = QHBoxLayout()
-        self.spin_cw = QSpinBox(); self.spin_cw.setRange(64, 8192); self.spin_cw.setValue(512); self.spin_cw.setPrefix("W: ")
-        self.spin_ch = QSpinBox(); self.spin_ch.setRange(64, 8192); self.spin_ch.setValue(512); self.spin_ch.setPrefix("H: ")
-        crop_dim.addWidget(self.spin_cw); crop_dim.addWidget(self.spin_ch)
-        self.combo_focus = QComboBox(); self.combo_focus.addItems(["Center", "Top-Left", "Top-Center", "Top-Right", "Bottom-Center"])
-        self.btn_crop = QPushButton("Apply Crop")
-        self.btn_crop.clicked.connect(self.prep_crop)
-        self.btn_crop.setStyleSheet("background-color: #d63031; color: white;")
-        lyt_crop.addLayout(crop_dim); lyt_crop.addWidget(QLabel("Focus:")); lyt_crop.addWidget(self.combo_focus); lyt_crop.addWidget(self.btn_crop)
-        right_layout.addWidget(grp_crop)
+        # Crop
+        g = QGroupBox("Crop")
+        f = QFormLayout(g)
+        self.combo_crop_mode = QComboBox()
+        self.combo_crop_mode.addItem("To aspect ratio (keeps as much as possible)", "aspect")
+        self.combo_crop_mode.addItem("To exact size", "exact")
+        self.stack_crop = QStackedWidget()
+        self.combo_aspect = QComboBox()
+        self.combo_aspect.addItems(list(ASPECTS))
+        self.combo_aspect.setToolTip("Training buckets: 1:1 for SD1.5/SDXL squares, 2:3 / 3:2 portraits & landscapes…")
+        exact = QWidget()
+        el = QHBoxLayout(exact)
+        el.setContentsMargins(0, 0, 0, 0)
+        self.spin_cw = self._spin(16, 8192, 1024, " w")
+        self.spin_ch = self._spin(16, 8192, 1024, " h")
+        el.addWidget(self.spin_cw)
+        el.addWidget(self.spin_ch)
+        self.stack_crop.addWidget(self.combo_aspect)
+        self.stack_crop.addWidget(exact)
+        self.combo_crop_mode.currentIndexChanged.connect(self.stack_crop.setCurrentIndex)
+        self.combo_focus = QComboBox()
+        self.combo_focus.addItems(list(FOCUS_POINTS))
+        self.combo_focus.setToolTip("Which part of the image to keep")
+        b = QPushButton("Apply crop")
+        b.clicked.connect(lambda: self.run(self._crop_op()))
+        f.addRow("Mode:", self.combo_crop_mode)
+        f.addRow("Target:", self.stack_crop)
+        f.addRow("Keep:", self.combo_focus)
+        f.addRow(b)
+        self._watch(self._crop_op, self.combo_crop_mode, self.combo_aspect, self.spin_cw, self.spin_ch, self.combo_focus)
+        pl.addWidget(g)
 
-        grp_conv = QGroupBox("5. Format Converter")
-        lyt_conv = QVBoxLayout(grp_conv)
-        self.combo_format = QComboBox(); self.combo_format.addItems(["JPG", "PNG", "WEBP", "BMP", "TIFF"])
-        self.slider_quality = QSlider(Qt.Horizontal); self.slider_quality.setRange(1, 100); self.slider_quality.setValue(90)
-        self.lbl_quality = QLabel("Quality: 90")
-        self.slider_quality.valueChanged.connect(lambda v: self.lbl_quality.setText(f"Quality: {v}"))
-        self.btn_convert = QPushButton("Apply Conversion")
-        self.btn_convert.clicked.connect(self.prep_convert)
-        self.btn_convert.setStyleSheet("background-color: #6c5ce7; color: white;")
-        lyt_conv.addWidget(QLabel("Format:")); lyt_conv.addWidget(self.combo_format); lyt_conv.addWidget(self.lbl_quality); lyt_conv.addWidget(self.slider_quality); lyt_conv.addWidget(self.btn_convert)
-        right_layout.addWidget(grp_conv)
+        # Convert
+        g = QGroupBox("Convert format")
+        f = QFormLayout(g)
+        self.combo_format = QComboBox()
+        self.combo_format.addItems(list(FORMATS))
+        self.slider_quality = QSlider(Qt.Horizontal)
+        self.slider_quality.setRange(50, 100)
+        self.slider_quality.setValue(92)
+        self.lbl_quality = QLabel("92")
+        self.slider_quality.valueChanged.connect(lambda v: self.lbl_quality.setText(str(v)))
+        qrow = QHBoxLayout()
+        qrow.addWidget(self.slider_quality, 1)
+        qrow.addWidget(self.lbl_quality)
+        b = QPushButton("Apply conversion")
+        b.clicked.connect(lambda: self.run(self._convert_op()))
+        f.addRow("Format:", self.combo_format)
+        f.addRow("Quality:", qrow)
+        f.addRow(hint_label("Quality applies to JPG/WEBP. Converted files sit next to the originals when "
+                            "overwriting is chosen — originals are never deleted."))
+        f.addRow(b)
+        pl.addWidget(g)
 
-        right_layout.addStretch()
-
+        # Progress
+        prow = QHBoxLayout()
         self.progress = QProgressBar()
-        right_layout.addWidget(self.progress)
-        self.log_box = QTextEdit()
-        self.log_box.setPlaceholderText("Log...")
-        self.log_box.setReadOnly(True)
-        self.log_box.setFixedHeight(100)
-        right_layout.addWidget(self.log_box)
+        self.progress.setFormat("%v / %m")
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.setEnabled(False)
+        self.btn_cancel.clicked.connect(lambda: self.job and self.job.cancel())
+        prow.addWidget(self.progress, 1)
+        prow.addWidget(self.btn_cancel)
+        pl.addLayout(prow)
+        self.lbl_status = hint_label("")
+        pl.addWidget(self.lbl_status)
+        pl.addStretch()
 
-        splitter.addWidget(left_widget)
-        splitter.addWidget(right_scroll)
-        splitter.setStretchFactor(0, 4)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(panel)
+        scroll.setMinimumWidth(400)
+        splitter.addWidget(scroll)
+        splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter)
+        splitter.setSizes([1100, 420])
+        root.addWidget(splitter)
 
-        self.setup_hotkeys()
+        self._preview_timer = QTimer(self, singleShot=True, interval=300)
+        self._preview_timer.timeout.connect(self._render_preview)
+        self.ctx.session_changed.connect(self._update_output_label)
+        self._update_output_label()
+        for seq, op in (("Ctrl+R", Operation("rotate", {"direction": "cw"})),
+                        ("Ctrl+Shift+R", Operation("rotate", {"direction": "ccw"}))):
+            s = QShortcut(QKeySequence(seq), self)
+            s.setContext(Qt.WidgetWithChildrenShortcut)
+            s.activated.connect(lambda o=op: self.run(o))
 
-    def setup_hotkeys(self):
-        QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(self.select_all)
-        QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(lambda: self.run_batch_main_thread('rotate', {'direction': 'cw'}))
-        QShortcut(QKeySequence("Ctrl+Shift+R"), self).activated.connect(lambda: self.run_batch_main_thread('rotate', {'direction': 'ccw'}))
+    # ------------------------------------------------------------------ helpers
+    @staticmethod
+    def _spin(lo, hi, val, suffix):
+        s = QSpinBox()
+        s.setRange(lo, hi)
+        s.setValue(val)
+        s.setSuffix(suffix)
+        return s
 
-    def load_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
-        if not folder: return
-        self.current_folder = folder
-        self.refresh_grid()
+    @staticmethod
+    def _preview_label(text):
+        lbl = QLabel(text)
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setMinimumSize(120, 150)
+        from PySide6.QtWidgets import QSizePolicy
+        lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        lbl.setFixedHeight(170)
+        lbl.setStyleSheet("background-color: #1a1a1a; border-radius: 6px; color: #777;")
+        return lbl
 
-    def refresh_grid(self):
-        for i in reversed(range(self.grid_layout.count())):
-            self.grid_layout.itemAt(i).widget().setParent(None)
-        self.cards.clear()
-        self.selected_paths.clear()
+    def _watch(self, op_factory, *widgets):
+        """Changing any control in a group previews that group's operation."""
+        def touched(*_):
+            self.preview_op = op_factory()
+            self._schedule_preview()
+        for w in widgets:
+            for sig in ("valueChanged", "currentIndexChanged", "toggled"):
+                if hasattr(w, sig):
+                    getattr(w, sig).connect(touched)
+                    break
 
-        try:
-            files = dataset.scan_images(self.current_folder)
-        except OSError as e:
-            QMessageBox.critical(self, "Error", f"Could not read folder:\n{e}")
-            return
-        cols = 3
-        for i, f in enumerate(files):
-            path = str(f)
-            card = EditorCard(path)
-            card.selection_changed.connect(self.on_selection)
-            self.grid_layout.addWidget(card, i // cols, i % cols)
-            self.cards[path] = card
-            self.reload_card_thumbnail(path)
-
-    def reload_card_thumbnail(self, path):
-        if path in self.cards:
-            worker = ThumbnailWorker(path, (220, 220))
-            worker.signals.loaded.connect(self.cards[path].set_data)
-            self.thread_pool.start(worker)
-
-    def on_selection(self, path, is_selected):
-        if is_selected: self.selected_paths.add(path)
-        else: self.selected_paths.discard(path)
-
-    def select_all(self):
-        target = not (len(self.selected_paths) == len(self.cards) and len(self.cards) > 0)
-        for card in self.cards.values(): card.toggle_selection(target)
-
-    def prep_resize(self):
-        params = {}
-        if self.rad_longest.isChecked():
-            params['mode'] = 'longest'
-            params['size'] = self.spin_long.value()
+    def _resize_op(self) -> Operation:
+        mode = self.combo_resize.currentData()
+        p = {"mode": mode, "allow_upscale": self.chk_upscale.isChecked()}
+        if mode == "longest":
+            p["size"] = self.spin_side.value()
+        elif mode == "shortest":
+            p["size"] = self.spin_side2.value()
+        elif mode == "force":
+            p.update(w=self.spin_w.value(), h=self.spin_h.value())
         else:
-            params['mode'] = 'force'
-            params['w'] = self.spin_w.value()
-            params['h'] = self.spin_h.value()
-        self.run_batch_main_thread('resize', params)
+            p["percent"] = self.spin_pct.value()
+        return Operation("resize", p)
 
-    def prep_crop(self):
-        params = {
-            'w': self.spin_cw.value(),
-            'h': self.spin_ch.value(),
-            'focus': self.combo_focus.currentText()
-        }
-        self.run_batch_main_thread('crop', params)
+    def _crop_op(self) -> Operation:
+        focus = self.combo_focus.currentText()
+        if self.combo_crop_mode.currentData() == "aspect":
+            return Operation("crop_aspect", {"aspect": self.combo_aspect.currentText(), "focus": focus})
+        return Operation("crop", {"w": self.spin_cw.value(), "h": self.spin_ch.value(), "focus": focus})
 
-    def prep_convert(self):
-        params = {
-            'format': self.combo_format.currentText(),
-            'quality': self.slider_quality.value()
-        }
-        self.run_batch_main_thread('convert', params)
+    def _convert_op(self) -> Operation:
+        return Operation("convert", {"format": self.combo_format.currentText(), "quality": self.slider_quality.value()})
 
-    def run_batch_main_thread(self, operation, params):
-        if not self.selected_paths:
-            self.log_box.append("⚠️ No images selected!")
+    def _output_dir(self) -> Path:
+        folder = os.path.basename(os.path.normpath(self.ctx.folder)) if self.ctx.folder else "edits"
+        return Path(edits_root()) / folder
+
+    def _update_output_label(self):
+        self.lbl_out.setText(f"→ {self._output_dir()}")
+
+    def _open_output(self):
+        d = self._output_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(d)))
+
+    def _on_selection(self, keys):
+        n = len(keys)
+        self.lbl_status.setText(f"{n} image(s) selected" if n else "Select images to edit.")
+        self._schedule_preview()
+
+    # ------------------------------------------------------------------ preview
+    def _schedule_preview(self):
+        self._preview_timer.start()
+
+    def _render_preview(self):
+        keys = self.browser.selected_keys()
+        cur = self.browser.view.currentIndex()
+        from tabs.workspace.model import KEY_ROLE
+        key = cur.data(KEY_ROLE) if cur.isValid() and cur.data(KEY_ROLE) in keys else (keys[0] if keys else "")
+        if not key:
+            self.lbl_before.setPixmap(QPixmap())
+            self.lbl_before.setText("Before")
+            self.lbl_after.setPixmap(QPixmap())
+            self.lbl_after.setText("After")
             return
+        op = self.preview_op
+        self._preview_key = key
 
-        mode = 'overwrite' if self.rad_overwrite.isChecked() else 'folder'
-        # Copies go to <Image Edits>/<source folder name>/ so files from different
-        # folders can't collide, and existing outputs are never overwritten.
-        output_folder = os.path.join(edits_root(), os.path.basename(os.path.normpath(self.current_folder))) \
-            if mode == 'folder' else ""
-        if mode == 'overwrite' and operation != 'convert':
-            if not confirm(self, "Overwrite originals?",
-                           f"This will permanently modify {len(self.selected_paths)} original image(s) "
-                           f"({operation}). This cannot be undone.\n\nTip: choose 'Save copies' to keep "
-                           "originals untouched.", destructive=True):
-                return
-
-        if mode == 'folder':
-            if not os.path.exists(output_folder):
-                try: os.makedirs(output_folder)
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Could not create output folder:\n{e}")
-                    return
-
-        paths = list(self.selected_paths)
-        count = len(paths)
-        progress = QProgressDialog(f"Running {operation}...", "Abort", 0, count, self)
-        progress.setWindowModality(Qt.WindowModal)
-        progress.show()
-
-        processed_count = 0
-
-        for i, path in enumerate(paths):
-            if progress.wasCanceled():
-                self.log_box.append("🛑 Batch Aborted.")
-                break
-
-            progress.setValue(i)
-            QApplication.processEvents()
-
-            try:
+        def work():
+            img = image_ops.open_upright(key)
+            before = img.copy()
+            before.thumbnail((340, 340))
+            after, size, note = None, None, ""
+            if op is not None:
                 try:
-                    img = load_upright_bgr(path)
-                except Exception:
-                    img = None
+                    after, size = image_ops.preview(img, op, 340)
+                except image_ops.SkipImage as e:
+                    note = f"Skipped for this image: {e}"
+            return pil_to_qimage(before), img.size, (pil_to_qimage(after) if after else None), size, note
 
-                if img is None:
-                    self.log_box.append(f"❌ Failed load: {os.path.basename(path)}")
-                    continue
+        def done(res):
+            if self._preview_key != key:
+                return
+            qb, osize, qa, nsize, note = res
+            self._set_pix(self.lbl_before, qb)
+            if qa is not None:
+                self._set_pix(self.lbl_after, qa)
+                self.lbl_preview_info.setText(f"{op.describe()}:  {osize[0]}×{osize[1]}  →  {nsize[0]}×{nsize[1]}")
+            else:
+                self.lbl_after.setPixmap(QPixmap())
+                self.lbl_after.setText("After")
+                self.lbl_preview_info.setText(note or f"{osize[0]}×{osize[1]} — adjust Resize, Crop or Convert "
+                                                      "to preview the result.")
 
-                h, w = img.shape[:2]
-                res_img = img
-                new_ext = None
-                save_params = []
+        run_in_background(work, done, lambda e: self.lbl_preview_info.setText(f"Can't preview: {e}"))
 
-                if operation == 'rotate':
-                    direction = params.get('direction', 'cw')
-                    if direction == 'cw': res_img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-                    else: res_img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    @staticmethod
+    def _set_pix(label: QLabel, qimg):
+        pm = QPixmap.fromImage(qimg)
+        label.setPixmap(pm.scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
-                elif operation == 'resize':
-                    mode_r = params.get('mode', 'longest')
-                    new_w, new_h = w, h
-                    if mode_r == 'longest':
-                        target = int(params['size'])
-                        scale = target / max(h, w)
-                        new_w, new_h = int(w * scale), int(h * scale)
-                    else:
-                        new_w, new_h = int(params['w']), int(params['h'])
+    # ------------------------------------------------------------------ run
+    def run(self, op: Operation):
+        if self.job is not None:
+            QMessageBox.information(self, "Busy", "An edit is already running — cancel it or wait.")
+            return
+        keys = self.browser.selected_keys()
+        if not keys:
+            self.lbl_status.setText("⚠ Select images first.")
+            return
+        overwrite = self.rad_overwrite.isChecked()
+        convert = op.kind == "convert"
+        if overwrite and not convert and not confirm(
+                self, "Overwrite originals?",
+                f"{op.describe()} will permanently change {len(keys)} original image(s). This can't be undone.\n\n"
+                "Tip: choose 'Save edited copies' to keep originals untouched.", destructive=True):
+            return
+        out_dir = self._output_dir()
+        fmt = op.params.get("format") if convert else None
+        quality = op.params.get("quality", 92)
 
-                    new_w = max(1, new_w); new_h = max(1, new_h)
-                    if new_w != w or new_h != h:
-                        res_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        def process(src: str) -> Path:
+            srcp = Path(src)
+            img = image_ops.open_upright(srcp)
+            result = image_ops.apply(img, op)
+            if overwrite:
+                dest = srcp
+                if fmt and FORMATS[fmt][1] != srcp.suffix.lower():
+                    dest = fileops.unique_path(srcp.with_suffix(FORMATS[fmt][1]))
+            else:
+                ext = FORMATS[fmt][1] if fmt else srcp.suffix
+                dest = fileops.unique_path(out_dir / f"{srcp.stem}{ext}")
+            saved = image_ops.save(result, dest, fmt, quality)
+            if saved != srcp:  # derived file: keep the caption paired with it
+                cap, dcap = caption_path(srcp), caption_path(saved)
+                if cap.is_file() and not dcap.exists():
+                    shutil.copy2(cap, dcap)
+            return saved
 
-                elif operation == 'crop':
-                    t_w, t_h = int(params['w']), int(params['h'])
-                    focus = params.get('focus', 'Center')
-                    if w < t_w or h < t_h:
-                        self.log_box.append(f"⚠️ Too small: {os.path.basename(path)}")
-                        continue
+        self.progress.setMaximum(len(keys))
+        self.progress.setValue(0)
+        self.btn_cancel.setEnabled(True)
+        self.lbl_status.setText(f"{op.describe()} — {len(keys)} image(s)…")
+        self._last_overwrite = overwrite and not convert
+        self._created_in_place = overwrite and convert
+        self._modified: list[str] = []
+        self._skipped: list[tuple[str, str]] = []
+        self.job = start_file_job(keys, process, op.describe())
+        self.job.item_skipped.connect(lambda src, why: self._skipped.append((src, why)))
+        self.job.progress.connect(lambda d, t: self.progress.setValue(d))
+        self.job.item_done.connect(lambda src, dest: self._modified.append(src) if dest == src else None)
+        self.job.finished.connect(self._finished)
 
-                    x = (w - t_w) // 2
-                    y = (h - t_h) // 2
-
-                    if focus == 'Top-Left': x, y = 0, 0
-                    elif focus == 'Top-Center': x, y = (w - t_w)//2, 0
-                    elif focus == 'Top-Right': x, y = w - t_w, 0
-                    elif focus == 'Center-Left': x, y = 0, (h - t_h)//2
-                    elif focus == 'Center-Right': x, y = w - t_w, (h - t_h)//2
-                    elif focus == 'Bottom-Left': x, y = 0, h - t_h
-                    elif focus == 'Bottom-Center': x, y = (w - t_w)//2, h - t_h
-                    elif focus == 'Bottom-Right': x, y = w - t_w, h - t_h
-
-                    x = max(0, min(x, w - t_w))
-                    y = max(0, min(y, h - t_h))
-                    res_img = img[y:y+t_h, x:x+t_w]
-
-                elif operation == 'convert':
-                    fmt = params['format'].lower()
-                    quality = params['quality']
-                    new_ext = f".{fmt}"
-                    if fmt in ['jpg', 'jpeg']:
-                        save_params = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-                        if len(res_img.shape) == 3 and res_img.shape[2] == 4:
-                            res_img = cv2.cvtColor(res_img, cv2.COLOR_BGRA2BGR)
-                    elif fmt == 'webp':
-                        save_params = [int(cv2.IMWRITE_WEBP_QUALITY), quality]
-
-                filename = os.path.basename(path)
-                if new_ext:
-                    base = os.path.splitext(filename)[0]
-                    filename = f"{base}{new_ext}"
-
-                if mode == 'folder':
-                    save_path = str(fileops.unique_path(Path(output_folder) / filename))
-                else:
-                    save_path = os.path.join(os.path.dirname(path), filename)
-                    if save_path != path and os.path.exists(save_path):
-                        save_path = str(fileops.unique_path(Path(save_path)))
-
-                ext = os.path.splitext(save_path)[1]
-                if not ext: ext = os.path.splitext(path)[1]
-
-                success, encoded_img = cv2.imencode(ext, res_img, save_params)
-                if success:
-                    with open(save_path, "wb") as f:
-                        encoded_img.tofile(f)
-                    processed_count += 1
-                    # Keep the image/caption pair together for derived files.
-                    src_cap = caption_path(path)
-                    dst_cap = caption_path(save_path)
-                    if save_path != path and src_cap.is_file() and not dst_cap.exists():
-                        try:
-                            shutil.copy2(src_cap, dst_cap)
-                        except OSError as e:
-                            self.log_box.append(f"⚠️ Caption not copied for {filename}: {e}")
-                    if save_path == path:
-                        self.reload_card_thumbnail(path)
-                else:
-                    self.log_box.append(f"❌ Save failed: {filename}")
-
-                gc.collect()
-
-            except Exception as e:
-                self.log_box.append(f"❌ Error {os.path.basename(path)}: {e}")
-
-        progress.setValue(count)
-        where = f" → {output_folder}" if mode == 'folder' else ""
-        self.log_box.append(f"✅ Finished. Processed {processed_count} images{where}.")
+    def _finished(self, summary):
+        self.job = None
+        self.btn_cancel.setEnabled(False)
+        if self._last_overwrite and self._modified:
+            self.ctx.images_modified(self._modified)
+        where = "" if self._last_overwrite or self._created_in_place else f" → {self._output_dir()}"
+        parts = [f"{summary.done} done"]
+        if summary.skipped:
+            parts.append(f"{summary.skipped} skipped")
+        if summary.failed:
+            parts.append(f"{len(summary.failed)} failed")
+        self.lbl_status.setText(f"{summary.title}: " + ", ".join(parts) + where +
+                                (" (cancelled)" if summary.cancelled else ""))
+        self._schedule_preview()
+        show_job_summary(self, summary)
+        if self._skipped:
+            lines = "\n".join(f"• {Path(s).name}: {why}" for s, why in self._skipped[:15])
+            more = f"\n…and {len(self._skipped) - 15} more" if len(self._skipped) > 15 else ""
+            QMessageBox.information(self, "Some images were skipped",
+                                    f"{len(self._skipped)} image(s) were left unchanged:\n\n{lines}{more}")
+        if self._created_in_place and summary.done:
+            if confirm(self, "Converted files created",
+                       f"{summary.done} converted file(s) were saved next to the originals. Reload the folder to "
+                       "show them?"):
+                self.ctx.rescan(self)

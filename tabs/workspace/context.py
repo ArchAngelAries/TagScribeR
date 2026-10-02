@@ -221,6 +221,34 @@ class WorkspaceContext(QObject):
             if n:
                 log.info("Picked up %d externally changed caption(s)", n)
 
+    def images_modified(self, keys: list[str]) -> None:
+        """Pixels of these files changed on disk (e.g. overwritten by the editor): refresh
+        thumbnails, dimensions, size and date without touching captions."""
+        if not self.session:
+            return
+        for key in keys:
+            e = self.session.get(key)
+            if e is None:
+                continue
+            self.loader.invalidate(key)
+            info = dataset.read_image_info(key)
+            e.width, e.height, e.info_loaded = info.width, info.height, True
+            try:
+                st = e.path.stat()
+                e.file_size, e.mtime = st.st_size, st.st_mtime
+            except OSError:
+                pass
+        self.model.refresh(keys)
+        self.entries_changed.emit(keys)
+
+    def rescan(self, parent: QWidget | None = None) -> bool:
+        """Reload the folder (new files appear), keeping the user's choice about unsaved edits."""
+        if not self.folder:
+            return False
+        if parent is not None and not self.confirm_discard(parent):
+            return False
+        return self.open_folder(self.folder, self.cfg.get("ui.recursive_scan", False), parent)
+
     def remove_entries(self, keys: list[str]) -> None:
         self.undo_stack.clear()  # history may reference removed images
         self.model.remove_keys(keys)

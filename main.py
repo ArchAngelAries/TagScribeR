@@ -101,7 +101,8 @@ class MainWindow(QMainWindow):
         if not workspace().confirm_discard(self):  # one shared dataset, so one prompt
             event.ignore()
             return
-        if worker.any_running():
+        from tabs.workspace import jobs
+        if worker.any_running() or jobs.any_running():
             reply = QMessageBox.question(
                 self, "Job running", "A captioning/tagging job is still running. Stop it and quit?\n"
                 "Images finished so far are already saved.", QMessageBox.Yes | QMessageBox.No)
@@ -109,6 +110,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         worker.cancel_all()
+        jobs.cancel_all()
         manager().unload_all(blocking=True)
         event.accept()
 

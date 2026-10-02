@@ -54,7 +54,14 @@ The training UI is a new **Train** tab on the shared workspace:
 
 TagScribeR's own captioners take over the loss watch's auto-recaption role, where Fizgig uses Qwen3-VL-4B.
 
-## 4. Decisions for the owner
+## 4. Decisions
+
+**Decided (2026-10-02):** all three recommendations accepted:
+- caption shuffle and dropout as an optional extension, off by default
+- build order T1 → T4 as listed
+- use `diffusers` for the SDXL family
+
+The options as originally presented:
 
 1. **Caption shuffle and dropout.** Fizgig caches text conditioning once per caption, so it has no tag shuffle or caption dropout. These are standard for SDXL-family tag datasets (Pony, Illustrious, NoobAI) and Anima. Options:
    - **(a) Strict Fizgig:** no shuffle.

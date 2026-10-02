@@ -1,149 +1,146 @@
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, 
-    QHeaderView, QPushButton, QTabWidget, QTextBrowser, QWidget
-)
+"""Help Center: searchable, non-modal, context-aware (F1 opens the current tab's topic)."""
+from __future__ import annotations
+
+import html
+import re
+
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
+                               QTextBrowser, QToolButton, QVBoxLayout, QWidget)
+
+from tabs.help_content import HOTKEYS, TOPICS
+
+_STYLE = """
+<style>
+ body { font-size: 13px; line-height: 1.45; }
+ h2 { color: #00b894; margin-bottom: 6px; }
+ h3 { color: #d0d0d0; margin-top: 14px; }
+ code { background: #2b2b2b; color: #fdcb6e; padding: 1px 4px; }
+ td { vertical-align: top; }
+</style>
+"""
+
+
+def _hotkeys_html() -> str:
+    rows, scope = [], None
+    for sc, keys, action in HOTKEYS:
+        if sc != scope:
+            rows.append(f'<tr><td colspan="2"><h3>{html.escape(sc)}</h3></td></tr>')
+            scope = sc
+        rows.append(f"<tr><td><code>{html.escape(keys)}</code></td><td>{html.escape(action)}</td></tr>")
+    return "<h2>Keyboard shortcuts</h2><table cellpadding='4'>" + "".join(rows) + "</table>"
+
+
+def _all_topics() -> dict[str, tuple[str, str, str]]:
+    topics = dict(TOPICS)
+    topics["hotkeys"] = ("Keyboard shortcuts", "Basics", _hotkeys_html())
+    return topics
+
 
 class HelpDialog(QDialog):
+    _instance: "HelpDialog | None" = None
+
+    @classmethod
+    def open_topic(cls, parent: QWidget | None, topic: str = "start") -> "HelpDialog":
+        """Show the (single, non-modal) Help Center at ``topic``."""
+        if cls._instance is None:
+            cls._instance = HelpDialog(parent)
+        cls._instance.show_topic(topic)
+        cls._instance.show()
+        cls._instance.raise_()
+        cls._instance.activateWindow()
+        return cls._instance
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("TagScribeR - Help Center")
-        self.resize(850, 650)
-        
-        layout = QVBoxLayout(self)
-        
-        # Tabs
-        self.tabs = QTabWidget()
-        
-        # Tab 1: Hotkeys
-        self.tab_hotkeys = QWidget()
-        self.init_hotkeys(self.tab_hotkeys)
-        
-        # Tab 2: Walkthrough
-        self.tab_guide = QWidget()
-        self.init_guide(self.tab_guide)
-        
-        self.tabs.addTab(self.tab_hotkeys, "⌨️ Keyboard Shortcuts")
-        self.tabs.addTab(self.tab_guide, "📖 User Manual / Walkthrough")
-        
-        layout.addWidget(self.tabs)
-        
-        # Close Button
+        self.setWindowTitle("TagScribeR — Help Center")
+        self.resize(980, 680)
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
+        self.topics = _all_topics()
+
+        lay = QHBoxLayout(self)
+        left = QVBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search help…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._filter)
+        self.list = QListWidget()
+        self.list.setMaximumWidth(250)
+        self.list.currentItemChanged.connect(self._on_item)
+        left.addWidget(self.search)
+        left.addWidget(self.list, 1)
         btn_close = QPushButton("Close")
-        btn_close.clicked.connect(self.accept)
-        layout.addWidget(btn_close)
+        btn_close.clicked.connect(self.close)
+        left.addWidget(btn_close)
+        lay.addLayout(left)
 
-    def init_hotkeys(self, parent):
-        layout = QVBoxLayout(parent)
-        table = QTableWidget()
-        table.setColumnCount(3)
-        table.setHorizontalHeaderLabels(["Scope", "Shortcut", "Action"])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        table.verticalHeader().setVisible(False)
-        table.setSelectionMode(QTableWidget.NoSelection)
-        table.setAlternatingRowColors(True)
-        
-        hotkeys = [
-            ("Global", "Ctrl+1 - Ctrl+6", "Switch Tabs"),
-            ("Global", "F1", "Show this Help Center"),
-            ("Gallery", "Ctrl+A", "Toggle Select All / None"),
-            ("Gallery", "Del", "Clear Caption Text (Selected Images)"),
-            ("Gallery", "Ctrl+S", "Save All Changes to Disk"),
-            ("Gallery", "Ctrl+Z", "Undo Last Action"),
-            ("Gallery", "Ctrl+Y", "Redo Last Action"),
-            ("Auto Caption", "Ctrl+A", "Toggle Select All"),
-            ("Auto Caption", "Ctrl+Enter", "Run Captioning"),
-            ("Auto Caption", "Esc", "Abort Processing"),
-            ("Image Editor", "Ctrl+A", "Toggle Select All"),
-            ("Image Editor", "Ctrl+R", "Rotate CW"),
-            ("Image Editor", "Ctrl+Shift+R", "Rotate CCW"),
-            ("Datasets", "Ctrl+A", "Toggle Select All"),
-            ("Datasets", "Ctrl+F", "Focus Filter Bar"),
-            ("Datasets", "Ctrl+N", "New Collection"),
-            ("Datasets", "Ctrl+Enter", "Add Selected to Collection"),
-            ("Datasets", "F5", "Refresh Collections"),
-            ("Datasets", "Del", "Delete Selected Images"),
-        ]
-        
-        table.setRowCount(len(hotkeys))
-        for i, (scope, key, action) in enumerate(hotkeys):
-            table.setItem(i, 0, QTableWidgetItem(scope))
-            table.setItem(i, 1, QTableWidgetItem(key))
-            table.setItem(i, 2, QTableWidgetItem(action))
-            
-        layout.addWidget(table)
+        self.view = QTextBrowser()
+        self.view.setOpenExternalLinks(True)
+        self.view.setStyleSheet("QTextBrowser { color: #dcdcdc; background-color: #1e1e1e; padding: 10px; }")
+        lay.addWidget(self.view, 1)
+        self._populate()
 
-    def init_guide(self, parent):
-        layout = QVBoxLayout(parent)
-        browser = QTextBrowser()
-        browser.setOpenExternalLinks(True)
-        
-        # HTML Guide Content
-        html = """
-        <style>
-            h2 { color: #00b894; margin-top: 20px; border-bottom: 1px solid #333; padding-bottom: 5px; }
-            h3 { color: #74b9ff; margin-top: 10px; }
-            p { font-size: 14px; line-height: 1.5; color: #ddd; }
-            li { font-size: 14px; margin-bottom: 6px; color: #ccc; }
-            b { color: #fff; }
-            .highlight { color: #e17055; font-weight: bold; }
-        </style>
-        
-        <h1>Welcome to TagScribeR v2.2</h1>
-        <p>TagScribeR is a professional studio for managing, captioning, and editing image datasets for AI training (LoRA/Checkpoints). Below is a walkthrough of each workspace.</p>
-        
-        <h2>🖼️ Gallery Tab (The Studio)</h2>
-        <p>Your primary workspace for curating, tagging, and cleaning datasets.</p>
-        <ul>
-            <li><b>Smart Filtering:</b> Type a tag (e.g., "text", "bad hands") in the top filter bar to instantly find images containing that tag.</li>
-            <li><b>Tag Editor (Bubbles):</b> When you select an image, its tags appear as bubbles in the right sidebar. Click the <span class="highlight">X</span> on a bubble to instantly remove that tag. If multiple images are selected, it removes the tag from ALL of them.</li>
-            <li><b>🤖 Auto Tag (WD14):</b> Click "Auto Tag Selected" to scan images with the WD14 AI and automatically add booru-style tags. You can adjust the confidence threshold to control sensitivity.</li>
-            <li><b>🧹 Sanitize:</b> Click the Broom icon to clean up text files for training (converts accents like 'ä' to 'a' and removes junk characters).</li>
-            <li><b>Selection:</b> Click images to select/deselect them (Green border = Selected). Use <b>Ctrl+A</b> to toggle selection of visible images.</li>
-            <li><b>Quick Tags:</b> Click a tag in the sidebar list to append/prepend it to selected images.</li>
-            <li><b>Undo/Redo:</b> Made a mistake? Use the Undo/Redo buttons (or Ctrl+Z) to revert text changes or batch operations.</li>
-        </ul>
+    def _populate(self):
+        self.list.clear()
+        group = None
+        order = ["Basics", "Gallery", "AI", "Tools", "Settings", "Help"]
+        for g in order:
+            for tid, (title, tgroup, _html) in self.topics.items():
+                if tgroup != g:
+                    continue
+                if g != group:
+                    header = QListWidgetItem(g.upper())
+                    header.setFlags(Qt.NoItemFlags)
+                    header.setForeground(Qt.gray)
+                    self.list.addItem(header)
+                    group = g
+                item = QListWidgetItem("   " + title)
+                item.setData(Qt.UserRole, tid)
+                self.list.addItem(item)
 
-        <h2>🤖 Auto Caption Tab</h2>
-        <p>Use AI to automatically describe your images using Qwen 3-VL or external APIs.</p>
-        <h3>Local Mode (GPU)</h3>
-        <p>Runs Qwen directly on your hardware. Supports NVIDIA (CUDA) and AMD (ROCm).</p>
-        <ul>
-            <li>Select a model from the dropdown. If missing, click <b>Download</b>.</li>
-            <li>Adjust <b>Max Tokens</b> (length) and <b>Temperature</b> (creativity).</li>
-            <li>Click <b>Caption Selected</b> to start. Images process one by one to save VRAM.</li>
-        </ul>
-        <h3>API Mode (LM Studio / OpenAI)</h3>
-        <p>Connects to local or cloud APIs.</p>
-        <ul>
-            <li>Enter your Base URL (e.g., <code>http://localhost:1234/v1</code>) and Key.</li>
-            <li>Save your configuration using the "Floppy Disk" icon in the API tab for quick access later.</li>
-        </ul>
+    def show_topic(self, tid: str):
+        if tid not in self.topics:
+            tid = "start"
+        for i in range(self.list.count()):
+            if self.list.item(i).data(Qt.UserRole) == tid:
+                self.list.setCurrentRow(i)
+                break
+        self._render(tid)
 
-        <h2>✏️ Image Editor Tab</h2>
-        <p>Batch process images for training prep.</p>
-        <ul>
-            <li><b>Output:</b> Choose "Save to Image Edits" (Safe) or "Overwrite Originals" (Destructive).</li>
-            <li><b>Resize:</b> "Scale Longest Side" keeps aspect ratio (e.g., 1024px max). "Force Dimensions" stretches the image.</li>
-            <li><b>Crop:</b> Smart cropping with focus points (e.g., Top-Center helps preserve heads in portrait crops).</li>
-            <li><b>Convert:</b> Batch convert to JPG/PNG/WEBP with quality control.</li>
-        </ul>
+    def _on_item(self, item, _prev=None):
+        if item is not None and item.data(Qt.UserRole):
+            self._render(item.data(Qt.UserRole))
 
-        <h2>📂 Datasets Tab</h2>
-        <p>Organize images into training sets without moving files manually.</p>
-        <ul>
-            <li><b>Collections:</b> Create named folders (e.g., "Style_A", "Concept_B").</li>
-            <li><b>Filtering:</b> Load a massive source folder, then type tags into the filter bar (e.g., "1girl") to see only matching images.</li>
-            <li><b>Add to Collection:</b> Select filtered images and click "Add". This <b>copies</b> the image and its caption text file to the collection folder safely.</li>
-        </ul>
+    def _render(self, tid: str):
+        title, _group, body = self.topics[tid]
+        self.view.setHtml(_STYLE + body)
 
-        <h2>ℹ️ Metadata Tab</h2>
-        <p>View and sanitize image data.</p>
-        <ul>
-            <li><b>Prompt Reader:</b> Automatically extracts Stable Diffusion Generation data from PNG chunks or JPG UserComments.</li>
-            <li><b>Strip:</b> The "Strip All Metadata" button removes all EXIF/PNG info for privacy.</li>
-        </ul>
-        """
-        
-        browser.setHtml(html)
-        layout.addWidget(browser)
+    def _filter(self, text: str):
+        q = text.strip().lower()
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            tid = item.data(Qt.UserRole)
+            if not tid:
+                item.setHidden(bool(q))
+                continue
+            title, _g, body = self.topics[tid]
+            plain = re.sub(r"<[^>]+>", " ", body).lower()
+            item.setHidden(bool(q) and q not in title.lower() and q not in plain)
+        if q:
+            for i in range(self.list.count()):
+                if not self.list.item(i).isHidden() and self.list.item(i).data(Qt.UserRole):
+                    self.list.setCurrentRow(i)
+                    break
+
+
+def help_button(topic: str, parent: QWidget | None = None, tooltip: str = "Help for this panel") -> QToolButton:
+    """A small '?' button that opens the Help Center at ``topic``."""
+    b = QToolButton(parent)
+    b.setText("?")
+    b.setToolTip(tooltip)
+    b.setFixedSize(26, 26)
+    b.setStyleSheet("QToolButton { border-radius: 13px; background: #3a3f44; color: #ddd; font-weight: bold;"
+                    " padding: 0px; margin: 0px; min-width: 0px; min-height: 0px; }"
+                    "QToolButton:hover { background: #00b894; color: white; }")
+    b.clicked.connect(lambda: HelpDialog.open_topic(b.window(), topic))
+    return b

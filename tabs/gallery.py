@@ -79,6 +79,12 @@ class GalleryTab(QWidget):
         self.side.setTabToolTip(1, "Apply tag/text operations to many images at once")
         self.side.setTabToolTip(2, "Tag frequency statistics; rename, merge or delete tags everywhere")
         self.side.currentChanged.connect(lambda i: self._refresh_tag_stats() if i == 2 else None)
+        from tabs.help import HelpDialog, help_button
+        corner = help_button("inspect", self.side, "Help for this panel")
+        corner.clicked.disconnect()
+        corner.clicked.connect(lambda: HelpDialog.open_topic(self.window(),
+                                                             ("inspect", "batch", "tags")[self.side.currentIndex()]))
+        self.side.setCornerWidget(corner, Qt.TopRightCorner)
 
         splitter.addWidget(self.browser)
         splitter.addWidget(self.side)

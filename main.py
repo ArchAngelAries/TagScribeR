@@ -59,7 +59,8 @@ class MainWindow(QMainWindow):
             QPushButton { background-color: #2d3436; color: #aaa; border: none; padding: 15px; text-align: left; }
             QPushButton:hover { background-color: #333; color: white; }
         """)
-        btn_help.clicked.connect(self.show_help)
+        btn_help.setToolTip("Help Center — guides for every tool (F1 opens help for the current tab)")
+        btn_help.clicked.connect(lambda: self.show_help("start"))
         sidebar_layout.addWidget(self.sidebar)
         sidebar_layout.addWidget(btn_help)
 
@@ -83,8 +84,9 @@ class MainWindow(QMainWindow):
     def change_tab(self, index):
         self.stack.setCurrentIndex(index)
 
-    def show_help(self):
-        HelpDialog(self).exec()
+    def show_help(self, topic: str | None = None):
+        from tabs.help_content import TAB_TOPICS
+        HelpDialog.open_topic(self, topic or TAB_TOPICS[self.stack.currentIndex()])
 
     def setup_hotkeys(self):
         for i in range(6):

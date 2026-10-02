@@ -75,11 +75,21 @@ class CaptionTab(QWidget):
         self.tab_source = QTabWidget()
         self.tab_source.addTab(self._build_local_tab(), "Local model")
         self.tab_source.addTab(self._build_api_tab(), "API / Server")
+        from tabs.help import HelpDialog, help_button
+        corner = help_button("models", self.tab_source, "Which model should I use? / How do I connect a server?")
+        corner.clicked.disconnect()
+        corner.clicked.connect(lambda: HelpDialog.open_topic(self.window(),
+                                                             ("models", "api")[self.tab_source.currentIndex()]))
+        self.tab_source.setCornerWidget(corner, Qt.TopRightCorner)
         rl.addWidget(self.tab_source)
 
         # 2. Instructions
         grp_prompt = QGroupBox("Instructions")
         lp = QVBoxLayout(grp_prompt)
+        row_help = QHBoxLayout()
+        row_help.addWidget(hint_label("Tell the model what to write. Presets are tuned for common dataset styles."), 1)
+        row_help.addWidget(help_button("caption", grp_prompt, "How Auto Caption works"))
+        lp.addLayout(row_help)
         self.combo_template = QComboBox()
         self.combo_template.addItems(list(PROMPT_PRESETS.keys()) + ["Custom"])
         self.combo_template.setToolTip("Pick a caption style; you can edit the text below freely.")
@@ -112,7 +122,8 @@ class CaptionTab(QWidget):
             self.combo_save.addItem(label, mode)
         lg.addRow("Max tokens:", self.spin_tokens)
         lg.addRow("Temperature:", self.spin_temp)
-        lg.addRow("Existing captions:", self.combo_save)
+        lg.addRow("If captioned:", self.combo_save)
+        self.combo_save.setToolTip("What to do with images that already have a caption")
         self.sec_adv_gen = CollapsibleSection("Advanced sampling")
         fa = QFormLayout()
         self.spin_top_p = QDoubleSpinBox()

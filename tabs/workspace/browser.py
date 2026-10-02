@@ -84,6 +84,8 @@ class DatasetBrowser(QWidget):
         for w in (self.btn_open, self.btn_recent, self.chk_recursive):
             bar.addWidget(w)
         bar.addWidget(self.inp_filter, 1)
+        from tabs.help import help_button
+        bar.addWidget(help_button("filter", self, "Filter syntax and examples"))
         bar.addWidget(self.combo_sort)
         bar.addWidget(self.btn_desc)
         lay.addLayout(bar)

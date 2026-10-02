@@ -2,11 +2,16 @@
 __pycache__/
 *.pyc
 venv/
+venv-*/
+.venv/
 .env
+.pytest_cache/
 
-# User Data & configuration
+# User data, settings & secrets (never commit these)
+user_data/
 config.json
 user_tags.txt
+api_presets.json
 logs/
 
 # Large AI Models

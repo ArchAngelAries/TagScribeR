@@ -1,4 +1,5 @@
 # core/__init__.py
-
-from .ai_backend import QwenWorker
-from .image_utils import cv2_to_qpixmap, pil_to_qpixmap, load_thumbnail
+#
+# Intentionally empty: importing `core.<module>` must stay cheap. Heavy
+# dependencies (torch, transformers, onnxruntime) are imported lazily by the
+# modules that need them so the UI can start without loading them.

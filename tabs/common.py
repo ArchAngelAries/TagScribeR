@@ -94,7 +94,7 @@ class CollapsibleSection(QWidget):
 
     def __init__(self, title: str, expanded: bool = False, parent: QWidget | None = None):
         super().__init__(parent)
-        self.toggle = QToolButton(text=title, checkable=True, checked=expanded)
+        self.toggle = QToolButton(text=title.replace("&", "&&"), checkable=True, checked=expanded)
         self.toggle.setStyleSheet("QToolButton { border: none; font-weight: bold; color: #bbb; }")
         self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)

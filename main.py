@@ -221,6 +221,8 @@ def main():
     apply_theme(settings().get("ui.theme"))
     preload_ai_runtime(app)
     window = MainWindow()
+    from tabs import icons
+    icons.apply_icons(window)
     window.show()
     log.info("TagScribeR started")
     code = app.exec()

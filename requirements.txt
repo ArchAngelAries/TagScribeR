@@ -12,6 +12,7 @@
 # UI
 PySide6==6.10.1
 qt-material==2.17
+qtawesome>=1.3             # Material Design icons (falls back to text if missing)
 
 # Local VLM inference
 transformers>=5.18,<6

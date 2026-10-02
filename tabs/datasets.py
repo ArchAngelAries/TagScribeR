@@ -155,7 +155,7 @@ class DatasetsTab(QWidget):
         for b in (self.btn_del_col, self.btn_rename, self.btn_open, self.btn_explore):
             b.setEnabled(has_col)
         self.btn_add.setEnabled(has_col and n > 0)
-        self.btn_add.setText(f"➕ Add {n} to '{self._current_name()}'" if has_col and n else
+        self.btn_add.setText(f"Add {n} to '{self._current_name()}'" if has_col and n else
                              "➕ Add Selected to Collection")
 
     # ------------------------------------------------------------------ actions

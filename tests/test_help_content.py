@@ -13,3 +13,11 @@ def test_help_content_compiles_without_warnings():
 def test_every_tab_has_a_help_topic():
     from tabs.help_content import TAB_TOPICS, TOPICS
     assert all(t in TOPICS for t in TAB_TOPICS)
+
+
+def test_icon_emoji_mapping():
+    from tabs import icons
+    assert icons.split_emoji("💾 Save") == ("save", "Save")
+    assert icons.split_emoji("🗑️ Delete") == ("delete", "Delete")
+    assert icons.split_emoji("Plain") == (None, "Plain")
+    assert all(name in icons.NAMES for name in icons.EMOJI.values())

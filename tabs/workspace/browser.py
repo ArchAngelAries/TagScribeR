@@ -60,7 +60,11 @@ class DatasetBrowser(QWidget):
         self.btn_open.setToolTip("Open a dataset folder (Ctrl+O). It opens in every tab.")
         self.btn_open.setStyleSheet("background-color: #00b894; color: white; font-weight: bold;")
         self.btn_open.clicked.connect(self.select_folder)
-        self.btn_recent = QToolButton(text="▾")
+        self.btn_recent = QToolButton()
+        from tabs import icons
+        icons.set(self.btn_recent, "recent")
+        if not icons.available():
+            self.btn_recent.setText("▾")
         self.btn_recent.setToolTip("Recent folders")
         self.btn_recent.setPopupMode(QToolButton.InstantPopup)
         self.btn_recent.setMenu(QMenu(self.btn_recent))
@@ -408,7 +412,7 @@ class DatasetBrowser(QWidget):
         s = self.ctx.session
         if not s:
             self.lbl_status.setText("Open a folder to start.")
-            self.btn_save.setText("💾 Save")
+            self.btn_save.setText("Save")
             return
         st = s.stats()
         shown, selected = self.proxy.rowCount(), len(self.view.selectionModel().selectedIndexes())
@@ -417,7 +421,7 @@ class DatasetBrowser(QWidget):
         if st["unsaved"]:
             parts.append(f"● {st['unsaved']} unsaved")
         self.lbl_status.setText("   ·   ".join(parts) + f"      {self.ctx.folder}")
-        self.btn_save.setText(f"💾 Save ({st['unsaved']})" if st["unsaved"] else "💾 Save")
+        self.btn_save.setText(f"Save ({st['unsaved']})" if st["unsaved"] else "Save")
 
     def flash(self, msg: str):
         self.lbl_status.setText(msg)

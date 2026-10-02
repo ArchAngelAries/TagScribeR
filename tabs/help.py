@@ -136,7 +136,13 @@ class HelpDialog(QDialog):
 def help_button(topic: str, parent: QWidget | None = None, tooltip: str = "Help for this panel") -> QToolButton:
     """A small '?' button that opens the Help Center at ``topic``."""
     b = QToolButton(parent)
-    b.setText("?")
+    from tabs import icons
+    if icons.available():
+        from PySide6.QtCore import QSize
+        b.setIcon(icons.icon("help"))
+        b.setIconSize(QSize(18, 18))
+    else:
+        b.setText("?")
     b.setToolTip(tooltip)
     b.setFixedSize(26, 26)
     b.setStyleSheet("QToolButton { border-radius: 13px; background: #3a3f44; color: #ddd; font-weight: bold;"

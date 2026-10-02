@@ -25,6 +25,7 @@ from core.presets import PresetError, caption_presets
 from inference.prompts import DEFAULT_PRESET
 from inference.worker import (SAVE_APPEND, SAVE_NONE, SAVE_OVERWRITE, SAVE_PREPEND, SAVE_SKIP_EXISTING,
                               BatchJob, combine, start_job)
+from tabs import icons
 from tabs.common import CollapsibleSection, confirm, hint_label, run_in_background, show_job_summary
 from tabs.workspace.browser import DatasetBrowser
 from tabs.workspace.context import JOB_FAILED, JOB_QUEUED, JOB_WORKING, workspace
@@ -101,7 +102,10 @@ class CaptionTab(QWidget):
         self.btn_preset_save = QToolButton(text="💾")
         self.btn_preset_save.setToolTip("Save the current instructions as a preset (yours are kept until you delete them)")
         self.btn_preset_save.clicked.connect(self.save_preset)
-        self.btn_preset_menu = QToolButton(text="⋯")
+        self.btn_preset_menu = QToolButton()
+        icons.set(self.btn_preset_menu, "more")
+        if not icons.available():
+            self.btn_preset_menu.setText("...")
         self.btn_preset_menu.setToolTip("Rename, delete, revert, import or export presets")
         self.btn_preset_menu.setPopupMode(QToolButton.InstantPopup)
         self.btn_preset_menu.setMenu(QMenu(self.btn_preset_menu))
@@ -458,12 +462,12 @@ class CaptionTab(QWidget):
             for m in local_models:
                 key = str(m.path)
                 installed_paths.add(m.path.name.lower())
-                self.combo_model.addItem(f"📁 {m.name}  ({m.approx_gb:.1f} GB)", key)
+                self.combo_model.addItem(icons.icon("folder"), f"{m.name}  ({m.approx_gb:.1f} GB)", key)
                 self._entries[key] = {"path": key, "gb": m.approx_gb,
                                       "notes": f"{m.model_type} · {m.path.parent}", "catalog": None}
         custom = self.cfg.get("caption.custom_model_path", "")
         if custom and Path(custom).is_dir() and custom not in self._entries:
-            self.combo_model.addItem(f"📁 {Path(custom).name} (custom)", custom)
+            self.combo_model.addItem(icons.icon("folder"), f"{Path(custom).name} (custom)", custom)
             self._entries[custom] = {"path": custom, "gb": 0, "notes": custom, "catalog": None}
         self.combo_model.addItem("── Download ──")
         self.combo_model.model().item(self.combo_model.count() - 1).setEnabled(False)
@@ -474,8 +478,8 @@ class CaptionTab(QWidget):
                 self._entries[str(local)]["catalog"] = c
                 continue
             target = str(local) if local else c.repo_id
-            mark = "✅" if (local or cached) else "☁️"
-            self.combo_model.addItem(f"{mark} {c.label}  ({c.approx_gb:.0f} GB)", target)
+            mark = icons.icon("installed" if (local or cached) else "cloud")
+            self.combo_model.addItem(mark, f"{c.label}  ({c.approx_gb:.0f} GB)", target)
             self._entries[target] = {"path": target, "gb": c.approx_gb, "notes": c.notes, "catalog": c,
                                      "downloaded": bool(local or cached)}
         self.combo_model.blockSignals(False)
@@ -498,7 +502,8 @@ class CaptionTab(QWidget):
             return
         is_remote = not Path(e["path"]).is_dir() and not e.get("downloaded", False)
         self.btn_download.setEnabled(is_remote)
-        self.btn_download.setText("⬇️ Download" if is_remote else "✅ Available")
+        self.btn_download.setText("Download" if is_remote else "Available")
+        icons.set(self.btn_download, "download" if is_remote else "installed")
         vram = ""
         try:
             from core import hardware
@@ -694,7 +699,7 @@ class CaptionTab(QWidget):
         edited = bool(data) and (self.prompt_input.toPlainText() != data.get("prompt", "") or
                                  (not builtin and self.system_input.toPlainText() != data.get("system_prompt", "")))
         if edited:
-            self.lbl_preset_state.setText("● Edited — 💾 saves it as " + ("a new preset." if builtin else
+            self.lbl_preset_state.setText("● Edited — Save (disk icon) keeps it as " + ("a new preset." if builtin else
                                                                           "this preset or a new one."))
         else:
             self.lbl_preset_state.setText("Built-in preset" if builtin else ("Your preset" if data else ""))
@@ -825,11 +830,13 @@ class CaptionTab(QWidget):
     # ------------------------------------------------------------------ run
     def _update_run_button(self):
         if self.worker is not None:
-            self.btn_run.setText("🛑 Abort  (Esc)")
+            self.btn_run.setText("Abort  (Esc)")
+            icons.set(self.btn_run, "stop", "#ffffff")
             self.btn_run.setStyleSheet("background-color: #ff4757; font-weight: bold; font-size: 14px;")
         else:
             n = len(self.selected_paths)
-            self.btn_run.setText(f"🚀 Caption {n} Selected  (Ctrl+Enter)" if n else "Select images to caption")
+            self.btn_run.setText(f"Caption {n} Selected  (Ctrl+Enter)" if n else "Select images to caption")
+            icons.set(self.btn_run, "run", "#ffffff")
             self.btn_run.setStyleSheet("background-color: #d63031; font-weight: bold; font-size: 14px;")
         self.browser.btn_open.setEnabled(self.worker is None)
 
@@ -1018,7 +1025,7 @@ class CaptionTab(QWidget):
     def _update_review_button(self):
         n = len(self.pending)
         self.btn_review.setVisible(n > 0)
-        self.btn_review.setText(f"📝 Review {n} proposal(s)")
+        self.btn_review.setText(f"Review {n} proposal(s)")
 
     def open_review(self):
         if not self.pending or not self.ctx.session:

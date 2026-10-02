@@ -272,11 +272,11 @@ class GalleryTab(QWidget):
         self.pending_tag_updates = {}
         self._tag_generation = self.ctx.generation
         self.ctx.set_job_state(keys, JOB_WORKING)
-        self.batch.btn_auto.setText(f"⏳ Tagging 0/{len(keys)}…  (click to stop)")
+        self.batch.btn_auto.setText(f"Tagging 0/{len(keys)}…  (click to stop)")
         self.tag_worker = start_job(job)
         self.tag_worker.item_done.connect(self.on_tagger_finished)
         self.tag_worker.item_failed.connect(lambda p, r: self.ctx.set_job_state([p], "failed"))
-        self.tag_worker.progress.connect(lambda d, t: self.batch.btn_auto.setText(f"⏳ Tagging {d}/{t}…  (click to stop)"))
+        self.tag_worker.progress.connect(lambda d, t: self.batch.btn_auto.setText(f"Tagging {d}/{t}…  (click to stop)"))
         self.tag_worker.finished.connect(lambda s, ks=keys: self.finalize_auto_tagging(s, ks))
 
     def on_tagger_finished(self, path: str, tag_text: str):
@@ -295,7 +295,7 @@ class GalleryTab(QWidget):
 
     def finalize_auto_tagging(self, summary=None, keys=()):
         self.tag_worker = None
-        self.batch.btn_auto.setText("✨ Auto Tag (WD tagger)…")
+        self.batch.btn_auto.setText("Auto Tag (WD tagger)…")
         s = self.ctx.session
         if s and self.ctx.generation == self._tag_generation:
             leftover = [k for k in keys if self.ctx.job_state.get(k) == JOB_WORKING]

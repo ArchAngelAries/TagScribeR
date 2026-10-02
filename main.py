@@ -92,6 +92,66 @@ class MainWindow(QMainWindow):
         for i in range(6):
             QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self).activated.connect(lambda idx=i: self.sidebar.setCurrentRow(idx))
         QShortcut(QKeySequence("F1"), self).activated.connect(self.show_help)
+        for seq in ("Ctrl+K", "Ctrl+Shift+P"):
+            QShortcut(QKeySequence(seq), self).activated.connect(self.open_palette)
+
+    # -- command palette -----------------------------------------------------
+    def _goto(self, index: int):
+        self.sidebar.setCurrentRow(index)
+
+    def _active_browser(self):
+        """The image grid of the visible tab (Gallery's if the tab has none)."""
+        tab = self.stack.currentWidget()
+        return getattr(tab, "browser", None) or self.tab_gallery.browser
+
+    def palette_commands(self):
+        from core.projects import BUILTIN_FILTERS
+        from tabs.help_content import TOPICS
+        from tabs.palette import Command
+        from tabs.workspace.context import workspace
+        ctx = workspace()
+        has_folder = lambda: ctx.session is not None  # noqa: E731
+        b = self._active_browser
+        cmds = [Command(name, lambda i=i: self._goto(i), "Go to", f"Ctrl+{i + 1}")
+                for i, name in enumerate(("Gallery", "Auto Caption", "Image Editor", "Datasets", "Metadata",
+                                          "Settings"))]
+        cmds += [
+            Command("Open folder…", lambda: b().select_folder(), "File", "Ctrl+O"),
+            Command("Save changed captions", lambda: b().save(), "File", "Ctrl+S", enabled=has_folder),
+            Command("Undo", ctx.undo, "Edit", "Ctrl+Z", enabled=has_folder),
+            Command("Redo", ctx.redo, "Edit", "Ctrl+Y", enabled=has_folder),
+            Command("Select all shown images", lambda: b().select_all(), "Select", "Ctrl+A", enabled=has_folder),
+            Command("Select images missing captions", lambda: b().select_matching("missing:caption"), "Select",
+                    enabled=has_folder),
+            Command("Select unsaved images", lambda: b().select_matching("is:unsaved"), "Select", enabled=has_folder),
+            Command("Clear filter", lambda: b().set_filter(""), "Filter", enabled=has_folder),
+            Command("Zoom thumbnails in", lambda: b().zoom(1), "View", "Ctrl+="),
+            Command("Zoom thumbnails out", lambda: b().zoom(-1), "View", "Ctrl+-"),
+            Command("Auto tag selected images (WD)…", lambda: (self._goto(0), self.tab_gallery.run_auto_tagger("selected")),
+                    "AI", keywords="booru wd tagger", enabled=has_folder),
+            Command("Caption selected images", lambda: (self._goto(1), self.tab_caption.run_process()), "AI",
+                    "Ctrl+Enter", keywords="vlm describe", enabled=has_folder),
+            Command("Review AI caption proposals", lambda: (self._goto(1), self.tab_caption.open_review()), "AI",
+                    enabled=lambda: bool(self.tab_caption.pending)),
+            Command("Free GPU memory (unload model)", self.tab_caption.force_cleanup, "AI", keywords="vram unload"),
+            Command("Scan dataset health", lambda: (self._goto(0), self.tab_gallery.side.setCurrentIndex(3),
+                                                   self.tab_gallery.scan_health()),
+                    "Dataset", keywords="duplicates blur buckets", enabled=has_folder),
+        ]
+        cmds += [Command(f"Open recent: {f}", lambda f=f: ctx.confirm_discard(self) and ctx.open_folder(
+            f, ctx.cfg.get("ui.recursive_scan", False), self), "File") for f in ctx.recent_folders()[:6]]
+        cmds += [Command(name, lambda q=q: b().set_filter(q), "Filter", keywords=q, enabled=has_folder)
+                 for name, q in BUILTIN_FILTERS.items()]
+        if ctx.project is not None:
+            cmds += [Command(f"★ {name}", lambda q=q: b().set_filter(q), "Filter", keywords=q)
+                     for name, q in ctx.project.filters().items()]
+        cmds += [Command(title, lambda t=tid: self.show_help(t), "Help") for tid, (title, _g, _h) in TOPICS.items()]
+        cmds.append(Command("Keyboard shortcuts", lambda: self.show_help("hotkeys"), "Help"))
+        return cmds
+
+    def open_palette(self):
+        from tabs.palette import CommandPalette
+        CommandPalette(self.palette_commands(), self).show()
 
     def closeEvent(self, event):
         from inference import worker

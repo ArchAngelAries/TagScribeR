@@ -9,6 +9,7 @@ HOTKEYS: list[tuple[str, str, str]] = [
     # scope, keys, action
     ("Global", "Ctrl+1 … Ctrl+6", "Switch tab (Gallery, Auto Caption, Editor, Datasets, Metadata, Settings)"),
     ("Global", "F1", "Help for the current tab"),
+    ("Global", "Ctrl+K  (or Ctrl+Shift+P)", "Command palette — type to find and run any action, filter or help topic"),
     ("Image grid", "Click / Ctrl+Click / Shift+Click", "Select / add to selection / select a range"),
     ("Image grid", "Arrow keys", "Move between images"),
     ("Image grid", "Ctrl+A", "Select all shown images"),
@@ -63,6 +64,8 @@ every tab, so you can switch between tagging, AI captioning and editing without 
 <li><b>Collect</b> your finished images into a training folder with <i>📦 Copy to Collection</i>.</li>
 </ol>
 <p>Captions are stored the way trainers expect: <code>image.png</code> + <code>image.txt</code> in the same folder.</p>
+<p><b>Tip:</b> press <b>Ctrl+K</b> anywhere for the command palette — type a few letters (e.g. “miss cap”, “health”,
+“save”) to run any action, apply a filter, open a recent folder or jump to a help topic.</p>
 """),
     "safety": ("Your data is safe", "Basics", """
 <h2>How TagScribeR protects your data</h2>

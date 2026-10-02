@@ -34,6 +34,14 @@ inference/              all AI work; tabs talk to it only via specs / worker
   manager.py            caches loaded models; one heavy VLM resident at a time
   worker.py             QThread batch worker: failure-tolerant, cancellable, saves as it goes
   prompts.py            caption instruction presets + per-image prompt builder (subject, tag hints)
+training/               native LoRA training: a port of Fizgig's standard family layer (no Qt; see below)
+  description.py driver.py registry.py   family facts, the model-code interface, the family list
+  families/qwen_image21/                  Qwen Image 2.1: description + presets, driver, DiT, VAE, sampler, encoder
+  dataset.py cache.py                     buckets, cache files, `python -m training.cache`
+  train.py                                the generic loop, `python -m training.train`
+  lora.py quant.py modules/               LoRA/LoKR (Linear + Conv2d), INT8/NF4 bases, block swap
+  adaptive_lr.py loss_logger.py loss_watch.py optimizers.py ema.py automagic3.py metadata.py progress.py
+  params.py presets.py pipeline.py        parameter schema, presets, run builder + control files (torch-free)
 tabs/                   UI only
   common.py             shared helpers (background tasks, quick-tag list, collapsible section, dialogs)
   workspace/            shared dataset workspace used by every tab
@@ -92,6 +100,45 @@ the current one. It saves each result immediately, which keeps completed work
 on cancel or crash. It records per-image failures without aborting and
 reports them at the end. OOM in a batch retries one image at a time.
 Cancellation is checked inside generation through a stopping criterion.
+
+## Training
+
+`training/` ports Fizgig's standard family layer. Fizgig is the reference for all training behaviour: see
+[TRAINING_PLAN.md](TRAINING_PLAN.md) and [FIZGIG_TRAINING_AUDIT.md](FIZGIG_TRAINING_AUDIT.md). Every ported file
+carries an Apache-2.0 attribution header, listed in `THIRD_PARTY_NOTICES.md`.
+
+**Families.** A model family is a `FamilyDescription` and a `FamilyDriver`:
+- The description holds the facts: model files, latent rules, the LoRA key format, presets, sampling recipes and
+  measured memory.
+- The driver holds the model code: loading, encoding, the training objective, sampling and the block map.
+- The loop never sees noise schedules, so flow-matching, epsilon and v-prediction models all fit.
+
+Adding a family means a package under `training/families/` plus one line in `registry.py`.
+
+**Process model.**
+- The app process never trains. The Train tab freezes a run folder: `dataset.json`, `train_config.json` and the
+  preview prompts.
+- It then starts three child processes in turn, with this interpreter: `training.cache --stage latents`, then
+  `--stage text`, then `training.train`. It reads their stdout (`training.progress` parses the lines).
+- Control goes through files in the run folder:
+  - `.pause_requested`: save state at the next epoch boundary and exit 0;
+  - `.sample_override.json`: the prompt for the next preview;
+  - `loss_log/caption_updates.json`: caption fixes, applied at the next boundary.
+- Stop kills the process tree.
+
+**Data.** Training reads caches, never images. Cache files use Fizgig's naming in
+`user_data/training_cache/<folder>-<hash>/`. A re-cache skips latents that are still valid and captions that haven't
+changed, and it deletes the caches of images that are gone.
+
+**Presets.** Built-in presets come from the family description. User presets are flat JSON in
+`user_data/training_presets/<family>/`, with Fizgig's keys, so Fizgig presets import as they are. They are applied
+with Fizgig's rules:
+- unknown keys are ignored;
+- values match their option by first token;
+- strict choices are refused when the family doesn't offer them.
+
+**Verification.** `tests/tiny_family.py` is a tiny random-weight family. The smoke tests run caching, training,
+pause/resume, previews and the loss watch on CPU in seconds. No real model is trained in development.
 
 ## Environment
 

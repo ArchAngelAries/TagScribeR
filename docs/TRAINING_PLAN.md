@@ -71,7 +71,22 @@ The options as originally presented:
 2. **Build order.** Is T1 → T4 above right, or should the SDXL family come first?
 3. **Dependencies.** The SDXL driver needs `diffusers` (UNet, VAE, schedulers) unless the UNet is ported as plain PyTorch. Fizgig already uses diffusers for some paths. Recommendation: use `diffusers`.
 
-## 5. Verification policy
+## 5. Progress
+
+- **T1 training core: done (2026-10-02).** `training/` holds the family interface and the generic loop. The loop
+  adds gradient accumulation, batching for drivers that support it, Conv2d LoRA, the clip-ratio Adaptive LR signal
+  and the preview-failure policy. The package also has:
+  - caching, with the optional caption shuffle and dropout extension (off by default);
+  - LoRA save and SAI metadata, EMA and the optimizers;
+  - the loss watch, with TagScribeR's captioners for auto-recaption;
+  - presets, the run builder and the control files;
+  - the Qwen Image 2.1 family.
+
+  This is verified by unit tests and CPU smoke tests on a tiny random family. The ported Qwen DiT and driver also
+  run forward and backward on a 2-layer random config.
+- **T1 Train tab:** next.
+
+## 6. Verification policy
 
 The owner runs all real training. Development verification uses:
 - unit tests (adaptive-LR decisions on synthetic loss curves, preset validation, cache keys, LoRA key formats)

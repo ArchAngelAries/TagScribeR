@@ -256,9 +256,28 @@ Gallery or caption the rest in Auto Caption.</li></ul>
 """),
     "metadata": ("Metadata", "Tools", """
 <h2>Metadata</h2>
-<p>View and edit EXIF (JPEG) and text chunks (PNG), including Stable Diffusion generation parameters.</p>
-<ul><li>Saving keeps color profiles and other binary data intact and writes safely.</li>
-<li><b>Strip All Metadata</b> removes everything (asks first).</li></ul>
+<p>Image files can carry hidden information: where a photo was taken, which device took it, the prompt and
+workflow that generated it, editing history. The Metadata tab shows it, audits it, removes it, and lets you credit your work.</p>
+<h3>Inspect</h3>
+<p>Select an image to see everything it stores, with a privacy summary on top
+(<span style="color:#ff7675">red</span> = sensitive, <span style="color:#fdcb6e">yellow</span> = worth knowing).
+Text fields and artist / copyright / description / software can be edited (double-click), then <b>Save field edits</b>.</p>
+<h3>Privacy</h3>
+<ul>
+<li><b>Audit</b> counts what the selected (or all shown) images contain, without changing anything.</li>
+<li><b>Clean metadata</b> removes what you tick: GPS location, device make/model/serials/owner, AI generation data
+(prompts, seeds, models, ComfyUI workflows), XMP history, timestamps, software — or <i>Everything</i>.</li>
+<li>Cleaning is <b>lossless</b>: image data isn't re-encoded, so quality is identical. Photo orientation is always kept,
+and the color profile is kept unless you tick the option to remove it.</li>
+<li>Supported: JPEG, PNG and WebP. Caption .txt files are separate and never affected.</li>
+</ul>
+<h3>Authorship</h3>
+<p>Write your artist name, copyright / license, description and the software you used to the standard EXIF and PNG
+fields — exactly the values you enter. Save them as a <b>template</b> to reuse. EXIF can only hold plain ASCII, so “©” is
+written as “(c)” there; PNG keeps the exact text.</p>
+<h3>Prompts → captions</h3>
+<p>Images from A1111 / Forge, ComfyUI, NovelAI or InvokeAI often contain the prompt that generated them. Use it as a
+starting caption for images without one (or replace existing captions). Results are unsaved and undoable until you Save.</p>
 """),
     "access": ("Accessibility & display", "Settings", """
 <h2>Accessibility &amp; display</h2>

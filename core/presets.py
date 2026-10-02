@@ -193,6 +193,18 @@ def tagger_presets() -> PresetStore:
     return _tagger_store
 
 
+_metadata_store: PresetStore | None = None
+
+
+def metadata_presets() -> PresetStore:
+    """Authorship templates (artist, copyright, description, software) — entered by the user."""
+    global _metadata_store
+    if _metadata_store is None:
+        from core import paths
+        _metadata_store = PresetStore(paths.METADATA_PRESETS_FILE, {})
+    return _metadata_store
+
+
 def _migrate_legacy_custom_prompt(store: PresetStore) -> None:
     """Earlier versions kept one 'Custom' prompt in settings; keep it as a named preset."""
     from core.config import settings

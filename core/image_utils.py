@@ -37,6 +37,24 @@ def pil_to_qpixmap(pil_img):
     # Without it, 'data' gets garbage collected, resulting in black/noise images.
     return QPixmap.fromImage(qimg.copy())
 
+def pil_to_qimage(pil_img) -> QImage:
+    """PIL -> QImage. Safe to call from worker threads (unlike QPixmap)."""
+    if pil_img.mode != "RGBA":
+        pil_img = pil_img.convert("RGBA")
+    data = pil_img.tobytes("raw", "RGBA")
+    return QImage(data, pil_img.width, pil_img.height, QImage.Format_RGBA8888).copy()
+
+
+def load_qimage(path, size=(300, 300)):
+    """Upright, downscaled QImage for display; returns (QImage, (orig_w, orig_h)). Thread-safe."""
+    with Image.open(path) as img:
+        img.draft("RGB", (size[0] * 2, size[1] * 2))
+        img = ImageOps.exif_transpose(img)
+        orig = img.size
+        img.thumbnail(size, Image.Resampling.LANCZOS)
+        return pil_to_qimage(img), orig
+
+
 def load_thumbnail(path, size=(300, 300)):
     """Efficiently load an upright thumbnail (JPEG draft decoding avoids full-size decodes)."""
     try:

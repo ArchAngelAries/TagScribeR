@@ -30,6 +30,8 @@ DEFAULTS: dict[str, Any] = {
     "ui.theme": "dark_teal.xml",
     "ui.thumbnail_size": 220,
     "ui.last_folder": "",
+    "ui.recent_folders": [],
+    "ui.recursive_scan": False,
     # Captions
     "caption.extension": ".txt",
     "caption.separator": ",",

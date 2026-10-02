@@ -304,6 +304,18 @@ captions for training. The panel shows how many images each holds and how many s
 renamed, never overwritten. Unsaved caption edits are saved first so the copy matches what you see.</li>
 <li><b>Double-click</b> a collection (or <i>Open in workspace</i>) to open it in every tab — e.g. to review its captions in the
 Gallery or caption the rest in Auto Caption.</li></ul>
+<h3>Export for training</h3>
+<p><b>🚀 Export for Training</b> (also in Ctrl+K) makes a training-ready copy of the selected images — or of everything shown
+if nothing is selected. Your originals are never changed and nothing in the output folder is overwritten.</p>
+<ul>
+<li><b>kohya-style subfolder</b> <code>&lt;repeats&gt;_&lt;concept&gt;</code> (e.g. <code>10_ohwx</code>) for sd-scripts and compatible trainers.</li>
+<li><b>Fit training buckets</b> scales each image to cover its nearest bucket at the chosen resolution and center-crops it;
+or limit the longest side; or keep sizes. Images that would need more than ~10% enlargement are skipped (and listed)
+unless you allow upscaling.</li>
+<li>Optional format conversion, <b>metadata stripping</b> (colour profile kept), and sequential renaming.</li>
+<li>Captions are copied next to each image (.txt or .caption). A <b>trigger word</b> can be added to the start of every
+caption (pre-filled from this folder's subject); images without captions are skipped by default.</li>
+</ul>
 """),
     "metadata": ("Metadata", "Tools", """
 <h2>Metadata</h2>

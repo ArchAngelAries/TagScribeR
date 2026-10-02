@@ -99,6 +99,12 @@ class DatasetsTab(QWidget):
         self.btn_add.setStyleSheet("background-color: #00b894; color: white; font-weight: bold; padding: 8px;")
         self.btn_add.clicked.connect(self.add_to_collection)
         rl.addWidget(self.btn_add)
+        self.btn_export = QPushButton("🚀 Export for Training…")
+        self.btn_export.setToolTip("Training-ready copy of the selected images (or all shown, if none selected): "
+                                   "bucket resize, metadata stripped, captions with trigger word, kohya folder layout")
+        self.btn_export.setStyleSheet("background-color: #6c5ce7; color: white; font-weight: bold; padding: 8px;")
+        self.btn_export.clicked.connect(self.export_for_training)
+        rl.addWidget(self.btn_export)
         rl.addWidget(hint_label("Images are copied with their captions. Name clashes are renamed — nothing in a "
                                 "collection is ever overwritten. Deleting moves files to the Recycle Bin."))
         splitter.addWidget(right)
@@ -219,6 +225,21 @@ class DatasetsTab(QWidget):
         name = self._current_name()
         if name:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(collections_root() / name)))
+
+    def export_for_training(self):
+        keys = self.browser.selected_keys() or self.browser.shown_keys()
+        if not keys:
+            QMessageBox.information(self, "Export for training", "Open a folder (or a collection) first.")
+            return
+        s = self.ctx.session
+        if s and any(s.get(k) and s.get(k).dirty for k in keys):
+            if not confirm(self, "Unsaved captions", "Some captions have unsaved edits. Save them before exporting?"):
+                return
+            if not self.ctx.save(self, keys):
+                return
+        from tabs.export_dialog import ExportDialog
+        subject = self.ctx.project.get("subject", "") if self.ctx.project else ""
+        ExportDialog(keys, subject, self).exec()
 
     def add_to_collection(self):
         name = self._current_name()

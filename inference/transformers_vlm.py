@@ -214,29 +214,32 @@ class TransformersVLM(Provider):
         return conv
 
     def generate(self, images: Sequence[Image.Image], request: CaptionRequest,
-                 cancel: threading.Event | None = None) -> list[str | Exception]:
+                 cancel: threading.Event | None = None,
+                 prompts: Sequence[str] | None = None) -> list[str | Exception]:
         if self.model is None:
             raise InferenceError("Model is not loaded.")
         import torch
+        prompts = list(prompts) if prompts else [request.prompt] * len(images)
         try:
-            return self._generate_batch(list(images), request, cancel)
+            return self._generate_batch(list(images), request, cancel, prompts)
         except torch.OutOfMemoryError:
             hardware.free_memory()
             if len(images) > 1:
                 log.warning("Out of memory with batch of %d; retrying one image at a time.", len(images))
                 out: list[str | Exception] = []
-                for img in images:
-                    out.extend(self.generate([img], request, cancel))
+                for img, p in zip(images, prompts):
+                    out.extend(self.generate([img], request, cancel, [p]))
                 return out
             return [InferenceError("Ran out of GPU memory on this image.",
                                    "Lower 'Max image size' or 'Max tokens', or use quantization.")]
 
     def _generate_batch(self, images: list[Image.Image], req: CaptionRequest,
-                        cancel: threading.Event | None) -> list[str | Exception]:
+                        cancel: threading.Event | None, prompts: list[str]) -> list[str | Exception]:
         import torch
         from transformers import StoppingCriteria, StoppingCriteriaList
 
-        convs = [self._conversation(img, req) for img in images]
+        from dataclasses import replace
+        convs = [self._conversation(img, replace(req, prompt=p)) for img, p in zip(images, prompts)]
         template_kwargs = {}
         template = getattr(self.processor, "chat_template", None) or ""
         if isinstance(template, str) and "enable_thinking" in template:

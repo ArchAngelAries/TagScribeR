@@ -48,6 +48,9 @@ DEFAULTS: dict[str, Any] = {
     "caption.custom_prompt": "",     # legacy (migrated to a named preset)
     "caption.working_prompt": "",    # current instruction text, possibly edited
     "caption.tag_output": False,
+    "caption.subject": "",
+    "caption.subject_first": False,
+    "caption.tag_hints": False,
     "caption.system_prompt": "",
     "caption.strip_thinking": True,
     "caption.top_k": 0,

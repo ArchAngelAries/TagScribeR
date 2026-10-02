@@ -160,7 +160,14 @@ class InspectorPanel(QWidget):
 
     def _update_counts(self) -> None:
         t = self.editor.toPlainText()
-        self.lbl_counts.setText(f"{len(captions.split_tags(t))} tags · {len(t.split())} words · {len(t)} chars")
+        tokens = captions.estimate_clip_tokens(t)
+        over = tokens > 75
+        self.lbl_counts.setText(f"{len(captions.split_tags(t))} tags · {len(t.split())} words · "
+                                f"≈{tokens} CLIP tokens" + (" — over SD1.5/SDXL's 75-token chunk" if over else ""))
+        self.lbl_counts.setStyleSheet(f"color: {'#fdcb6e' if over else '#777'}; font-size: 10px;")
+        self.lbl_counts.setToolTip("Estimated CLIP tokens. SD1.5/SDXL read captions in 75-token chunks — text past "
+                                   "the first chunk has less influence unless your trainer uses longer contexts. "
+                                   "Flux, Qwen-Image and other T5/LLM-encoder models accept much longer captions.")
 
     def _load_preview(self, e: Entry) -> None:
         key = e.key

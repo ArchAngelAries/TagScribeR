@@ -40,3 +40,24 @@ PROMPT_PRESETS: dict[str, str] = {
 }
 
 DEFAULT_PRESET = "Detailed Description"
+
+
+def build_prompt(base: str, *, subject: str = "", start_with_subject: bool = False, tags: str = "") -> str:
+    """Compose the final instruction for one image.
+
+    ``subject`` is a trigger word / name the caption should use instead of a
+    generic description. ``tags`` are reference tags (e.g. from a WD tagger) that
+    ground the model — the "tag → caption" recipe; the model is told they may be wrong.
+    """
+    parts = [base.strip()]
+    subject = subject.strip()
+    if subject:
+        parts.append(f'The main subject is "{subject}". Refer to them as "{subject}" instead of a generic '
+                     f'description such as "a woman", "a man" or "a person".')
+        if start_with_subject:
+            parts.append(f'Begin the caption with "{subject}".')
+    tags = tags.strip()
+    if tags:
+        parts.append("Reference tags for this image from an automatic tagger (they may contain mistakes; use only "
+                     f"what you can actually see): {tags}")
+    return "\n\n".join(p for p in parts if p)

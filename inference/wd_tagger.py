@@ -199,7 +199,8 @@ class WDTagger(Provider):
         return out
 
     def generate(self, images: Sequence[Image.Image], request: CaptionRequest,
-                 cancel: threading.Event | None = None) -> list[str | Exception]:
+                 cancel: threading.Event | None = None,
+                 prompts: Sequence[str] | None = None) -> list[str | Exception]:
         if cancel is not None and cancel.is_set():
             raise Cancelled()
         try:

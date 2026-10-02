@@ -36,11 +36,13 @@ class FakeProvider(Provider):
     def unload(self):
         self.is_loaded = False
 
-    def generate(self, images, request, cancel=None):
+    def generate(self, images, request, cancel=None, prompts=None):
         out = []
-        for img in images:
+        for i, img in enumerate(images):
             if img.size == (13, 13):
                 out.append(InferenceError("boom"))
+            elif prompts:
+                out.append(f"{prompts[i]} {img.size[0]}")
             else:
                 out.append(f"caption {img.size[0]}")
         return out
@@ -172,3 +174,29 @@ def test_format_tags():
     tags = format_tags(pred, TagFormat(blacklist=("smile",), include_rating=True))
     assert tags == ["general", "hatsune miku", "long hair", "^_^"]
     assert format_tags(pred, TagFormat(max_tags=1)) == ["hatsune miku"]
+
+
+def test_build_prompt_subject_and_tags():
+    from inference.prompts import build_prompt
+    p = build_prompt("Describe the image.", subject="ohwx woman", start_with_subject=True, tags="red hair, smile")
+    assert p.startswith("Describe the image.")
+    assert '"ohwx woman"' in p and 'Begin the caption with "ohwx woman"' in p
+    assert "red hair, smile" in p and "may contain mistakes" in p
+    assert build_prompt("Describe.") == "Describe."
+
+
+def test_per_image_prompts_and_prefix(tmp_path, fake_manager):
+    a = make_image(tmp_path / "a.png", size=(21, 20))
+    b = make_image(tmp_path / "b.png", size=(22, 20))
+    job = w.BatchJob(paths=[a, b], spec=spec(batch_size=2), request=CaptionRequest(prompt="base"),
+                     prompts={str(a): "hint-a", str(b): "hint-b"}, ensure_prefix="ohwx")
+    run_job(job)
+    assert caption_io.read_caption(a) == "ohwx, hint-a 21"
+    assert caption_io.read_caption(b) == "ohwx, hint-b 22"
+
+
+def test_prefix_not_duplicated(tmp_path, fake_manager):
+    a = make_image(tmp_path / "a.png", size=(21, 20))
+    run_job(w.BatchJob(paths=[a], spec=spec(), request=CaptionRequest(prompt="x"),
+                       prompts={str(a): "OHWX woman"}, ensure_prefix="ohwx"))
+    assert caption_io.read_caption(a) == "OHWX woman 21"

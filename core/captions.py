@@ -190,3 +190,19 @@ def clean_model_output(text: str) -> str:
         t = fence.group(1).strip()
     t = re.sub(r"^(sure|certainly|of course)[,!.][^\n]*?:\s*", "", t, flags=re.IGNORECASE)
     return t.strip()
+
+
+_TOKEN_RE = re.compile(r"[A-Za-z]+|\d|[^\sA-Za-z\d]")
+
+
+def estimate_clip_tokens(text: str) -> int:
+    """Approximate CLIP BPE token count (no tokenizer download needed).
+
+    Common English words are one token; long or rare words split into several
+    pieces (~1 per 6 letters); every digit and punctuation mark is its own token.
+    Good enough to warn about SD1.5 / SDXL's 75-token chunk limit.
+    """
+    total = 0
+    for tok in _TOKEN_RE.findall(text or ""):
+        total += max(1, -(-len(tok) // 6)) if tok.isalpha() else 1
+    return total

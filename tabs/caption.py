@@ -125,6 +125,24 @@ class CaptionTab(QWidget):
         self.system_input.textChanged.connect(self._update_preset_state)
         self.sec_system.body_layout.addWidget(self.system_input)
         lp.addWidget(self.sec_system)
+        self.sec_subject = CollapsibleSection("Subject & tag hints")
+        fs = QFormLayout()
+        self.inp_subject = QLineEdit()
+        self.inp_subject.setPlaceholderText("e.g. ohwx woman, or a character name")
+        self.inp_subject.setToolTip("The model calls the subject this instead of 'a woman' / 'a person'. "
+                                    "Use your LoRA trigger word.")
+        self.chk_subject_first = QCheckBox("Start every caption with it")
+        self.chk_subject_first.setToolTip("Guaranteed: if the model forgets, TagScribeR adds it at the start.")
+        self.chk_tag_hints = QCheckBox("Use each image's current tags as hints")
+        self.chk_tag_hints.setToolTip("Tag → caption recipe: run Auto Tag in the Gallery first; those tags then guide "
+                                      "the model toward accurate details. Pick 'Append' to keep the tags too.")
+        fs.addRow("Subject:", self.inp_subject)
+        fs.addRow(self.chk_subject_first)
+        fs.addRow(self.chk_tag_hints)
+        self.sec_subject.body_layout.addLayout(fs)
+        self.sec_subject.body_layout.addWidget(hint_label(
+            "Recipe: Gallery → Batch → Auto Tag the images, then caption here with tag hints on."))
+        lp.addWidget(self.sec_subject)
         rl.addWidget(grp_prompt)
 
         # 3. Generation
@@ -335,6 +353,11 @@ class CaptionTab(QWidget):
         self.prompt_input.setPlainText(working or data.get("prompt", ""))
         self.system_input.setPlainText(c.get("caption.system_prompt"))
         self.chk_tag_output.setChecked(c.get("caption.tag_output", data.get("output") == "tags"))
+        self.inp_subject.setText(c.get("caption.subject", ""))
+        self.chk_subject_first.setChecked(c.get("caption.subject_first", False))
+        self.chk_tag_hints.setChecked(c.get("caption.tag_hints", False))
+        if self.inp_subject.text() or self.chk_tag_hints.isChecked():
+            self.sec_subject.toggle.setChecked(True)
         self.spin_tokens.setValue(c.get("caption.max_tokens"))
         self.spin_temp.setValue(c.get("caption.temperature"))
         self.spin_top_p.setValue(c.get("caption.top_p"))
@@ -357,6 +380,9 @@ class CaptionTab(QWidget):
             "caption.prompt_template": self.combo_template.currentData() or DEFAULT_PRESET,
             "caption.working_prompt": self.prompt_input.toPlainText(),
             "caption.tag_output": self.chk_tag_output.isChecked(),
+            "caption.subject": self.inp_subject.text().strip(),
+            "caption.subject_first": self.chk_subject_first.isChecked(),
+            "caption.tag_hints": self.chk_tag_hints.isChecked(),
             "caption.system_prompt": self.system_input.toPlainText(),
             "caption.max_tokens": self.spin_tokens.value(),
             "caption.temperature": self.spin_temp.value(),
@@ -867,8 +893,19 @@ class CaptionTab(QWidget):
                                     repetition_penalty=self.spin_rep.value()),
             max_image_side=self.spin_max_side.value(), strip_thinking=self.cfg.get("caption.strip_thinking"))
         tag_mode = self.chk_tag_output.isChecked()
+        subject = self.inp_subject.text().strip()
+        prompts = None
+        if subject or self.chk_tag_hints.isChecked():
+            from inference.prompts import build_prompt
+            prompts = {}
+            for k in ordered:
+                e = session.get(k)
+                hints = e.text if (self.chk_tag_hints.isChecked() and e is not None) else ""
+                prompts[k] = build_prompt(prompt, subject=subject,
+                                          start_with_subject=self.chk_subject_first.isChecked(), tags=hints)
         job = BatchJob(paths=[Path(p) for p in ordered], spec=spec, request=request, save_mode=mode,
-                       tag_mode=tag_mode, title="Captioning")
+                       tag_mode=tag_mode, title="Captioning", prompts=prompts,
+                       ensure_prefix=subject if (subject and self.chk_subject_first.isChecked()) else "")
         self.ctx.set_job_state(ordered, JOB_QUEUED)
         self._job_keys = ordered
         self._job_generation = self.ctx.generation

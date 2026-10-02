@@ -101,5 +101,10 @@ class Provider(ABC):
 
     @abstractmethod
     def generate(self, images: Sequence[Image.Image], request: CaptionRequest,
-                 cancel: threading.Event | None = None) -> list[str | Exception]:
-        """Return one caption (or the Exception that prevented it) per image."""
+                 cancel: threading.Event | None = None,
+                 prompts: Sequence[str] | None = None) -> list[str | Exception]:
+        """Return one caption (or the Exception that prevented it) per image.
+
+        ``prompts`` optionally overrides ``request.prompt`` per image (e.g. when each
+        image's existing tags are passed as hints).
+        """

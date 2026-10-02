@@ -177,6 +177,19 @@ and rescanning only analyzes new or changed images.</p>
 </ol>
 <p>Results are saved to disk as each image finishes (with backups), and appear in the Gallery immediately. If some images
 fail, a report lists them with the reason; everything else is kept.</p>
+<h3>Subject &amp; tag hints (recipes)</h3>
+<ul>
+<li><b>Subject</b> — type your trigger word or character name (e.g. <code>ohwx woman</code>). The model then refers to
+the subject that way instead of “a woman”. <b>Start every caption with it</b> is guaranteed: if the model forgets,
+TagScribeR adds it.</li>
+<li><b>Use each image's current tags as hints</b> — the <i>tag → caption</i> recipe. First run <i>Gallery → Batch →
+Auto Tag</i>; then caption here. The tags ground the model on details (eye color, clothing, objects) and it writes a
+natural caption. Choose <i>Append</i> under “If captioned” to keep the tags and add the caption after them.</li>
+</ul>
+<h3>Caption length</h3>
+<p>The Gallery's caption editor shows an estimated <b>CLIP token</b> count. SD1.5 and SDXL read captions in 75-token
+chunks, so very long captions matter less there; Flux, Qwen-Image and other models with T5/LLM text encoders handle
+long natural captions well. Use a shorter preset (e.g. Concise Caption) for SDXL-family training if needed.</p>
 <h3>Speed tips</h3>
 <ul>
 <li>The model stays loaded between runs — only the first run pays the loading time.</li>

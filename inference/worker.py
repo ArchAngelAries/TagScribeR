@@ -66,6 +66,8 @@ class BatchJob:
     append_tags: tuple[str, ...] = ()
     caption_ext: str = ".txt"
     title: str = "Captioning"
+    prompts: dict[str, str] | None = None   # per-image prompt overrides (key: str(path))
+    ensure_prefix: str = ""                 # make every caption start with this (e.g. a trigger word)
 
 
 @dataclass
@@ -186,7 +188,9 @@ class BatchWorker(QObject):
                     self.status.emit(f"Processing {ok_paths[0].name}"
                                      + (f" (+{len(ok_paths) - 1})" if len(ok_paths) > 1 else "") + "…")
                     try:
-                        results = provider.generate(ok_images, job.request, self._cancel)
+                        per_image = ([job.prompts.get(str(p), job.request.prompt) for p in ok_paths]
+                                     if job.prompts else None)
+                        results = provider.generate(ok_images, job.request, self._cancel, per_image)
                     except Cancelled:
                         raise
                     except InferenceError as e:
@@ -207,6 +211,9 @@ class BatchWorker(QObject):
         self.item_failed.emit(str(path), reason)
 
     def _save(self, job: BatchJob, summary: JobSummary, path: Path, generated: str) -> None:
+        prefix = job.ensure_prefix.strip()
+        if prefix and not generated.lower().startswith(prefix.lower()):
+            generated = f"{prefix}, {generated}"
         if job.save_mode == SAVE_NONE:
             summary.done += 1
             self.item_done.emit(str(path), generated)

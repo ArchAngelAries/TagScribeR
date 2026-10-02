@@ -67,3 +67,10 @@ def test_clean_model_output():
 def test_looks_like_tags():
     assert c.looks_like_tags("1girl, solo, long hair")
     assert not c.looks_like_tags("A woman stands in a field of flowers at sunset.")
+
+
+def test_estimate_clip_tokens():
+    assert c.estimate_clip_tokens("") == 0
+    assert c.estimate_clip_tokens("1girl, solo, long hair, smile") == 9
+    long_caption = ", ".join(["detailed background"] * 30)
+    assert c.estimate_clip_tokens(long_caption) > 75

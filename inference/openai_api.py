@@ -133,10 +133,13 @@ class OpenAICompatible(Provider):
         return text.strip()
 
     def generate(self, images: Sequence[Image.Image], request: CaptionRequest,
-                 cancel: threading.Event | None = None) -> list[str | Exception]:
+                 cancel: threading.Event | None = None,
+                 prompts: Sequence[str] | None = None) -> list[str | Exception]:
         if self.client is None:
             raise InferenceError("API client not initialised.")
+        from dataclasses import replace
+        reqs = [replace(request, prompt=p) for p in prompts] if prompts else [request] * len(images)
         if len(images) == 1:
-            return [self._one(images[0], request, cancel)]
+            return [self._one(images[0], reqs[0], cancel)]
         with ThreadPoolExecutor(max_workers=len(images), thread_name_prefix="api") as pool:
-            return list(pool.map(lambda im: self._one(im, request, cancel), images))
+            return list(pool.map(lambda pair: self._one(pair[0], pair[1], cancel), zip(images, reqs)))

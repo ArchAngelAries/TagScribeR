@@ -16,7 +16,14 @@ core/                   UI-independent foundation (no Qt widgets, no torch at im
   caption_io.py         atomic caption reads/writes with daily backups
   fileops.py            collision-safe copies, Recycle Bin deletes
   dataset.py            natural-sorted folder scans, header-only image info
-  image_utils.py        Qt pixmap conversion + thumbnail decoding
+  image_utils.py        Qt image conversion + thumbnail decoding (QImage is thread-safe)
+  image_ops.py          Pillow transforms for the editor; saves keep ICC/EXIF, atomic
+  metadata.py           metadata audit + lossless JPEG/PNG/WebP writers, prompt extraction
+  health.py             duplicates (hash + dHash), blur, resolution, aspect buckets
+  dataset_session.py    in-memory dataset: dirty tracking, change-set transforms, saves
+  query.py              filter language (tag:, missing:, res:, ar:, flag: …)
+  presets.py            built-in + user presets (caption, tagger, authorship)
+  projects.py           per-folder settings (subject, preset, filters) in user_data/projects
   widgets.py            tag bubbles, flow layout, auto-tag dialog
 inference/              all AI work; tabs talk to it only via specs / worker
   base.py               Provider interface, ProviderSpec, GenerationParams, errors
@@ -26,13 +33,29 @@ inference/              all AI work; tabs talk to it only via specs / worker
   models.py             model catalog + discovery (app models/, Stability Matrix, extra dirs)
   manager.py            caches loaded models; one heavy VLM resident at a time
   worker.py             QThread batch worker: failure-tolerant, cancellable, saves as it goes
-  prompts.py            caption instruction presets
+  prompts.py            caption instruction presets + per-image prompt builder (subject, tag hints)
 tabs/                   UI only
-  common.py             shared widgets/helpers (thumbnail worker, collapsible section, dialogs)
-  gallery.py caption.py editor.py datasets.py metadata.py settings.py help.py
+  common.py             shared helpers (background tasks, quick-tag list, collapsible section, dialogs)
+  workspace/            shared dataset workspace used by every tab
+    context.py          WorkspaceContext: open folder, model, thumbnails, undo, saving, job/health state
+    browser.py          DatasetBrowser: toolbar + virtualized grid + filters + context menu
+    model.py delegate.py thumbs.py commands.py jobs.py panels.py
+  gallery.py caption.py editor.py datasets.py metadata.py settings.py
+  review.py             AI caption review window (diff, accept/reject)
+  palette.py            Ctrl+K command palette
+  help.py help_content.py   Help Center (searchable, context-aware)
 tools/install.py        environment installer (GPU detection + pinned torch builds)
 tests/                  pytest suite (core + inference, no GPU required)
 ```
+
+## Shared workspace
+
+`tabs/workspace/context.py` holds the one open dataset. Every tab embeds its own
+`DatasetBrowser`, with its own selection, filter and zoom, over the shared list
+model, so edits, unsaved state and undo history stay consistent everywhere.
+Captions written by AI jobs are picked up through `reload_from_disk`; entries the
+user is editing are never overwritten. Per-folder preferences live in
+`core/projects.py`. Global preferences stay in settings.json.
 
 ## Key design rules
 

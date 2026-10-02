@@ -20,17 +20,20 @@
 
 ## ✨ Key Features
 
-*   **🖼️ Gallery Studio:** multi-select grid, tag bubbles, quick tags, find-by-text filter and undo/redo for batch caption edits. Saves only what changed.
-*   **🤖 AI Captioning with current VLMs:** local models through Hugging Face Transformers: Qwen3-VL, Qwen3.5, Gemma 4, JoyCaption and any other image-text-to-text model.
-    *   **AMD first-class:** native ROCm on Windows (RX 7000/9000, Strix Halo), plus NVIDIA CUDA and CPU fallback. Precision is chosen from your GPU's capabilities (bf16 on RDNA3+).
-    *   **Fast batches:** models stay loaded between runs, images are batched on the GPU, and the next images are decoded while the GPU works.
-    *   **Safe:** choose to overwrite, skip, append to or prepend to existing captions. Overwritten captions are backed up. One bad image never stops a batch.
-    *   **API / server mode:** LM Studio, llama.cpp server, Ollama, KoboldCpp, vLLM or cloud APIs. Use this for GGUF models. API keys are stored in Windows Credential Manager.
-*   **🏷️ WD Auto-Tagging:** SmilingWolf v3 taggers (EVA02 / ViT / SwinV2 / ConvNext) with general and character thresholds, blacklist and trigger words.
+*   **🖼️ Dataset workspace (Gallery):** a fast grid that handles thousands of images, with zoomable thumbnails (Ctrl + mouse wheel), search-style filters (`tag:1girl -tag:blurry missing:caption res:<768`), saved filters per folder, sorting, multi-select editing of shared tags, batch tag and text operations, tag statistics with rename/merge, and undo/redo. One folder is shared by every tab, and nothing is written until you Save.
+*   **🤖 AI captioning with current VLMs:** local models through Hugging Face Transformers (Qwen3-VL, Qwen3.5, Gemma 4, JoyCaption and other image-text-to-text models) or any OpenAI-compatible server (LM Studio, llama.cpp, Ollama, cloud APIs; use this for GGUF models).
+    *   **AMD first-class:** native ROCm on Windows (RX 7000/9000, Strix Halo), plus NVIDIA CUDA and CPU fallback, with precision chosen from your GPU's capabilities.
+    *   **Fast and safe:** models stay loaded between runs and images are batched on the GPU. You choose to overwrite, skip, append or prepend; overwritten captions are backed up, and one bad image never stops a batch.
+    *   **Review before applying:** compare each AI caption with the current one (word-level diff), edit, and accept or reject per image or all at once.
+    *   **Recipes:** a subject / trigger word the model must use (optionally starting every caption), and each image's existing tags passed as hints (tag first, then caption).
+    *   **Presets:** built-in instruction presets plus your own, with save, rename, delete and import/export.
+*   **🏷️ WD auto-tagging:** SmilingWolf v3 taggers with general and character thresholds, blacklist, trigger words and named presets.
+*   **🩺 Dataset health:** exact and near-duplicate detection, blurry and low-resolution flags, and an aspect-ratio bucket preview for your training resolution.
+*   **✏️ Image Editor:** live before/after preview; rotate, flip, resize (never upscales by accident), crop to an exact size or an aspect ratio with focus points, convert. Copies are saved by default and keep their captions, and colour profiles and EXIF are preserved.
+*   **ℹ️ Metadata tools:** a privacy audit (GPS, device serials, AI prompts and workflows, editing history), lossless cleanup that never re-encodes pixels, honest authorship templates, and embedded A1111/ComfyUI/NovelAI/InvokeAI prompts turned into captions.
+*   **📂 Dataset Collections:** gather finished images and captions into training folders. Nothing is overwritten, and deletes go to the Recycle Bin.
+*   **⌨️ Built for speed and accessibility:** a Ctrl+K command palette, a context-aware Help Center (F1), tooltips everywhere, and interface scaling up to 200%.
 *   **📁 Model discovery:** finds models in `models/`, in your **Stability Matrix** shared `Models/LLM` folder, and in any folders you add.
-*   **✏️ Batch Editor:** resize, crop, rotate and convert formats. Copies are saved by default and keep their captions. EXIF rotation is respected.
-*   **📂 Dataset Collections:** gather images and captions into training folders without overwriting anything. Deletes go to the Recycle Bin.
-*   **ℹ️ Metadata Editor:** view and edit EXIF / PNG text, including Stable Diffusion generation parameters.
 
 ---
 

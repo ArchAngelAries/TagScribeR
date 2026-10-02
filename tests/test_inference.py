@@ -200,3 +200,36 @@ def test_prefix_not_duplicated(tmp_path, fake_manager):
     run_job(w.BatchJob(paths=[a], spec=spec(), request=CaptionRequest(prompt="x"),
                        prompts={str(a): "OHWX woman"}, ensure_prefix="ohwx"))
     assert caption_io.read_caption(a) == "OHWX woman 21"
+
+
+def test_job_handle_delivers_on_ui_thread(tmp_path, fake_manager, qapp):
+    """Lambdas connected to job signals must run on the UI thread (regression)."""
+    import time
+    from PySide6.QtCore import QThread
+    a = make_image(tmp_path / "a.png")
+    handle = w.start_job(w.BatchJob(paths=[a], spec=spec(), request=CaptionRequest(prompt="x")))
+    seen = {}
+    ui_thread = qapp.thread()
+    handle.item_done.connect(lambda p, t: seen.setdefault("item", QThread.currentThread() is ui_thread))
+    handle.finished.connect(lambda s: seen.setdefault("finished", QThread.currentThread() is ui_thread))
+    end = time.time() + 10
+    while "finished" not in seen and time.time() < end:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert seen == {"item": True, "finished": True}
+
+
+def test_file_job_handle_delivers_on_ui_thread(tmp_path, qapp):
+    import time
+    from PySide6.QtCore import QThread
+    from tabs.workspace.jobs import start_file_job
+    handle = start_file_job(["x", "y"], lambda k: None, "t")
+    seen = []
+    handle.progress.connect(lambda d, t: seen.append(QThread.currentThread() is qapp.thread()))
+    done = {}
+    handle.finished.connect(lambda s: done.setdefault("ok", QThread.currentThread() is qapp.thread()))
+    end = time.time() + 10
+    while not done and time.time() < end:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert done == {"ok": True} and seen and all(seen)

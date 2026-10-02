@@ -134,6 +134,8 @@ class MainWindow(QMainWindow):
             Command("Review AI caption proposals", lambda: (self._goto(1), self.tab_caption.open_review()), "AI",
                     enabled=lambda: bool(self.tab_caption.pending)),
             Command("Free GPU memory (unload model)", self.tab_caption.force_cleanup, "AI", keywords="vram unload"),
+            Command("Export for training…", lambda: (self._goto(3), self.tab_datasets.export_for_training()),
+                    "Dataset", keywords="kohya buckets prepare", enabled=has_folder),
             Command("Scan dataset health", lambda: (self._goto(0), self.tab_gallery.side.setCurrentIndex(3),
                                                    self.tab_gallery.scan_health()),
                     "Dataset", keywords="duplicates blur buckets", enabled=has_folder),
@@ -175,6 +177,33 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
+def preload_ai_runtime(app) -> None:
+    """Import PyTorch once on the main thread, before any background work starts.
+
+    A first-time torch import on a worker thread while the main thread is busy
+    importing other modules can fail halfway (torch's operator registry ends up
+    inconsistent), leaving a half-initialised module behind. Importing it here,
+    with nothing else running, makes every later use safe — and the first model
+    load faster.
+    """
+    if not hardware.torch_installed():
+        return
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QSplashScreen
+    from PySide6.QtGui import QPixmap
+    logo = paths.resource("logo.png")
+    pm = QPixmap(str(logo)).scaled(360, 360, Qt.KeepAspectRatio, Qt.SmoothTransformation) if logo else QPixmap(360, 120)
+    splash = QSplashScreen(pm)
+    splash.showMessage("Loading AI runtime…", Qt.AlignBottom | Qt.AlignHCenter, Qt.white)
+    splash.show()
+    app.processEvents()
+    try:
+        hardware.detect_devices()  # imports torch (under the hardware lock) and caches the device list
+    except Exception as e:  # never block startup; AI features report the problem when used
+        log.warning("AI runtime preload failed: %s", e)
+    splash.close()
+
+
 def main():
     scale = settings().get("ui.scale")
     if scale and abs(scale - 1.0) > 0.01 and "QT_SCALE_FACTOR" not in os.environ:
@@ -190,6 +219,7 @@ def main():
     if icon:
         app.setWindowIcon(QIcon(str(icon)))
     apply_theme(settings().get("ui.theme"))
+    preload_ai_runtime(app)
     window = MainWindow()
     window.show()
     log.info("TagScribeR started")

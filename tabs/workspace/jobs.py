@@ -60,11 +60,30 @@ class FileJob(QObject):
 _running: set = set()
 
 
-def start_file_job(items: list[str], fn, title: str) -> FileJob:
+class FileJobHandle(QObject):
+    """UI-thread relay for a FileJob (see inference.worker.BatchHandle for why)."""
+    progress = Signal(int, int)
+    item_done = Signal(str, str)
+    item_failed = Signal(str, str)
+    item_skipped = Signal(str, str)
+    finished = Signal(object)
+
+    def __init__(self, job: FileJob):
+        super().__init__()
+        self._job = job
+        for name in ("progress", "item_done", "item_failed", "item_skipped", "finished"):
+            getattr(job, name).connect(getattr(self, name))
+
+    def cancel(self) -> None:
+        self._job.cancel()
+
+
+def start_file_job(items: list[str], fn, title: str) -> FileJobHandle:
     thread = QThread()
     job = FileJob(items, fn, title)
+    handle = FileJobHandle(job)
     job.moveToThread(thread)
-    entry = (thread, job)
+    entry = (thread, job, handle)
     _running.add(entry)
     thread.started.connect(job.run)
     job.finished.connect(thread.quit)
@@ -76,15 +95,15 @@ def start_file_job(items: list[str], fn, title: str) -> FileJob:
 
     thread.finished.connect(cleanup)
     thread.start()
-    return job
+    return handle
 
 
 def any_running() -> bool:
-    return any(t.isRunning() for t, _ in _running)
+    return any(t.isRunning() for t, *_ in _running)
 
 
 def cancel_all(wait_ms: int = 15000) -> None:
-    for _, j in list(_running):
+    for _t, j, *_ in list(_running):
         j.cancel()
-    for t, _ in list(_running):
+    for t, *_ in list(_running):
         t.wait(wait_ms)

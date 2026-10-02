@@ -234,16 +234,50 @@ class BatchWorker(QObject):
 _running: set[tuple[QThread, BatchWorker]] = set()
 
 
-def start_job(job: BatchJob) -> BatchWorker:
-    """Start ``job`` on its own QThread. Connect to the returned worker's signals
-    immediately (they are queued, so nothing is missed). References are kept
-    until the thread finishes, so callers can't accidentally destroy a running
-    QThread."""
+class BatchHandle(QObject):
+    """UI-thread relay for a BatchWorker running on another thread.
+
+    Qt runs plain Python callables (lambdas, nested functions) connected to a
+    worker's signals on the *worker's* thread. Every signal is therefore re-emitted
+    from this object, which lives on the thread that started the job, so anything
+    connected to the handle — lambdas included — safely runs on the UI thread.
+    """
+    status = Signal(str)
+    progress = Signal(int, int)
+    item_done = Signal(str, str)
+    item_failed = Signal(str, str)
+    item_skipped = Signal(str, str)
+    items_started = Signal(list)
+    finished = Signal(object)
+
+    def __init__(self, worker: BatchWorker):
+        super().__init__()
+        self._worker = worker
+        for name in ("status", "progress", "item_done", "item_failed", "item_skipped", "items_started", "finished"):
+            getattr(worker, name).connect(getattr(self, name))  # cross-thread signal->signal: queued
+
+    def cancel(self) -> None:
+        self._worker.cancel()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._worker.cancelled
+
+    @property
+    def job(self) -> BatchJob:
+        return self._worker.job
+
+
+def start_job(job: BatchJob) -> BatchHandle:
+    """Start ``job`` on its own QThread and return a UI-thread handle with the
+    worker's signals. References are kept until the thread finishes, so callers
+    can't accidentally destroy a running QThread."""
     thread = QThread()
     thread.setObjectName(f"job-{job.title}")
     worker = BatchWorker(job)
+    handle = BatchHandle(worker)   # created on the caller's (UI) thread, before the move
     worker.moveToThread(thread)
-    entry = (thread, worker)
+    entry = (thread, worker, handle)
     _running.add(entry)
     thread.started.connect(worker.run)
     worker.finished.connect(thread.quit)
@@ -255,16 +289,16 @@ def start_job(job: BatchJob) -> BatchWorker:
 
     thread.finished.connect(_cleanup)
     thread.start()
-    return worker
+    return handle
 
 
 def any_running() -> bool:
-    return any(t.isRunning() for t, _ in _running)
+    return any(t.isRunning() for t, *_ in _running)
 
 
 def cancel_all(wait_ms: int = 15000) -> None:
     """Cancel every job and wait for threads to finish (used on app exit)."""
-    for _, w in list(_running):
+    for _t, w, *_ in list(_running):
         w.cancel()
-    for t, _ in list(_running):
+    for t, *_ in list(_running):
         t.wait(wait_ms)

@@ -46,7 +46,8 @@ class MainWindow(QMainWindow):
         sidebar_layout = QVBoxLayout(sidebar_container)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         self.sidebar = QListWidget()
-        for label in ("🖼️ Gallery", "🤖 Auto Caption", "✏️ Image Editor", "📂 Datasets", "ℹ️ Metadata", "⚙️ Settings"):
+        for label in ("🖼️ Gallery", "🤖 Auto Caption", "✏️ Image Editor", "📂 Datasets", "ℹ️ Metadata", "🎓 Train",
+                      "⚙️ Settings"):
             self.sidebar.addItem(label)
         self.sidebar.currentRowChanged.connect(self.change_tab)
         self.sidebar.setStyleSheet("""
@@ -70,10 +71,12 @@ class MainWindow(QMainWindow):
         self.tab_editor = EditorTab()
         self.tab_datasets = DatasetsTab()
         self.tab_metadata = MetadataTab()
+        from tabs.train import TrainTab
+        self.tab_train = TrainTab()
         self.tab_settings = SettingsTab()
         self.tab_gallery.image_selected.connect(self.tab_metadata.load_metadata)
         for tab in (self.tab_gallery, self.tab_caption, self.tab_editor, self.tab_datasets,
-                    self.tab_metadata, self.tab_settings):
+                    self.tab_metadata, self.tab_train, self.tab_settings):
             self.stack.addWidget(tab)
 
         main_layout.addWidget(sidebar_container)
@@ -89,7 +92,7 @@ class MainWindow(QMainWindow):
         HelpDialog.open_topic(self, topic or TAB_TOPICS[self.stack.currentIndex()])
 
     def setup_hotkeys(self):
-        for i in range(6):
+        for i in range(7):
             QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self).activated.connect(lambda idx=i: self.sidebar.setCurrentRow(idx))
         QShortcut(QKeySequence("F1"), self).activated.connect(self.show_help)
         for seq in ("Ctrl+K", "Ctrl+Shift+P"):
@@ -114,7 +117,7 @@ class MainWindow(QMainWindow):
         b = self._active_browser
         cmds = [Command(name, lambda i=i: self._goto(i), "Go to", f"Ctrl+{i + 1}")
                 for i, name in enumerate(("Gallery", "Auto Caption", "Image Editor", "Datasets", "Metadata",
-                                          "Settings"))]
+                                          "Train", "Settings"))]
         cmds += [
             Command("Open folder…", lambda: b().select_folder(), "File", "Ctrl+O"),
             Command("Save changed captions", lambda: b().save(), "File", "Ctrl+S", enabled=has_folder),
@@ -136,6 +139,13 @@ class MainWindow(QMainWindow):
             Command("Free GPU memory (unload model)", self.tab_caption.force_cleanup, "AI", keywords="vram unload"),
             Command("Export for training…", lambda: (self._goto(3), self.tab_datasets.export_for_training()),
                     "Dataset", keywords="kohya buckets prepare", enabled=has_folder),
+            Command("Start training (or queue)", lambda: (self._goto(5), self.tab_train.start()), "Train",
+                    keywords="lora fizgig fine-tune", enabled=has_folder),
+            Command("Pause training after this epoch", self.tab_train.pause, "Train",
+                    enabled=lambda: self.tab_train.state == "running"),
+            Command("Problem Images (training)", lambda: (self._goto(5), self.tab_train.open_problem_images()),
+                    "Train", keywords="loss watch stuck"),
+            Command("Open training run folder", self.tab_train.open_run_folder, "Train"),
             Command("Scan dataset health", lambda: (self._goto(0), self.tab_gallery.side.setCurrentIndex(3),
                                                    self.tab_gallery.scan_health()),
                     "Dataset", keywords="duplicates blur buckets", enabled=has_folder),
@@ -163,6 +173,15 @@ class MainWindow(QMainWindow):
         if not workspace().confirm_discard(self):  # one shared dataset, so one prompt
             event.ignore()
             return
+        from tabs import train as train_tab
+        if train_tab.any_running():
+            reply = QMessageBox.question(
+                self, "Training running", "A training run is going. Quitting stops it now (epochs already saved "
+                "are kept; use Pause in the Train tab to stop cleanly). Quit anyway?", QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                event.ignore()
+                return
+            self.tab_train.shutdown()
         from tabs.workspace import jobs
         if worker.any_running() or jobs.any_running():
             reply = QMessageBox.question(

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 HOTKEYS: list[tuple[str, str, str]] = [
     # scope, keys, action
-    ("Global", "Ctrl+1 … Ctrl+6", "Switch tab (Gallery, Auto Caption, Editor, Datasets, Metadata, Settings)"),
+    ("Global", "Ctrl+1 … Ctrl+7", "Switch tab (Gallery, Auto Caption, Editor, Datasets, Metadata, Train, Settings)"),
     ("Global", "F1", "Help for the current tab"),
     ("Global", "Ctrl+K  (or Ctrl+Shift+P)", "Command palette — type to find and run any action, filter or help topic"),
     ("Image grid", "Click / Ctrl+Click / Shift+Click", "Select / add to selection / select a range"),
@@ -28,6 +28,7 @@ HOTKEYS: list[tuple[str, str, str]] = [
     ("Auto Caption", "Esc", "Abort (images already finished stay saved)"),
     ("Image Editor", "Ctrl+R / Ctrl+Shift+R", "Rotate selected right / left"),
     ("Datasets", "Ctrl+N", "New collection"),
+    ("Train", "Ctrl+Enter", "Start training (queues it while a run is going)"),
     ("Datasets", "F5", "Refresh collections"),
 ]
 
@@ -62,6 +63,7 @@ every tab, so you can switch between tagging, AI captioning and editing without 
 <li><b>Refine</b> captions in <i>Gallery → Inspect</i> (one image) or <i>Gallery → Batch</i> (many images at once).</li>
 <li><b>Save</b> with Ctrl+S. Nothing is written to disk before you save, and every overwritten caption is backed up first.</li>
 <li><b>Collect</b> your finished images into a training folder with <i>📦 Copy to Collection</i>.</li>
+<li><b>Train</b> a LoRA on the open folder in the <i>Train</i> tab (Ctrl+6). See <i>Training a LoRA</i>.</li>
 </ol>
 <p>Captions are stored the way trainers expect: <code>image.png</code> + <code>image.txt</code> in the same folder.</p>
 <p><b>Tip:</b> press <b>Ctrl+K</b> anywhere for the command palette — type a few letters (e.g. “miss cap”, “health”,
@@ -353,6 +355,124 @@ thumbnails and slightly larger caption text.</li>
 <li>Every tool can be driven from the keyboard — see <i>Keyboard shortcuts</i>.</li>
 </ul>
 """),
+    "train": ("Training a LoRA", "Train", """
+<h2>Training a LoRA (Train tab)</h2>
+<p>TagScribeR trains LoRAs natively, using the same training engine, presets and adaptive learning rate as the
+Fizgig trainer. It trains the dataset folder that's open in the workspace, so the captions you just fixed are the
+ones it learns.</p>
+<ol>
+<li><b>Open and caption your dataset</b> (Gallery / Auto Caption). Every image needs a caption file, so filter
+<code>missing:caption</code> to find gaps. Put your trigger word in the captions (Auto Caption → Subject).</li>
+<li><b>Pick a family</b> (e.g. Qwen Image 2.1) and set its <b>Model files</b> once. <i>Get</i> opens the download page;
+the paths are remembered.</li>
+<li><b>Load a preset.</b> ✨ presets are measured recipes; the first one is applied on your first visit.</li>
+<li>Set the <b>LoRA name</b> (and output folder), check the <b>preview prompts</b> (Samples section), then
+<b>Start Training</b> (Ctrl+Enter).</li>
+<li>Watch the <b>Loss</b> chart and the <b>Samples</b>. Every saved epoch is a usable LoRA: pick the best-looking one,
+not necessarily the last.</li>
+</ol>
+<h3>What happens when you press Start</h3>
+<ul>
+<li>The settings are checked first (missing captions or model files stop it with a clear message).</li>
+<li>They are frozen into a run folder (<code>&lt;output&gt;/&lt;LoRA name&gt;/</code>), so changing the tab during a run
+can't affect it.</li>
+<li>Training runs as separate processes, so the app stays responsive and a crash can't take it down.</li>
+<li>Stages: <b>caching latents</b> → <b>caching captions</b> → <b>training</b>. Caching only encodes what
+changed since the last run.</li>
+</ul>
+<h3>Pause, Stop, Resume, Queue</h3>
+<ul>
+<li><b>Pause</b> finishes the current epoch, saves a resumable state and exits cleanly; <b>Resume</b> continues exactly
+there. <b>Stop</b> ends the run immediately (saved epochs stay).</li>
+<li>To train more epochs on a finished LoRA: raise <i>Epochs</i>, click <i>Latest</i> under Resume, Start.</li>
+<li>Start while a run is going <b>queues</b> the current settings; queued runs start one after another. The queue is
+never started automatically when the app opens.</li>
+<li><b>Last run</b> reloads the settings of the most recent run.</li>
+</ul>
+<p>See also: <i>Training presets</i>, <i>Adaptive learning rate</i>, <i>Problem images</i>, <i>Training previews</i>,
+<i>Training memory &amp; speed</i>.</p>
+"""),
+    "train_presets": ("Training presets", "Train", """
+<h2>Training presets</h2>
+<ul>
+<li><b>✨ Built-in presets</b> come with each family. They are tested recipes (rank, learning rate or Adaptive LR range,
+epochs, resolution) and can't be changed or deleted.</li>
+<li><b>Save…</b> stores the current settings as your own preset, in
+<code>user_data/training_presets/&lt;family&gt;/</code>. Presets never contain the model family, so loading one can't
+switch your model. Preview settings and Resume aren't part of presets either.</li>
+<li><b>Import…</b> adds a preset file. Fizgig preset files work as they are (same setting names).</li>
+<li>When a preset holds a value this family doesn't offer (an optimizer, a learning-rate bound, a precision), that
+setting is kept as it was and the console says so. Settings this version doesn't know are ignored.</li>
+</ul>
+"""),
+    "train_lr": ("Adaptive learning rate", "Train", """
+<h2>Adaptive learning rate</h2>
+<p>Instead of one fixed learning rate, you give a <b>Min</b> and <b>Max</b>. The run starts in the geometric middle
+(√(min × max), e.g. 2.83e-4 for 2e-4–4e-4) and adjusts once per epoch:</p>
+<ul>
+<li><b>Probe up ×1.25</b> after two epochs in a row with a new best loss.</li>
+<li><b>Reduce ×0.5</b> when the loss stops improving (after 1 epoch in epochs 2–3, otherwise 2).</li>
+<li><b>Reduce + rollback</b> on instability: more than half the steps had their gradients clipped, or the LoRA's weights
+grew more than 30% in one epoch. The weights are also blended 70/30 back toward the previous epoch, and the optimizer
+is restored.</li>
+<li>It never leaves the Min–Max range. While it's on, the Learning rate box and the scheduler are ignored. The Loss
+chart marks its decisions (↑ ↓ !).</li>
+</ul>
+<p>Optimizers that set their own rate (Automagic v3) switch Adaptive LR off. Lion needs about a tenth of an AdamW
+rate.</p>
+"""),
+    "train_watch": ("Problem images (loss watch)", "Train", """
+<h2>Problem images</h2>
+<p><b>Detect problem images</b> follows each image's loss through the run. The loss is corrected for how noisy each
+step was, so images are compared fairly. Open <b>Problem Images</b> during a run to see the verdicts:</p>
+<ul>
+<li><b>stuck</b>: consistently harder than the rest and not improving. Usually a wrong or misleading caption, or an
+image that doesn't fit the set.</li>
+<li><b>suspect</b>: unusually high loss. <b>exhausted</b>: learned early, then stopped improving.
+<b>easy</b> / <b>mid</b> / <b>learning</b>: fine.</li>
+<li>Edit a caption there and click <b>Save fix</b>. The caption file is saved (with a backup), and the run re-encodes
+it at the next epoch.</li>
+<li><b>Per-image adaptive LR</b> trains stuck images more gently (×0.5 down to ×0.1) and easy ones slightly harder
+(×1.1).</li>
+<li><b>Auto-recaption stuck images</b> re-captions them between epochs with the captioner you choose (a local vision
+model or the WD tagger). After two failed attempts an image is set aside.</li>
+<li>When nothing has improved for a while, the window says training has <b>plateaued</b> and estimates the best
+epoch.</li>
+</ul>
+<p>These need <b>batch size 1</b>.</p>
+"""),
+    "train_samples": ("Training previews", "Train", """
+<h2>Training previews</h2>
+<ul>
+<li>Previews are rendered with the LoRA as it is after each epoch (Samples section: prompts one per line, size, steps,
+seed, CFG). <i>Preview before training</i> shows the base model for comparison.</li>
+<li>They use the averaged (EMA) weights and leave the family's training adapter off, so you see what your saved file
+will do.</li>
+<li>On cards under 20 GB the preview size is capped at 768 px and the model steps aside for decoding.</li>
+<li>A failed preview (e.g. out of memory) turns previews off for the rest of the run. Training continues.</li>
+<li><b>Preview override…</b> renders a different prompt at the next preview round without restarting.</li>
+<li>Each saved checkpoint carries its own epoch's preview as its thumbnail (shown by ComfyUI's model browser).</li>
+<li>A family's <b>Turbo LoRA</b> (if you set its file) makes previews much faster. Strength 0 turns it off; -1 uses the
+family default.</li>
+</ul>
+"""),
+    "train_memory": ("Training memory & speed", "Train", """
+<h2>Memory &amp; speed</h2>
+<ul>
+<li><b>Base precision: Auto</b> chooses bf16, INT8 or 4-bit NF4 from your free VRAM and resolution. It picks the
+most precise base that fits, because quantising costs almost no speed.</li>
+<li><b>Blocks to swap</b> streams parts of the model through system RAM to fit smaller cards (25–65% slower). Auto
+uses as few as fit.</li>
+<li><b>Target megapixels</b> sets the training resolution. Higher is sharper but slower and needs more memory.</li>
+<li><b>Gradient accumulation</b> gives a bigger effective batch without more memory.</li>
+<li><b>AdamW 8-bit</b> needs the <code>bitsandbytes</code> package. Without it, runs fall back to AdamW with a
+warning.</li>
+<li>Close other apps holding VRAM (ComfyUI, Forge) before training, and use <b>Free GPU memory</b> in Auto
+Caption.</li>
+<li>Photos that are rotated only by EXIF are trained as stored, so the pre-start check warns about them. Edit and save
+them in the Image Editor first.</li>
+</ul>
+"""),
     "settings": ("Settings", "Settings", """
 <h2>Settings</h2>
 <ul>
@@ -383,4 +503,4 @@ Use <i>List</i> to test.</li>
 }
 
 # Which topic F1 opens for each main tab index.
-TAB_TOPICS = ["gallery", "caption", "editor", "datasets", "metadata", "settings"]
+TAB_TOPICS = ["gallery", "caption", "editor", "datasets", "metadata", "train", "settings"]

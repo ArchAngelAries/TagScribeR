@@ -83,7 +83,7 @@ class HelpDialog(QDialog):
     def _populate(self):
         self.list.clear()
         group = None
-        order = ["Basics", "Gallery", "AI", "Tools", "Settings", "Help"]
+        order = ["Basics", "Gallery", "AI", "Tools", "Train", "Settings", "Help"]
         for g in order:
             for tid, (title, tgroup, _html) in self.topics.items():
                 if tgroup != g:

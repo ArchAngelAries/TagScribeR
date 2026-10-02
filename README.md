@@ -31,6 +31,7 @@
 *   **🩺 Dataset health:** exact and near-duplicate detection, blurry and low-resolution flags, and an aspect-ratio bucket preview for your training resolution.
 *   **✏️ Image Editor:** live before/after preview; rotate, flip, resize (never upscales by accident), crop to an exact size or an aspect ratio with focus points, convert. Copies are saved by default and keep their captions, and colour profiles and EXIF are preserved.
 *   **ℹ️ Metadata tools:** a privacy audit (GPS, device serials, AI prompts and workflows, editing history), lossless cleanup that never re-encodes pixels, honest authorship templates, and embedded A1111/ComfyUI/NovelAI/InvokeAI prompts turned into captions.
+*   **🎓 Native LoRA training (Train tab, experimental):** train a LoRA on the open dataset with the [Fizgig](https://github.com/shootthesound/Fizgig) trainer's engine: its presets (plus your own, and Fizgig preset files), Adaptive LR, EMA, a per-image loss watch with a Problem Images window and AI recaptioning of stuck images, live sample previews, pause / resume and a run queue. First family: Qwen Image 2.1; SDXL / Pony / Illustrious / NoobAI, Anima, Krea 2, MiniMax H3 and FLUX.2 Klein are planned ([plan](docs/TRAINING_PLAN.md)).
 *   **📂 Dataset Collections:** gather finished images and captions into training folders. Nothing is overwritten, and deletes go to the Recycle Bin.
 *   **⌨️ Built for speed and accessibility:** a Ctrl+K command palette, a context-aware Help Center (F1), tooltips everywhere, and interface scaling up to 200%.
 *   **📁 Model discovery:** finds models in `models/`, in your **Stability Matrix** shared `Models/LLM` folder, and in any folders you add.
@@ -99,6 +100,7 @@ Launch with **`start.bat`** (or `./start.sh`). Update with **`update.bat`**: it 
 *   **First image is slow (~20 s) on AMD:** one-time kernel selection after a model loads. Later images take about 1 s.
 *   **Qwen3.5 logs "falling back to its reference PyTorch implementation":** expected on ROCm. Its linear-attention kernels have no AMD build yet. Output is correct. Use batch size 2–4, or Qwen3-VL for top speed.
 *   **Out of GPU memory:** lower *Max image size* (Advanced sampling), use a smaller model, or close ComfyUI/Forge, which keep models in VRAM. TagScribeR automatically retries a failed batch one image at a time.
+*   **Training:** each run lives in `<output folder>/<LoRA name>/` (checkpoints, `sample/`, `loss_log/`, `run.log`). AdamW 8-bit needs the `bitsandbytes` package; without it runs fall back to AdamW. Help → *Training a LoRA* explains every setting.
 *   **A model says it needs custom code:** enable *Allow custom model code* in Model options, but only for sources you trust.
 
 Architecture and developer notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Run the tests with `venv\Scripts\python -m pytest`.
@@ -109,7 +111,7 @@ Architecture and developer notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). 
 
 *   **GUI Framework:** [PySide6](https://pypi.org/project/PySide6/) & [qt-material](https://pypi.org/project/qt-material/)
 *   **AI Backend:** [HuggingFace Transformers](https://huggingface.co/docs/transformers/index), [ONNX Runtime](https://onnxruntime.ai/), [WD Taggers](https://huggingface.co/SmilingWolf)
-*   **Environment conventions:** aligned with the [Fizgig](https://github.com/shootthesound/Fizgig) trainer's ROCm stack
+*   **Training engine:** ported from [Fizgig](https://github.com/shootthesound/Fizgig) (Apache-2.0, © 2026 Peter Neill), whose ROCm stack the environment also follows. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 *   **AMD Support:** [ROCm for Windows](https://github.com/ROCm/TheRock)
 
 Created by **ArchAngelAries**. Code Assisted by **Google's Gemini Pro 3**.

@@ -21,6 +21,16 @@ for _d in FAMILIES.values():
     _check(_d)
 
 
+def _extra_from_env() -> None:
+    """TAGSCRIBER_TRAINING_EXTRA_FAMILIES="pkg.module:function,...": call each to register extra families in child
+    processes (the CPU test family uses this; nothing in the app sets it)."""
+    import importlib
+    import os
+    for spec in filter(None, os.environ.get("TAGSCRIBER_TRAINING_EXTRA_FAMILIES", "").split(",")):
+        mod, _, fn = spec.strip().partition(":")
+        getattr(importlib.import_module(mod), fn)()
+
+
 def register(desc: FamilyDescription) -> None:
     """Add a family at runtime (tests register a tiny CPU family this way)."""
     _check(desc)
@@ -43,3 +53,6 @@ def training_families(include_hidden: bool = False) -> list:
     """Descriptions whose driver exists (shown in the Train tab's family picker). Families whose key starts with
     "_" (test families) are hidden unless asked for."""
     return [d for d in FAMILIES.values() if d.training_ready and (include_hidden or not d.key.startswith("_"))]
+
+
+_extra_from_env()

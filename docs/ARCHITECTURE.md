@@ -49,6 +49,8 @@ tabs/                   UI only
     browser.py          DatasetBrowser: toolbar + virtualized grid + filters + context menu
     model.py delegate.py thumbs.py commands.py jobs.py panels.py
   gallery.py caption.py editor.py datasets.py metadata.py settings.py
+  train.py train_dialogs.py   Train tab: presets, parameters, run panel (QProcess stages), loss chart,
+                        samples, queue, Problem Images, preview override
   review.py             AI caption review window (diff, accept/reject)
   palette.py            Ctrl+K command palette
   help.py help_content.py   Help Center (searchable, context-aware)

@@ -84,7 +84,16 @@ The options as originally presented:
 
   This is verified by unit tests and CPU smoke tests on a tiny random family. The ported Qwen DiT and driver also
   run forward and backward on a 2-layer random config.
-- **T1 Train tab:** next.
+- **T1 Train tab: done (2026-10-02).** `tabs/train.py` covers:
+  - the family picker, presets (load, save, delete, import, last run) and the model-file rows (with Get links);
+  - the parameter groups, built from `training/params.py` with tooltips, and the auto-recaption captioner;
+  - start, queue, pause, resume and stop, running the stages as QProcess child processes;
+  - the loss chart (with the Adaptive LR marks), the samples gallery, the console and `run.log`;
+  - Problem Images (caption fixes) and the preview override.
+
+  It has Help Center topics, Ctrl+6, command-palette entries and a quit guard. It is verified by an offscreen
+  test that runs the real child processes on the CPU test family, including pause and resume.
+- **T2 SDXL family:** next.
 
 ## 6. Verification policy
 

@@ -12,8 +12,10 @@ from tests.conftest import make_image
 
 @pytest.fixture(scope="module", autouse=True)
 def qapp():
-    from PySide6.QtCore import QCoreApplication
-    app = QCoreApplication.instance() or QCoreApplication([])
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication   # a full app: widget tests later in the session reuse it
+    app = QApplication.instance() or QApplication([])
     yield app
 
 

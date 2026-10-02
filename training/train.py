@@ -663,6 +663,8 @@ def main(argv=None):
         kw["dataset_config"] = json.load(f)
     if a.resume:
         kw["resume_state_dir"] = a.resume
+    if os.environ.get("TAGSCRIBER_TRAINING_DEVICE"):
+        kw["device"] = os.environ["TAGSCRIBER_TRAINING_DEVICE"]
     if cfg.get("sample_prompts_file") and os.path.exists(cfg["sample_prompts_file"]):
         with open(cfg["sample_prompts_file"], encoding="utf-8") as f:
             kw["sample_prompts"] = [ln.strip() for ln in f if ln.strip() and not ln.lstrip().startswith("#")]

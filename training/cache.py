@@ -228,7 +228,7 @@ def main(argv=None):
     p.add_argument("--stage", required=True, choices=["latents", "text"])
     p.add_argument("--dataset", required=True, help="the run's dataset.json")
     p.add_argument("--model", required=True, help="the VAE (latents) or text encoder (text) file")
-    p.add_argument("--device", default=None)
+    p.add_argument("--device", default=os.environ.get("TAGSCRIBER_TRAINING_DEVICE") or None)
     p.add_argument("--skip_existing", action="store_true")
     p.add_argument("--keep_cache", action="store_true")
     args = p.parse_args(argv)

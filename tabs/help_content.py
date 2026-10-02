@@ -179,7 +179,7 @@ under a new name.</li>
 share them or move them to another PC.</li>
 <li><b>Output is a tag list</b> — tick for tag-style presets so Append/Prepend merges tags without duplicates.</li>
 </ul>
-<p>Your presets live in <code>user_data\caption_presets.json</code> and stay until you delete them.</p>
+<p>Your presets live in <code>user_data\\caption_presets.json</code> and stay until you delete them.</p>
 """),
     "models": ("Choosing a model", "AI", """
 <h2>Choosing a captioning model</h2>

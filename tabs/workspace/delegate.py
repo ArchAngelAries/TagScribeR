@@ -107,8 +107,10 @@ class CardDelegate(QStyledItemDelegate):
                 self._pill(painter, label, QColor(155, 89, 182, 220), x, thumb_rect.bottom() - fm.height() - 6)
                 x += fm.horizontalAdvance(label) + 14
         if job:
-            label = {"working": "AI WORKING…", "queued": "QUEUED", "failed": "FAILED"}.get(job, job.upper())
-            color = {"working": QColor("#b7791f"), "queued": QColor(60, 60, 60, 220), "failed": MISSING}.get(job, SUBTLE)
+            label = {"working": "AI WORKING…", "queued": "QUEUED", "failed": "FAILED",
+                     "review": "REVIEW"}.get(job, job.upper())
+            color = {"working": QColor("#b7791f"), "queued": QColor(60, 60, 60, 220), "failed": MISSING,
+                     "review": QColor("#00897b")}.get(job, SUBTLE)
             fm = QFontMetrics(self._small)
             self._pill(painter, label, color, thumb_rect.right() - fm.horizontalAdvance(label) - 14, thumb_rect.top() + 4)
         if e.width:

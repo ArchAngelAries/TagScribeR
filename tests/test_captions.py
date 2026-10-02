@@ -74,3 +74,11 @@ def test_estimate_clip_tokens():
     assert c.estimate_clip_tokens("1girl, solo, long hair, smile") == 9
     long_caption = ", ".join(["detailed background"] * 30)
     assert c.estimate_clip_tokens(long_caption) > 75
+
+
+def test_word_diff():
+    ops = c.word_diff("a red car on a road", "a blue car on a road")
+    assert ("del", "red ") in ops and ("add", "blue ") in ops
+    assert "".join(t for op, t in ops if op != "del") == "a blue car on a road"
+    assert c.word_diff("", "new text") == [("add", "new text")]
+    assert c.word_diff("same", "same") == [("same", "same")]

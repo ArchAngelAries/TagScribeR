@@ -23,8 +23,8 @@ from inference.base import CaptionRequest, GenerationParams, ProviderSpec
 from inference.manager import manager
 from core.presets import PresetError, caption_presets
 from inference.prompts import DEFAULT_PRESET
-from inference.worker import (SAVE_APPEND, SAVE_OVERWRITE, SAVE_PREPEND, SAVE_SKIP_EXISTING, BatchJob,
-                              start_job)
+from inference.worker import (SAVE_APPEND, SAVE_NONE, SAVE_OVERWRITE, SAVE_PREPEND, SAVE_SKIP_EXISTING,
+                              BatchJob, combine, start_job)
 from tabs.common import CollapsibleSection, confirm, hint_label, run_in_background, show_job_summary
 from tabs.workspace.browser import DatasetBrowser
 from tabs.workspace.context import JOB_FAILED, JOB_QUEUED, JOB_WORKING, workspace
@@ -55,6 +55,7 @@ class CaptionTab(QWidget):
         # ---------------- LEFT: shared dataset browser ----------------
         self.browser = DatasetBrowser(self.ctx, size_key="ui.caption_thumbnail_size")
         self.browser.selection_changed.connect(self.on_selection)
+        self.ctx.session_changed.connect(lambda: self._on_session_changed_review())
         self.btn_select_uncaptioned = QPushButton("Select Uncaptioned")
         self.btn_select_uncaptioned.setToolTip("Select every image that has no caption yet")
         self.btn_select_uncaptioned.clicked.connect(self.select_uncaptioned)
@@ -162,6 +163,11 @@ class CaptionTab(QWidget):
         lg.addRow("Max tokens:", self.spin_tokens)
         lg.addRow("Temperature:", self.spin_temp)
         lg.addRow("If captioned:", self.combo_save)
+        self.chk_review = QCheckBox("Review before applying")
+        self.chk_review.setToolTip("Collect AI captions in a review queue instead of saving them: compare each with the "
+                                   "current caption, edit, then accept or reject. Nothing is written until you accept "
+                                   "and Save.")
+        lg.addRow(self.chk_review)
         self.combo_save.setToolTip("What to do with images that already have a caption")
         self.sec_adv_gen = CollapsibleSection("Advanced sampling")
         fa = QFormLayout()
@@ -196,6 +202,14 @@ class CaptionTab(QWidget):
         self.btn_run.setFixedHeight(48)
         self.btn_run.clicked.connect(self.toggle_process_state)
         rl.addWidget(self.btn_run)
+        self.btn_review = QPushButton("📝 Review proposals")
+        self.btn_review.setStyleSheet("background-color: #00897b; color: white; font-weight: bold; padding: 6px;")
+        self.btn_review.setToolTip("Compare AI captions with the current ones and accept or reject them")
+        self.btn_review.clicked.connect(self.open_review)
+        self.btn_review.setVisible(False)
+        rl.addWidget(self.btn_review)
+        self.pending: dict[str, str] = {}   # key -> generated caption awaiting review
+        self.review_dialog = None
         self.progress_bar = QProgressBar()
         self.progress_bar.setAlignment(Qt.AlignCenter)
         self.progress_bar.setFormat("%v / %m")
@@ -356,6 +370,7 @@ class CaptionTab(QWidget):
         self.inp_subject.setText(c.get("caption.subject", ""))
         self.chk_subject_first.setChecked(c.get("caption.subject_first", False))
         self.chk_tag_hints.setChecked(c.get("caption.tag_hints", False))
+        self.chk_review.setChecked(c.get("caption.review", False))
         if self.inp_subject.text() or self.chk_tag_hints.isChecked():
             self.sec_subject.toggle.setChecked(True)
         self.spin_tokens.setValue(c.get("caption.max_tokens"))
@@ -383,6 +398,7 @@ class CaptionTab(QWidget):
             "caption.subject": self.inp_subject.text().strip(),
             "caption.subject_first": self.chk_subject_first.isChecked(),
             "caption.tag_hints": self.chk_tag_hints.isChecked(),
+            "caption.review": self.chk_review.isChecked(),
             "caption.system_prompt": self.system_input.toPlainText(),
             "caption.max_tokens": self.spin_tokens.value(),
             "caption.temperature": self.spin_temp.value(),
@@ -877,7 +893,13 @@ class CaptionTab(QWidget):
                 return
             if not self.ctx.save(self, dirty):
                 return
-        if mode == SAVE_OVERWRITE:
+        review = self.chk_review.isChecked()
+        if review and mode == SAVE_SKIP_EXISTING:
+            ordered = [k for k in ordered if not (session.get(k) and session.get(k).has_caption)]
+            if not ordered:
+                QMessageBox.information(self, "Nothing to caption", "All selected images already have captions.")
+                return
+        if mode == SAVE_OVERWRITE and not review:  # review mode writes nothing until accepted
             existing = sum(1 for k in ordered if session.get(k) and session.get(k).has_caption)
             if existing and not confirm(
                     self, "Overwrite captions?",
@@ -903,7 +925,10 @@ class CaptionTab(QWidget):
                 hints = e.text if (self.chk_tag_hints.isChecked() and e is not None) else ""
                 prompts[k] = build_prompt(prompt, subject=subject,
                                           start_with_subject=self.chk_subject_first.isChecked(), tags=hints)
-        job = BatchJob(paths=[Path(p) for p in ordered], spec=spec, request=request, save_mode=mode,
+        self._review_job = review
+        self._review_mode, self._review_tag_mode = mode, tag_mode
+        job = BatchJob(paths=[Path(p) for p in ordered], spec=spec, request=request,
+                       save_mode=SAVE_NONE if review else mode,
                        tag_mode=tag_mode, title="Captioning", prompts=prompts,
                        ensure_prefix=subject if (subject and self.chk_subject_first.isChecked()) else "")
         self.ctx.set_job_state(ordered, JOB_QUEUED)
@@ -935,9 +960,68 @@ class CaptionTab(QWidget):
             self.ctx.set_job_state(keys, state)
 
     def on_item_done(self, path, text):
-        if self._same_folder():
-            self.ctx.reload_from_disk([path])  # the worker already saved it safely
-            self.ctx.set_job_state([path], None)
+        if not self._same_folder():
+            return
+        if getattr(self, "_review_job", False):
+            self.pending[path] = text
+            self.ctx.set_job_state([path], "review")
+            self._update_review_button()
+            if self.review_dialog is not None and self.review_dialog.isVisible():
+                self.review_dialog.add_items([self._review_item(path)])
+            return
+        self.ctx.reload_from_disk([path])  # the worker already saved it safely
+        self.ctx.set_job_state([path], None)
+
+    # ------------------------------------------------------------------ review queue
+    def _review_item(self, key: str) -> tuple[str, str, str]:
+        e = self.ctx.session.get(key) if self.ctx.session else None
+        current = e.text if e else ""
+        proposed = combine(current, self.pending[key], self._review_mode_for(), self._review_tag_mode)
+        return key, current, proposed
+
+    def _review_mode_for(self) -> str:
+        mode = getattr(self, "_review_mode", SAVE_OVERWRITE)
+        return SAVE_OVERWRITE if mode == SAVE_SKIP_EXISTING else mode
+
+    def _update_review_button(self):
+        n = len(self.pending)
+        self.btn_review.setVisible(n > 0)
+        self.btn_review.setText(f"📝 Review {n} proposal(s)")
+
+    def open_review(self):
+        if not self.pending or not self.ctx.session:
+            return
+        from tabs.review import ReviewDialog
+        items = [self._review_item(k) for k in self.pending if self.ctx.session.get(k) is not None]
+        if self.review_dialog is not None and self.review_dialog.isVisible():
+            self.review_dialog.add_items(items)
+            self.review_dialog.raise_()
+            return
+        self.review_dialog = ReviewDialog(items, self)
+        self.review_dialog.accepted_item.connect(self._accept_proposal)
+        self.review_dialog.rejected_item.connect(self._reject_proposal)
+        self.review_dialog.show()
+
+    def _accept_proposal(self, key: str, old: str, new: str):
+        self.pending.pop(key, None)
+        self.ctx.set_job_state([key], None)
+        e = self.ctx.session.get(key) if self.ctx.session else None
+        if e is not None and new != e.text:
+            self.ctx.push({key: (e.text, new)}, f"Accept AI caption: {Path(key).name}")
+        self._update_review_button()
+
+    def _reject_proposal(self, key: str):
+        self.pending.pop(key, None)
+        self.ctx.set_job_state([key], None)
+        self._update_review_button()
+
+    def _on_session_changed_review(self):
+        if self.pending:
+            self.log(f"Discarded {len(self.pending)} unreviewed proposal(s) because another folder was opened.")
+        self.pending.clear()
+        if self.review_dialog is not None:
+            self.review_dialog.close()
+        self._update_review_button()
 
     def on_item_failed(self, path, reason):
         self._mark(path, JOB_FAILED)
@@ -954,6 +1038,8 @@ class CaptionTab(QWidget):
         name = manager().loaded_model_name()
         self.lbl_loaded.setText(f"Loaded: {name}" if name else "No model loaded")
         show_job_summary(self, summary)
+        if getattr(self, "_review_job", False) and self.pending and self._same_folder():
+            self.open_review()
 
     # ------------------------------------------------------------------ manual actions
     def save_edits(self):

@@ -51,6 +51,7 @@ DEFAULTS: dict[str, Any] = {
     "caption.subject": "",
     "caption.subject_first": False,
     "caption.tag_hints": False,
+    "caption.review": False,
     "caption.system_prompt": "",
     "caption.strip_thinking": True,
     "caption.top_k": 0,

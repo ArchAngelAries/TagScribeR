@@ -206,3 +206,22 @@ def estimate_clip_tokens(text: str) -> int:
     for tok in _TOKEN_RE.findall(text or ""):
         total += max(1, -(-len(tok) // 6)) if tok.isalpha() else 1
     return total
+
+
+def word_diff(old: str, new: str) -> list[tuple[str, str]]:
+    """Word-level diff as [(op, text)], op in {'same', 'add', 'del'}; whitespace is kept with words."""
+    import difflib
+    a = re.findall(r"\S+\s*", old or "")
+    b = re.findall(r"\S+\s*", new or "")
+    out: list[tuple[str, str]] = []
+    sm = difflib.SequenceMatcher(a=[w.strip().lower() for w in a], b=[w.strip().lower() for w in b],
+                                 autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            out.append(("same", "".join(b[j1:j2])))
+        else:
+            if i2 > i1:
+                out.append(("del", "".join(a[i1:i2])))
+            if j2 > j1:
+                out.append(("add", "".join(b[j1:j2])))
+    return out

@@ -177,6 +177,13 @@ and rescanning only analyzes new or changed images.</p>
 </ol>
 <p>Results are saved to disk as each image finishes (with backups), and appear in the Gallery immediately. If some images
 fail, a report lists them with the reason; everything else is kept.</p>
+<h3>Review before applying</h3>
+<p>Tick <b>Review before applying</b> (Generation section) to collect AI captions in a review queue instead of writing
+them. Cards show <span style="color:#00897b">REVIEW</span>; when the run finishes the review window opens (or click
+<b>📝 Review proposals</b>). For each image you see the current caption, the highlighted changes and the caption you'll get
+(editable). <b>Accept</b> (Ctrl+Enter), <b>Reject</b> (Ctrl+Backspace), <b>Skip</b> (Ctrl+Right), or accept/reject all.
+Accepted captions become unsaved, undoable edits — press Save to write them. Unreviewed proposals are discarded if you
+open another folder.</p>
 <h3>Subject &amp; tag hints (recipes)</h3>
 <ul>
 <li><b>Subject</b> — type your trigger word or character name (e.g. <code>ohwx woman</code>). The model then refers to

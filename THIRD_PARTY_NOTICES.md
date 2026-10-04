@@ -33,11 +33,28 @@ uses:
 | `training/ema.py`, `optimizers.py`, `metadata.py`, `progress.py`, `train_utils.py`, `loss_logger.py` | the same-named modules in `src/fizgig/training/` |
 | `training/modules/offloading.py`, `int8_train.py`, `nf4.py` | `src/fizgig/modules/` |
 | `training/families/qwen_image21/` | `src/fizgig/families/qwen_image.py` and `src/fizgig/qwen_image21/` |
+| `training/families/krea2/` | `src/fizgig/krea2/` (`model.py`, `sampling.py`, `vae.py`, `vae_loader.py`, `embedder.py`, `trainer.py`, `caching.py`, `utils.py`), `lora_trainer_gui.py` (presets, model paths), `scripts/fetch_models.py`, `utils/capabilities.py` (measured memory) |
 
 The training presets, parameter names and defaults (`training/params.py`) follow Fizgig's Training tab.
 
 Not copied: Fizgig's `detect_gpu.py` is GPL-3.0 (from comfyui-rocm) and is deliberately **not** included.
 TagScribeR detects GPUs with its own `core/hardware.py`.
+
+## Krea 2 (ai-toolkit, musubi-tuner, diffusers)
+
+`training/families/krea2/` is Fizgig's Krea 2 code, ported, and carries its upstream credits:
+
+- **ai-toolkit (Ostris, LLC), MIT** (the licence text is in the ai-toolkit section below): the single-stream MMDiT
+  backbone (`model.py`, from `extensions_built_in/diffusion_models/krea2/src/mmdit.py`) and the functional
+  flow-matching sampler (`sampling.py`, from `extensions_built_in/diffusion_models/flux2/src/sampling.py`).
+- **musubi-tuner (kohya-ss and contributors), Apache License 2.0**: the training hooks in `model.py` (gradient
+  checkpointing, block-swap wiring), the flow-matching timestep recipe (`krea2_shift`) in `sampling.py`, the attention
+  design `model.py` simplifies, and the Qwen-Image VAE key conversion and loader in `vae_loader.py`.
+- **Diffusers / the Qwen-Image Team, Wan Team and The HuggingFace Team, Apache License 2.0**: `vae.py` is Fizgig's copy
+  of diffusers' `AutoencoderKLQwenImage`, kept with its original header.
+
+The Krea 2, Qwen-Image VAE and Qwen3-VL-4B weights are not included; the publishers' licences apply when you download
+them.
 
 ## Diffusers / Qwen-Image 2.1: Apache License 2.0
 

@@ -6,9 +6,11 @@
 from typing import Optional
 
 from training.description import FamilyDescription
+from training.families.krea2.description import KREA2
 from training.families.qwen_image21.description import QWEN_IMAGE_21
 
-FAMILIES = {d.key: d for d in (QWEN_IMAGE_21,)}
+# Krea 2 first: the owner's primary model (the Train tab lists families in this order)
+FAMILIES = {d.key: d for d in (KREA2, QWEN_IMAGE_21)}
 
 
 def _check(d: FamilyDescription) -> None:

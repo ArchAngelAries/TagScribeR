@@ -16,6 +16,11 @@ def app():
 def test_tab_builds_and_applies_first_preset(app):
     from tabs.train import TrainTab
     tab = TrainTab()
+    assert tab.desc.key == "krea2"                                       # listed first: the primary model
+    v = tab.collect()
+    assert v["NETWORK_DIM"] == 8 and v["ADAPTIVE_LR"] is True and v["FAMILY_EMA"] == "0.98 (recommended)"
+    assert v["DATASET_MEGAPIXELS"] == "0.25" and v["SAMPLE_STEPS"] == 28    # ✨ Krea 2 Ultra Fast on first visit
+    tab.combo_family.setCurrentIndex(tab.combo_family.findData("qwen_image21"))
     assert tab.desc.key == "qwen_image21"
     v = tab.collect()
     assert v["NETWORK_DIM"] == 8 and v["ADAPTIVE_LR"] is True          # ✨ Qwen 2.1 Fast on first visit

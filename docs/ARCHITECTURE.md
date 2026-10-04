@@ -36,6 +36,7 @@ inference/              all AI work; tabs talk to it only via specs / worker
   prompts.py            caption instruction presets + per-image prompt builder (subject, tag hints)
 training/               native LoRA training: a port of Fizgig's standard family layer (no Qt; see below)
   description.py driver.py registry.py   family facts, the model-code interface, the family list
+  families/krea2/                         Krea 2: description + presets, driver, DiT, Qwen-Image VAE, sampler, encode-only Qwen3-VL-4B
   families/qwen_image21/                  Qwen Image 2.1: description + presets, driver, DiT, VAE, sampler, encoder
   dataset.py cache.py                     buckets, cache files, `python -m training.cache`
   train.py                                the generic loop, `python -m training.train`

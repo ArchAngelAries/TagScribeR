@@ -401,6 +401,11 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                     kw["speed_lora"] = speed_path
                     if abs(ts - default) > 1e-9:
                         kw["speed_lora_strength"] = max(0.0, min(2.0, ts))
+                    # The Train tab fills Steps with the family's plain-model default; with the speed LoRA on, the
+                    # untouched default means "the LoRA's own steps" (Krea 2: 28 -> 8; unchanged for Qwen, whose
+                    # two are equal)
+                    if kw.get("sample_steps") == desc.preview_steps:
+                        kw["sample_steps"] = desc.preview_speed_defaults()[0]
             if edit:
                 ref = str(values.get("FAMILY_EDIT_REF") or "").strip() or \
                     (edit_pairs(image_folder, str(values.get("FAMILY_EDIT_DIR") or ""))[2] or "")

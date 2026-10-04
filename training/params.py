@@ -327,7 +327,8 @@ class ApplyReport:
     applied: dict = field(default_factory=dict)
     refused: list = field(default_factory=list)      # (key, value, reason) - shown as console / status lines
     ignored: list = field(default_factory=list)      # unknown keys (forward / backward compatibility)
+    notes: list = field(default_factory=list)        # info lines, e.g. a legacy key that was mapped (not a refusal)
 
     def messages(self) -> list:
         return [f"[preset] {k}: saved value {v!r} isn't offered here - keeping the current one ({why})"
-                for k, v, why in self.refused]
+                for k, v, why in self.refused] + list(self.notes)

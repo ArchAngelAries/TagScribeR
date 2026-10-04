@@ -1,7 +1,8 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/families/driver.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: `supports_batching` (batch size > 1 for fixed-length conditioning, e.g. SDXL) and
-# Conv2d LoRA targets (lora_target_names may name Conv2d modules; training/lora.py wraps both).
+# Changes for TagScribeR: `supports_batching` (batch size > 1 for fixed-length conditioning, e.g. SDXL), Conv2d LoRA
+# targets (lora_target_names may name Conv2d modules; training/lora.py wraps both) and `quant_target_names` (a family
+# whose LoRA covers more Linears than it quantises, e.g. Krea 2).
 """FamilyDriver: the one interface a new model family implements.
 
 The generic code - caching, training, previews, the LoRA layer and the Train tab - talks to a family ONLY through
@@ -152,6 +153,12 @@ class FamilyDriver:
         """Dotted module names (relative to dit) of the Linears (or Conv2d) a LoRA wraps: every module in the block
         map."""
         return [m for g in self.block_map(dit) for b in g.blocks for m in b.modules]
+
+    def quant_target_names(self, dit) -> list:
+        """Dotted names of the Linears INT8 / NF4 quantise: by default the LoRA targets. A family whose LoRA covers
+        small or delicate Linears it would rather keep bf16 (Krea 2's text fusion, embedders and output layer)
+        overrides this with the heavy repeated ones."""
+        return self.lora_target_names(dit)
 
     def block_of(self, module_name: str) -> Optional[str]:
         """The block id a module belongs to, or None for modules outside the map (e.g. a speed LoRA's extras)."""

@@ -366,6 +366,8 @@ ones it learns.</p>
 <li><b>Pick a family</b> (e.g. Qwen Image 2.1) and set its <b>Model files</b> once. <i>Get</i> opens the download page;
 the paths are remembered.</li>
 <li><b>Load a preset.</b> ✨ presets are measured recipes; the first one is applied on your first visit.</li>
+<li>The tab starts in a <b>simple view</b>: name, epochs, resolution and preview prompts, with the preset deciding
+the rest. Tick <b>Show all settings</b> for full control of every option.</li>
 <li>Set the <b>LoRA name</b> (and output folder), check the <b>preview prompts</b> (Samples section), then
 <b>Start Training</b> (Ctrl+Enter).</li>
 <li>Watch the <b>Loss</b> chart and the <b>Samples</b>. Every saved epoch is a usable LoRA: pick the best-looking one,
@@ -471,6 +473,17 @@ warning.</li>
 Caption.</li>
 <li>Photos that are rotated only by EXIF are trained as stored, so the pre-start check warns about them. Edit and save
 them in the Image Editor first.</li>
+</ul>
+<h3>Krea 2</h3>
+<ul>
+<li><b>Pick the RAW checkpoint</b> (<code>krea2_raw_bf16.safetensors</code>, about 26 GB) as the DiT, not the Turbo
+file. A pre-quantised fp8 file is refused; INT8 and 4-bit are made from the bf16 one when Auto (or you) choose them.</li>
+<li>The <b>Turbo LoRA</b> is optional and only for previews: the RAW model plus the LoRA renders in 8 steps without a
+second model. Leave it empty to preview the RAW model at 28 steps.</li>
+<li>The text encoder file can be the fp8_scaled or the bf16 Qwen3-VL-4B. Each cached caption is about 30 MB, so
+leave room on the cache drive.</li>
+<li>bf16 holds 26 GB of weights alone (a 32 GB card, or block swap); on smaller cards Auto uses INT8 (about 16 GB at 0.25 MP) or 4-bit (about
+11 GB). Each extra image in the batch adds about 2.4 GB.</li>
 </ul>
 """),
     "settings": ("Settings", "Settings", """

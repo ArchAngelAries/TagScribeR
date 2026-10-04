@@ -10,7 +10,10 @@
   scheduler, network type, precision) a value the family doesn't offer is REFUSED with a message instead of being
   set; values of the wrong type are refused the same way.
 
-Fizgig preset JSON files apply here unchanged (same keys and value formats).
+Fizgig preset JSON files apply here unchanged (same keys and value formats). Fizgig's Krea 2 keys that this app
+expresses differently are migrated first (migrate_legacy): KREA2_EMA -> FAMILY_EMA, QUANT_4BIT_MODE -> FAMILY_PRECISION
+(fp8 is not offered: it becomes Auto, with a note), blank noise-range boxes -> the defaults; torch.compile and the
+fine-tune keys do nothing here and are ignored.
 """
 from __future__ import annotations
 
@@ -60,10 +63,60 @@ def collect(values: dict) -> dict:
     return {k: values[k] for k in P.PRESET_KEYS if k in values}
 
 
+# Fizgig keys that have no counterpart here (Krea 2 torch.compile, the rotating fine-tune, Klein/Krea 2 "model area")
+LEGACY_IGNORED = ("COMPILE_BLOCKS", "TARGET_LAYERS")
+LEGACY_IGNORED_PREFIXES = ("KREA2_FINETUNE",)
+
+
+def _legacy_precision(value) -> str:
+    """Fizgig's _normalize_base_precision: a canonical key, a combobox label or a legacy Auto / On / Off -> one of
+    auto / int8 / nf4 / fp8. "Off" meant "not 4-bit", which Fizgig resolved to INT8; unknown values mean Auto."""
+    v = str(value or "").strip().lower()
+    if v in ("no_4bit", "off"):
+        return "int8"
+    if v == "on":
+        return "nf4"
+    for key, starts in (("int8", ("int8",)), ("nf4", ("nf4", "4-bit")), ("fp8", ("fp8",)), ("auto", ("auto",))):
+        if v.startswith(starts):
+            return key
+    return "auto"
+
+
+def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
+    """Fizgig's Krea 2 preset keys -> this app's parameters. Returns (preset, notes, ignored). Explicit new-style keys
+    in the same preset win over their legacy twins."""
+    out, notes, ignored = {}, [], []
+    for key, value in (preset or {}).items():
+        if key == "KREA2_EMA":
+            if "FAMILY_EMA" not in preset:
+                out["FAMILY_EMA"] = value
+        elif key in ("QUANT_4BIT_MODE", "QUANT_4BIT"):
+            if key == "QUANT_4BIT" and "QUANT_4BIT_MODE" in preset:
+                continue
+            if key == "QUANT_4BIT":              # legacy boolean: False means "no opinion", not "fp8"
+                prec = "nf4" if value in (True, "True", "true", 1, "1") else None
+            else:
+                prec = _legacy_precision(value)
+            if prec == "fp8":
+                notes.append("[preset] QUANT_4BIT_MODE: fp8 isn't offered here (there is no fp8 path for this "
+                             "setup) - using Auto, which picks INT8 or 4-bit to fit your free VRAM")
+                prec = "auto"
+            if prec and "FAMILY_PRECISION" not in preset:
+                out["FAMILY_PRECISION"] = P.PRECISION_LABELS[prec]
+        elif key in LEGACY_IGNORED or key.startswith(LEGACY_IGNORED_PREFIXES):
+            ignored.append(key)
+        elif key in ("MIN_TIMESTEP", "MAX_TIMESTEP") and str(value).strip() == "":
+            out[key] = P.BY_KEY[key].default      # Fizgig: an empty noise-range box means the full range
+        else:
+            out[key] = value
+    return out, notes, ignored
+
+
 def apply(preset: dict, current: dict, desc=None) -> tuple[dict, P.ApplyReport]:
     """`current` updated with `preset` under Fizgig's validation rules. Returns (new values, report)."""
     out = dict(current)
     rep = P.ApplyReport()
+    preset, rep.notes, rep.ignored = migrate_legacy(preset)
     for key, value in (preset or {}).items():
         if key.startswith("__"):
             continue

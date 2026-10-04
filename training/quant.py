@@ -1,6 +1,7 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/families/quant.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: import paths, env var prefix TAGSCRIBER_; otherwise unchanged.
+# Changes for TagScribeR: import paths, env var prefix TAGSCRIBER_; the quantised Linears come from the driver's
+# quant_target_names (the LoRA targets unless a family narrows them); otherwise unchanged.
 """Quantised frozen bases for described families: INT8 (W8A8) and 4-bit NF4, on the Linears of the driver's block map.
 
 Reuses Fizgig's existing quantisers (modules/int8_train.py, modules/nf4.py): each keeps the nn.Linear and patches its
@@ -26,7 +27,7 @@ PRECISIONS = ("bf16", "int8", "nf4")
 
 
 def _targets(dit, driver):
-    names = set(driver.lora_target_names(dit))
+    names = set(driver.quant_target_names(dit))
     return [(n, m) for n, m in dit.named_modules() if n in names and isinstance(m, torch.nn.Linear)]
 
 

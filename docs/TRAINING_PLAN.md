@@ -97,7 +97,25 @@ The options as originally presented:
 
   It has Help Center topics, Ctrl+6, command-palette entries and a quit guard. It is verified by an offscreen
   test that runs the real child processes on the CPU test family, including pause and resume.
-- **T2 Krea 2:** next.
+- **T2 Krea 2: done (2026-10-03), awaiting the owner's first real run.** `training/families/krea2/` ports Fizgig's Krea 2
+  onto the family layer; the objective, conditioning, presets and recipe values are Fizgig's, cited per value.
+  - *Ported:* the 12.9B DiT (28 blocks, text fusion, 3-axis RoPE) with SDPA attention, key-padding masks, gradient
+    checkpointing and block swap; the Qwen-Image VAE; an encode-only Qwen3-VL-4B (12 hidden-state layers, fixed
+    512-token cache of about 30 MB per caption, so batch size above 1 works); the flow-matching loss with the
+    logit-normal, resolution-shifted timestep sampler and the `[min_t, max_t]` window; the Euler sampler with CFG;
+    the all-Linear LoRA (264 modules) in Fizgig's kohya keys, and LoKR saved as `diffusion_model.*`; Turbo-LoRA
+    previews on the training model (8 steps, strength 1.0, `mu` 1.15) including the file's `diff_b` bias deltas;
+    the three built-in presets, EMA 0.98, and INT8 / NF4 bases with Fizgig's measured memory for Auto.
+  - *Generic-layer changes:* kohya key writing in `lora.py`, `diff_b` bias deltas for frozen adapters, a
+    `quant_target_names` hook (only the 28 main blocks are quantised, the LoRA covers more), legacy-key migration in
+    `presets.apply` (`KREA2_EMA`, `QUANT_4BIT_MODE`, blank noise boxes), and Turbo steps in `pipeline.train_kwargs`.
+  - *Not ported:* the fp8 base (a pre-quantised fp8 DiT is refused with a clear error), torch.compile, the
+    rotating-block full fine-tune and regularisation images, the fp8-Turbo-checkpoint preview engine, Automagic v3's
+    per-family groups (so it is not offered here), captioning with the encoder, reference images and RefMods.
+  - *Unverified without weights:* the real checkpoints' key layout, the fp8_scaled text-encoder dequantisation, the
+    tokenizer download, the Turbo LoRA's key and `diff_b` naming, INT8 / swap memory at 12.9B, and bf16 memory.
+    CPU tests cover the objective, masks, batching, timestep sampler, LoRA keys and round trips, the loader's refusals
+    and the text encoder's hidden-state layout on tiny random models.
 
 ## 6. Verification policy
 

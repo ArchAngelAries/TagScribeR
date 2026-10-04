@@ -30,6 +30,9 @@ from training.registry import training_families
 log = logging.getLogger(__name__)
 
 IDLE, RUNNING, PAUSING, PAUSED = "idle", "running", "pausing", "paused"
+# What "simple mode" shows; the preset decides everything else.
+SIMPLE_KEYS = {"LORA_OUTPUT_DIR", "LORA_NAME", "MAX_TRAIN_EPOCHS", "DATASET_MEGAPIXELS", "SAMPLE_ENABLED",
+               "SAMPLE_PROMPT"}
 _ACTIVE: list = []          # running TrainTabs (main.py asks before quitting)
 
 
@@ -119,6 +122,13 @@ class TrainTab(QWidget):
         tf.addRow("Preset:", row)
         self.lbl_family_note = hint_label("")
         tf.addRow(self.lbl_family_note)
+        self.chk_all = QCheckBox("Show all settings")
+        self.chk_all.setChecked(bool(self.cfg.get("training.show_all", False)))
+        self.chk_all.setToolTip("Off: only the essentials are shown and the preset decides everything else - the "
+                                "simple way to train. On: every setting (optimizer, memory, loss watch, timesteps, "
+                                "metadata, resume...) for full control. Hidden settings keep their values.")
+        self.chk_all.toggled.connect(self._toggle_all)
+        tf.addRow(self.chk_all)
         ol.addWidget(top)
 
         scroll = QScrollArea()
@@ -175,7 +185,7 @@ class TrainTab(QWidget):
             self._make_widget(p, self.sections[p.group][1])
 
         # auto-recaption captioner
-        g = QGroupBox("Auto-recaption captioner")
+        g = self.grp_captioner = QGroupBox("Auto-recaption captioner")
         f = QFormLayout(g)
         f.addRow(hint_label("Used only when 'Auto-recaption stuck images' is on. Runs between epochs, then is "
                             "unloaded before training continues."))
@@ -196,7 +206,7 @@ class TrainTab(QWidget):
         self.form_layout.addWidget(g)
 
         # resume
-        g = QGroupBox("Resume")
+        g = self.grp_resume = QGroupBox("Resume")
         f = QFormLayout(g)
         row = QHBoxLayout()
         self.inp_resume = QLineEdit()
@@ -329,13 +339,19 @@ class TrainTab(QWidget):
         if self.desc:
             self.cfg.set(f"training.values.{self.desc.key}", self.collect())
 
+    def _toggle_all(self, on):
+        self.cfg.set("training.show_all", bool(on))
+        self._update_visibility()
+
     def _update_visibility(self):
+        simple = not self.chk_all.isChecked()
+        shown_groups = set()
         adaptive = bool(self.values.get("ADAPTIVE_LR"))
         lokr = str(self.values.get("NETWORK_TYPE", "")).startswith("LoKR")
         edit = bool(self.values.get("FAMILY_EDIT"))
         for key, (w, label) in self.widgets.items():
             p = P.BY_KEY[key]
-            show = P.family_shows(p, self.desc)
+            show = P.family_shows(p, self.desc) and (not simple or key in SIMPLE_KEYS)
             if key in ("NETWORK_DIM", "NETWORK_ALPHA"):
                 show = show and not lokr
             if key == "LOKR_FACTOR":
@@ -345,10 +361,18 @@ class TrainTab(QWidget):
             for x in (w if p.kind not in (P.PATH, P.DIR) else w.parentWidget(), label):
                 if x is not None:
                     x.setVisible(show)
+            if show:
+                shown_groups.add(p.group)
             if key in ("ADAPTIVE_LR_MIN", "ADAPTIVE_LR_MAX"):
                 w.setEnabled(adaptive)
             if key in ("LEARNING_RATE", "LR_SCHEDULER", "LR_WARMUP_STEPS"):
                 w.setEnabled(not adaptive or key == "LEARNING_RATE")
+        for group, (sec, _fl) in self.sections.items():
+            sec.setVisible(group in shown_groups)
+            if simple and group in shown_groups and not sec.toggle.isChecked():
+                sec.toggle.setChecked(True)
+        self.grp_captioner.setVisible(not simple)
+        self.grp_resume.setVisible(not simple)
         if adaptive:
             try:
                 lo = float(P.first_token(self.values.get("ADAPTIVE_LR_MIN")))
@@ -631,7 +655,9 @@ class TrainTab(QWidget):
     def _set_state(self, state):
         self.state = state
         running = state in (RUNNING, PAUSING)
-        self.btn_start.setText("➕ Queue this run" if running else "🚀 Start Training")
+        from tabs import icons
+        self.btn_start.setText("Queue this run" if running else "Start Training")
+        icons.set(self.btn_start, "add" if running else "run")
         self.btn_pause.setEnabled(state == RUNNING and self.stage_label() == "Training")
         self.btn_stop.setEnabled(running)
         self.btn_resume.setVisible(state == PAUSED)

@@ -1,46 +1,96 @@
 # TagScribeR
 
-**TagScribeR v2** is a modern, GPU-accelerated local image captioning and dataset management suite. Rebuilt from the ground up using **PySide6** and powered by modern local Vision-Language Models (Qwen3-VL, Qwen3.5, Gemma 4, JoyCaption) with optional API support, it offers a "Studio" workflow for preparing AI training datasets.
+<img width="512" height="512" alt="TagScribeR logo" src="https://github.com/user-attachments/assets/c94898af-b851-49f0-9f72-f40587b739b8" />
 
-<img width="512" height="512" alt="Logo" src="https://github.com/user-attachments/assets/c94898af-b851-49f0-9f72-f40587b739b8" />
+**TagScribeR** is a local, GPU-accelerated studio for building AI training datasets and training LoRAs on them. Browse and filter thousands of images, caption them with current vision-language models or booru taggers, fix and clean them, then train, all in one app.
 
-<img width="3250" height="1888" alt="1" src="https://github.com/user-attachments/assets/fd63cc0e-ad96-44a9-8051-ac360936cae5" />
+It runs natively on **AMD Radeon (ROCm, Windows and Linux)** and **NVIDIA (CUDA)**, with a CPU fallback. Nothing leaves your machine unless you point it at an API yourself.
 
-<img width="3824" height="2056" alt="2" src="https://github.com/user-attachments/assets/2afb6ae8-003e-4632-81cc-39f629060b9f" />
+![Gallery](docs/screenshots/01_gallery.png)
 
-<img width="3831" height="2058" alt="Screenshot 2025-12-19 123602" src="https://github.com/user-attachments/assets/592ba435-13be-4e1a-977d-113354e8fdc0" />
+---
 
-<img width="3829" height="2066" alt="3" src="https://github.com/user-attachments/assets/78423ea1-5d91-4017-95e0-5e7f1ea655e1" />
+## Contents
 
-<img width="3839" height="2066" alt="4" src="https://github.com/user-attachments/assets/69e019fe-16e0-458e-80e4-0065dc901159" />
+- [Features](#-features)
+- [Installation](#-installation): [AMD Radeon](#amd-radeon-rocm) · [NVIDIA](#nvidia-cuda) · [Linux](#linux) · [No GPU](#no-gpu)
+- [Quick start](#-quick-start)
+- [Training a LoRA](#-training-a-lora)
+- [Your data is safe](#-your-data-is-safe)
+- [Troubleshooting](#-troubleshooting)
+- [Credits and licence](#-credits-and-licence)
 
-<img width="3839" height="2067" alt="5" src="https://github.com/user-attachments/assets/f9382a3a-2b9e-43c8-b625-18e4469687c7" />
+---
 
-<img width="3839" height="2060" alt="6" src="https://github.com/user-attachments/assets/bf22af80-d7ac-47aa-bf5b-3025a77f726c" />
+## ✨ Features
 
-## ✨ Key Features
+### Dataset workspace
 
-*   **🖼️ Dataset workspace (Gallery):** a fast grid that handles thousands of images, with zoomable thumbnails (Ctrl + mouse wheel), search-style filters (`tag:1girl -tag:blurry missing:caption res:<768`), saved filters per folder, sorting, multi-select editing of shared tags, batch tag and text operations, tag statistics with rename/merge, and undo/redo. One folder is shared by every tab, and nothing is written until you Save.
-*   **🤖 AI captioning with current VLMs:** local models through Hugging Face Transformers (Qwen3-VL, Qwen3.5, Gemma 4, JoyCaption and other image-text-to-text models) or any OpenAI-compatible server (LM Studio, llama.cpp, Ollama, cloud APIs; use this for GGUF models).
-    *   **AMD first-class:** native ROCm on Windows (RX 7000/9000, Strix Halo), plus NVIDIA CUDA and CPU fallback, with precision chosen from your GPU's capabilities.
-    *   **Fast and safe:** models stay loaded between runs and images are batched on the GPU. You choose to overwrite, skip, append or prepend; overwritten captions are backed up, and one bad image never stops a batch.
-    *   **Review before applying:** compare each AI caption with the current one (word-level diff), edit, and accept or reject per image or all at once.
-    *   **Recipes:** a subject / trigger word the model must use (optionally starting every caption), and each image's existing tags passed as hints (tag first, then caption).
-    *   **Presets:** built-in instruction presets plus your own, with save, rename, delete and import/export.
-*   **🏷️ WD auto-tagging:** SmilingWolf v3 taggers with general and character thresholds, blacklist, trigger words and named presets.
-*   **🩺 Dataset health:** exact and near-duplicate detection, blurry and low-resolution flags, and an aspect-ratio bucket preview for your training resolution.
-*   **✏️ Image Editor:** live before/after preview; rotate, flip, resize (never upscales by accident), crop to an exact size or an aspect ratio with focus points, convert. Copies are saved by default and keep their captions, and colour profiles and EXIF are preserved.
-*   **ℹ️ Metadata tools:** a privacy audit (GPS, device serials, AI prompts and workflows, editing history), lossless cleanup that never re-encodes pixels, honest authorship templates, and embedded A1111/ComfyUI/NovelAI/InvokeAI prompts turned into captions.
-*   **🎓 Native LoRA training (Train tab, experimental):** train a LoRA on the open dataset with the [Fizgig](https://github.com/shootthesound/Fizgig) trainer's engine: its presets (plus your own, and Fizgig preset files), Adaptive LR, EMA, a per-image loss watch with a Problem Images window and AI recaptioning of stuck images, live sample previews, pause / resume and a run queue. First family: Qwen Image 2.1; SDXL / Pony / Illustrious / NoobAI, Anima, Krea 2, MiniMax H3 and FLUX.2 Klein are planned ([plan](docs/TRAINING_PLAN.md)).
-*   **📂 Dataset Collections:** gather finished images and captions into training folders. Nothing is overwritten, and deletes go to the Recycle Bin.
-*   **⌨️ Built for speed and accessibility:** a Ctrl+K command palette, a context-aware Help Center (F1), tooltips everywhere, and interface scaling up to 200%.
-*   **📁 Model discovery:** finds models in `models/`, in your **Stability Matrix** shared `Models/LLM` folder, and in any folders you add.
+One folder is open in every tab, so you can tag, caption, edit and train without reopening anything.
+
+- **Fast grid** for thousands of images, with zoomable thumbnails (Ctrl + mouse wheel).
+- **Search-style filters:** `tag:1girl -tag:blurry missing:caption res:<768`. Save filters per folder.
+- **Batch editing:** add, remove, replace and reorder tags across a selection; tag statistics with rename and merge.
+- **Undo and redo** for every caption change. Nothing is written until you save.
+
+![Batch editing](docs/screenshots/02_gallery_batch.png)
+
+### Dataset health
+
+Finds exact and near-duplicates, blurry and low-resolution images, and previews the aspect-ratio buckets for your training resolution.
+
+![Dataset health](docs/screenshots/03_health.png)
+
+### AI captioning
+
+- **Local vision models** through Hugging Face Transformers: Qwen3-VL, Qwen3.5, Gemma 4, JoyCaption and other image-text-to-text models.
+- **Any OpenAI-compatible server:** LM Studio, llama.cpp, Ollama or a cloud API (use this for GGUF models).
+- **WD auto-tagging:** SmilingWolf v3 taggers with thresholds, a blacklist and presets.
+- **Recipes:** a subject or trigger word the model must use, and each image's existing tags passed as hints.
+- **Review before applying:** a word-level diff of each AI caption against the current one; accept or reject per image.
+- **Presets:** built-in instruction presets plus your own.
+
+![Auto Caption](docs/screenshots/04_auto_caption.png)
+
+![API captioning](docs/screenshots/05_auto_caption_api.png)
+
+### Image editor
+
+Rotate, flip, resize, crop to a size or aspect ratio, and convert, with a live before/after preview. Edits are saved as copies by default and keep their captions, colour profiles and EXIF.
+
+![Image Editor](docs/screenshots/06_image_editor.png)
+
+### Collections and export
+
+Gather finished images and captions into training folders, or export a training-ready copy (resized to buckets, cleaned, with kohya-style folder names).
+
+![Datasets and export](docs/screenshots/07_datasets_export.png)
+
+### Metadata tools
+
+A privacy audit (GPS, device serials, AI prompts and workflows), lossless cleanup that never re-encodes pixels, authorship templates, and embedded A1111 / ComfyUI / NovelAI / InvokeAI prompts turned into captions.
+
+![Metadata](docs/screenshots/08_metadata.png)
+
+### Native LoRA training
+
+Train on the open dataset with the [Fizgig](https://github.com/shootthesound/Fizgig) trainer's engine, ported into TagScribeR. See [Training a LoRA](#-training-a-lora).
+
+![Train tab](docs/screenshots/09_train_setup.png)
+
+### Built for speed and accessibility
+
+A Ctrl+K command palette, a searchable Help Center (F1 opens help for the current tab), tooltips on every control, and interface scaling up to 200%.
+
+![Command palette](docs/screenshots/13_command_palette.png)
+
+![Help Center](docs/screenshots/14_help_center.png)
 
 ---
 
 ## 🚀 Installation
 
-**Requirements:** Windows 10/11 or Linux, **Python 3.12**, Git.
+**You need:** Windows 10/11 or Linux, [Python 3.12](https://www.python.org/downloads/), and [Git](https://git-scm.com/).
 
 ```cmd
 git clone https://github.com/ArchAngelAries/TagScribeR.git
@@ -48,71 +98,161 @@ cd TagScribeR
 install.bat
 ```
 
-The installer creates `venv\`, detects your GPU and installs the matching PyTorch build:
+The installer creates a `venv\` folder, detects your GPU and installs the matching PyTorch build. Then launch with **`start.bat`**.
 
-| GPU | PyTorch build |
+| Your GPU | What gets installed |
 |---|---|
-| AMD Radeon (Windows) | AMD's native ROCm wheels, `torch 2.12.0+rocm7.15` for your exact chip (e.g. `gfx1100` for RX 7900) |
-| AMD Radeon (Linux) | AMD multi-arch ROCm 7.14 wheels |
-| NVIDIA | CUDA 12.8 (RTX 20–50 series) |
-| None | CPU (captioning works but is slow; API mode is recommended) |
+| AMD Radeon on Windows | AMD's native ROCm wheels: `torch 2.12.0+rocm7.15`, built for your exact chip |
+| AMD Radeon on Linux | AMD's multi-arch ROCm 7.14 wheels |
+| NVIDIA | PyTorch with CUDA 12.8 (RTX 20 to 50 series) |
+| None | CPU build |
 
-Useful options:
+### AMD Radeon (ROCm)
+
+Supported: RX 7000 and RX 9000 series, Radeon PRO W7000, and Ryzen AI APUs (including Strix Halo). RX 6000 cards are detected but are less tested.
+
+1. Update to a current **AMD Adrenalin** driver.
+2. Run `install.bat`. It reads your GPU and picks its architecture (for example `gfx1100` for the RX 7900 series, `gfx1201` for the RX 9070).
+3. If it can't tell which GPU you have, pass the architecture yourself:
+
+   ```cmd
+   install.bat --arch gfx1100
+   ```
+
+Other AMD options:
 
 ```cmd
-install.bat --arch gfx1201        :: force an AMD architecture
-install.bat --backend cpu         :: skip GPU detection
-install.bat --experimental        :: AMD: newest unpinned ROCm nightlies
-install.bat --with-bnb            :: add bitsandbytes for 8-bit / 4-bit loading
+install.bat --with-bnb         :: add bitsandbytes (8-bit optimizers and 8/4-bit model loading)
+install.bat --experimental     :: use AMD's newest, unpinned ROCm nightlies
 ```
 
-Launch with **`start.bat`** (or `./start.sh`). Update with **`update.bat`**: it pulls the code and refreshes dependencies without touching your PyTorch build.
+No separate ROCm or HIP SDK install is needed. The app sets the ROCm environment itself when it starts.
 
-> Upgrading from TagScribeR 2.1? Run `install.bat` again. Your old Python 3.10/3.11 venv is renamed to `venv-old\` (not deleted). Your settings, quick tags and API presets are imported automatically on first launch. API keys move into Windows Credential Manager. After confirming that, you can delete the old `api_presets.json`, which held them in plain text.
+### NVIDIA (CUDA)
+
+1. Update to a current NVIDIA driver.
+2. Run `install.bat`. It installs the CUDA 12.8 build of PyTorch.
+
+To force it (for example on a machine with both vendors):
+
+```cmd
+install.bat --backend cuda
+install.bat --backend cuda --with-bnb
+```
+
+### Linux
+
+```bash
+git clone https://github.com/ArchAngelAries/TagScribeR.git
+cd TagScribeR
+./install.sh        # same options as install.bat
+./start.sh
+```
+
+On Debian and Ubuntu, Qt also needs `sudo apt-get install libxcb-cursor0`.
+
+### No GPU
+
+```cmd
+install.bat --backend cpu
+```
+
+Captioning with a local model is slow on CPU. Use the API source in Auto Caption instead (LM Studio, Ollama or a cloud API). Training needs a GPU.
+
+### Updating
+
+Run **`update.bat`**. It pulls the latest code and refreshes dependencies without touching your PyTorch build. Your settings live in `user_data\`, which git never touches.
+
+> **Upgrading from TagScribeR 2.1?** Run `install.bat` again. Your old venv is renamed to `venv-old\` (not deleted), and your settings, quick tags and API presets are imported on first launch. API keys move into Windows Credential Manager. Once you've checked that, delete the old `api_presets.json`, which held them in plain text.
 
 ---
 
-## 🛠️ Usage Guide
+## 🧭 Quick start
 
-### Auto Captioning
-1.  Open the **Auto Caption** tab and pick a model. Installed models are listed first. ☁️ entries can be downloaded; the size is shown before anything downloads.
-2.  Open a folder, then select images (or **Select Uncaptioned**).
-3.  Pick an instruction preset (training caption, booru tags, character, clothing, composition…) or write your own.
-4.  Choose what happens to existing captions, then press **Caption** (Ctrl+Enter). Esc aborts; finished images are already saved.
+1. **Open a folder** in the Gallery (Ctrl+O). It opens in every tab.
+2. **Caption:**
+   - *Auto Caption* for natural-language captions. Pick a model (Download fetches it and shows the size first), choose an instruction preset, press **Caption** (Ctrl+Enter).
+   - *Gallery → Batch → Auto tag* for booru-style tags.
+3. **Refine** in the Gallery: edit one image in *Inspect*, or many at once in *Batch*.
+4. **Save** with Ctrl+S.
+5. **Check** the set with *Health*, then **train** it in the *Train* tab.
 
-**Which model?** (20 GB GPU, bf16)
-*   **Qwen3-VL 8B / 4B:** detailed, fast and the most AMD-friendly. Recommended default.
-*   **Qwen3.5 4B / 9B:** newest Qwen (2026). Strong detail, but slower on AMD for now (see Troubleshooting).
-*   **Gemma 4 E4B / E2B:** fluent natural-language captions.
-*   **JoyCaption Beta One:** built for diffusion training captions.
-*   Larger models (27B+): run a GGUF quant in LM Studio and use the **API / Server** tab.
+Press **Ctrl+K** anywhere to find any action, filter or help topic by typing a few letters. Press **F1** for help on the current tab.
 
-### Dataset Management
-1.  In **Datasets**, create a collection and load a source folder.
-2.  Filter by tag or file name, select images, and **Add to Collection**. Images and captions are copied, and name clashes are renamed, never overwritten.
+Captions are stored the way trainers expect: `image.png` and `image.txt` side by side.
+
+---
+
+## 🎓 Training a LoRA
+
+The Train tab trains the dataset folder you have open. It uses a port of Fizgig's training engine, so it has Fizgig's presets, adaptive learning rate and loss watch.
+
+1. Pick a **family** and set its **model files** once (each row has a *Get* button that opens the download page).
+2. Load a **preset**. The ✨ presets are Fizgig's measured recipes. You can save your own, and Fizgig preset files import as they are.
+3. Set the **LoRA name**, check the preview prompts, and press **Start Training**.
+
+The tab opens in a simple view with only the essentials. Tick **Show all settings** to control every option.
+
+![A run in progress](docs/screenshots/10_train_running.png)
+
+What you get while it runs:
+
+- **Adaptive learning rate.** You give a minimum and maximum; it probes up while the loss improves, backs off on a plateau, and rolls back if training turns unstable.
+- **Sample previews** after each epoch, rendered with the LoRA so far. Every saved epoch is a usable LoRA.
+- **Problem Images.** A loss watch flags images that never learn. Fix the caption in the window and the run picks it up at the next epoch. It can also re-caption stuck images for you.
+- **Pause and resume** at any epoch, a **run queue**, and resumable state for training more epochs later.
+- **Automatic memory planning.** It picks a base precision (bf16, 8-bit or 4-bit) and block swapping from your free VRAM.
+
+![Sample previews](docs/screenshots/11_train_samples.png)
+
+![Problem Images](docs/screenshots/12_problem_images.png)
+
+Training runs as separate processes, so the app stays responsive and a crash can't take it down. Each run lives in its own folder: `<output folder>\<LoRA name>\` with checkpoints, `sample\`, `loss_log\` and `run.log`.
+
+### Model families
+
+| Family | Status |
+|---|---|
+| Krea 2 | Available |
+| Qwen Image 2.1 (including edit LoRAs from before/after pairs) | Available |
+| SDXL, Pony, Illustrious, NoobAI | Planned |
+| MiniMax H3, FLUX.2 Klein | Planned |
+| Anima | Planned |
+
+Training is new and marked experimental. Model weights are not included and have their own licences.
+
+---
+
+## 🛡️ Your data is safe
+
+- **Atomic saves with backups.** The first version of every caption overwritten each day is copied to `user_data\caption_backups\<date>\`.
+- **Deletes go to the Recycle Bin.** Copies never overwrite; name clashes get a ` (2)` suffix.
+- **Image edits default to copies** in `Image Edits\`.
+- **API keys** are kept in Windows Credential Manager (or your OS keychain), not in files.
+- **Local by default.** Images are only sent anywhere if you choose an API source.
 
 ---
 
 ## 🔧 Troubleshooting
 
-*   **Logs:** `user_data\logs\tagscriber.log`. Settings → *System & diagnostics* shows the detected GPU, PyTorch, ROCm and Transformers versions (*Copy report*).
-*   **Recovering a caption:** `user_data\caption_backups\<date>\` holds the first version of every caption overwritten that day.
-*   **First image is slow (~20 s) on AMD:** one-time kernel selection after a model loads. Later images take about 1 s.
-*   **Qwen3.5 logs "falling back to its reference PyTorch implementation":** expected on ROCm. Its linear-attention kernels have no AMD build yet. Output is correct. Use batch size 2–4, or Qwen3-VL for top speed.
-*   **Out of GPU memory:** lower *Max image size* (Advanced sampling), use a smaller model, or close ComfyUI/Forge, which keep models in VRAM. TagScribeR automatically retries a failed batch one image at a time.
-*   **Training:** each run lives in `<output folder>/<LoRA name>/` (checkpoints, `sample/`, `loss_log/`, `run.log`). AdamW 8-bit needs the `bitsandbytes` package; without it runs fall back to AdamW. Help → *Training a LoRA* explains every setting.
-*   **A model says it needs custom code:** enable *Allow custom model code* in Model options, but only for sources you trust.
+- **Logs:** `user_data\logs\tagscriber.log`. *Settings → System & diagnostics* shows the detected GPU and library versions (*Copy report* for bug reports).
+- **Recovering a caption:** look in `user_data\caption_backups\<date>\`.
+- **First image is slow (about 20 s) on AMD:** one-time kernel selection after a model loads. Later images take about a second.
+- **Qwen3.5 logs "falling back to its reference PyTorch implementation":** expected on ROCm. Output is correct. Use batch size 2 to 4, or Qwen3-VL for top speed.
+- **Out of GPU memory:** lower *Max image size*, use a smaller model, or close ComfyUI / Forge, which keep models in VRAM. A failed batch is retried one image at a time.
+- **Training falls back from AdamW 8-bit to AdamW:** install bitsandbytes with `install.bat --with-bnb`.
+- **A model says it needs custom code:** enable *Allow custom model code* in Model options, but only for sources you trust.
+- **`install.bat` can't find Python 3.12:** install it from python.org (or `py install 3.12`) and run the installer again.
 
-Architecture and developer notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Run the tests with `venv\Scripts\python -m pytest`.
+Developer notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Run the tests with `venv\Scripts\python -m pytest`.
 
 ---
 
-## 🤝 Credits & License
+## 🤝 Credits and licence
 
-*   **GUI Framework:** [PySide6](https://pypi.org/project/PySide6/) & [qt-material](https://pypi.org/project/qt-material/)
-*   **AI Backend:** [HuggingFace Transformers](https://huggingface.co/docs/transformers/index), [ONNX Runtime](https://onnxruntime.ai/), [WD Taggers](https://huggingface.co/SmilingWolf)
-*   **Training engine:** ported from [Fizgig](https://github.com/shootthesound/Fizgig) (Apache-2.0, © 2026 Peter Neill), whose ROCm stack the environment also follows. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
-*   **AMD Support:** [ROCm for Windows](https://github.com/ROCm/TheRock)
+- **Training engine:** ported from [Fizgig](https://github.com/shootthesound/Fizgig) (Apache-2.0, © 2026 Peter Neill), whose ROCm stack the environment also follows. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **GUI:** [PySide6](https://pypi.org/project/PySide6/), [qt-material](https://pypi.org/project/qt-material/), [QtAwesome](https://github.com/spyder-ide/qtawesome).
+- **AI backend:** [Hugging Face Transformers](https://huggingface.co/docs/transformers/index), [ONNX Runtime](https://onnxruntime.ai/), [WD Taggers](https://huggingface.co/SmilingWolf).
+- **AMD support:** [ROCm for Windows](https://github.com/ROCm/TheRock).
 
-Created by **ArchAngelAries**. Code Assisted by **Google's Gemini Pro 3**.
-```
+Created by **ArchAngelAries**. Code assisted by Google's Gemini and Anthropic's Claude.

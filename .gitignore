@@ -24,3 +24,6 @@ Image Edits/
 # IDEs
 .vscode/
 .idea/
+
+# Local tooling
+.claude/

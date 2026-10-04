@@ -121,7 +121,8 @@ class ProblemImagesDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["Image", "Verdict", "LR x", "Residual", "Fixes"])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(0, 200)
         self.table.itemSelectionChanged.connect(self._show)
         split.addWidget(self.table)
         right = QWidget()
@@ -172,8 +173,7 @@ class ProblemImagesDialog(QDialog):
                  "mid": 7, "easy": 8}
         rows = sorted(imgs.items(), key=lambda kv: (order.get(kv[1].get("verdict", "mid"), 9), kv[0]))
         sel = self._selected_key()
-        self.table.setSortingEnabled(False)
-        self.table.setRowCount(len(rows))
+        self.table.setRowCount(len(rows))        # rows stay in problem-first order (no column sorting)
         for i, (k, s) in enumerate(rows):
             vals = [os.path.basename(k), s.get("verdict", ""), f"{s.get('multiplier', 1.0):.2f}",
                     f"{s.get('mean_residual', 0.0):+.4f}", str(len(applied.get(k, [])) or "")]
@@ -185,7 +185,6 @@ class ProblemImagesDialog(QDialog):
                 self.table.setItem(i, c, it)
             if k == sel:
                 self.table.selectRow(i)
-        self.table.setSortingEnabled(True)
         n_bad = sum(1 for _, s in rows if s.get("verdict") in ("stuck", "suspect", "excluded"))
         extra = ""
         if rep.get("plateaued"):

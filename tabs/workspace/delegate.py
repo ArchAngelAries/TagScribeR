@@ -100,12 +100,17 @@ class CardDelegate(QStyledItemDelegate):
         if getattr(e, "flags", None):
             names = {"duplicate": "DUPLICATE", "similar": "SIMILAR", "blurry": "BLURRY", "lowres": "LOW-RES",
                      "crop": "CROP"}
-            x = thumb_rect.left() + 4
             fm = QFontMetrics(self._small)
+            # pills sit on the row above the size badge and wrap upwards, so they never overlap it or each other
+            row = fm.height() + 8
+            x, y = thumb_rect.left() + 4, thumb_rect.bottom() - 2 * row + 2
             for f in sorted(e.flags):
                 label = names.get(f, f.upper())
-                self._pill(painter, label, QColor(155, 89, 182, 220), x, thumb_rect.bottom() - fm.height() - 6)
-                x += fm.horizontalAdvance(label) + 14
+                w = fm.horizontalAdvance(label) + 14
+                if x + w > thumb_rect.right() - 2 and x > thumb_rect.left() + 4:
+                    x, y = thumb_rect.left() + 4, y - row
+                self._pill(painter, label, QColor(155, 89, 182, 220), x, y)
+                x += w
         if job:
             label = {"working": "AI WORKING…", "queued": "QUEUED", "failed": "FAILED",
                      "review": "REVIEW"}.get(job, job.upper())

@@ -118,7 +118,7 @@ class SettingsTab(QWidget):
         main.addWidget(grp_tags)
 
         # --- Diagnostics ---
-        grp_diag = QGroupBox("System & diagnostics")
+        grp_diag = QGroupBox("System && diagnostics")
         ld = QVBoxLayout(grp_diag)
         self.txt_env = QPlainTextEdit("Detecting hardware…")
         self.txt_env.setReadOnly(True)

@@ -22,6 +22,9 @@ huggingface-hub
 hf_xet>=1.0            # faster downloads from Xet-backed HF repos (optional accelerator)
 sentencepiece==0.2.1   # tokenizer backend for several VLM families
 
+# Training (SDXL-family UNet, VAE and CLIP loading; other families ship their own model code)
+diffusers>=0.35
+
 # Tagger (WD14 / SmilingWolf ONNX models)
 onnxruntime>=1.20
 

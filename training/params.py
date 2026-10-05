@@ -51,7 +51,7 @@ class Param:
     minimum: float | None = None
     maximum: float | None = None
     advanced: bool = False         # collapsed by default in the UI
-    family_only: str = ""          # "adapter" | "ema" | "precision" | "lokr" | "edit" | "speed": shown when the
+    family_only: str = ""          # "adapter" | "ema" | "precision" | "lokr" | "edit" | "speed" | "option": shown when the
     #                                family declares that feature
 
 
@@ -167,6 +167,23 @@ PARAMS: tuple[Param, ...] = (
     P("MAX_TIMESTEP", "Noise range max", FLOAT, 1.0, "Timesteps",
       "The highest noise level trained (0-1). Lowering it trains only fine detail / style.", minimum=0.0,
       maximum=1.0, advanced=True),
+    # SDXL-family extensions (TagScribeR, NOT Fizgig: kohya sd-scripts options). All default OFF, so a run with them
+    # untouched is the plain recipe. Passed to the driver as driver_options (see DRIVER_OPTIONS).
+    P("SDXL_MIN_SNR_GAMMA", "Min-SNR gamma", FLOAT, 0.0, "Timesteps",
+      "Extension (off = 0). Down-weights the easy, low-noise timesteps so the loss is balanced across noise levels "
+      "(Hang et al. 2023, kohya's --min_snr_gamma). 5 is the usual value; try it if training looks unstable or "
+      "converges slowly. Applies to SDXL-family models only.", minimum=0.0, maximum=20.0, advanced=True,
+      family_only="option"),
+    P("SDXL_NOISE_OFFSET", "Noise offset", FLOAT, 0.0, "Timesteps",
+      "Extension (off = 0). Adds a small per-channel brightness shift to the training noise so the LoRA can learn "
+      "very dark and very bright images (kohya's --noise_offset). 0.03-0.05 is typical; leave off for v-prediction "
+      "models that already use zero-terminal-SNR. Applies to SDXL-family models only.", minimum=0.0, maximum=1.0,
+      advanced=True, family_only="option"),
+    P("SDXL_LOCON", "Also train convolutions (LoCon)", BOOL, False, "Training Parameters",
+      "Extension (off). Besides the attention and feed-forward layers, also train the 3x3 convolutions of the "
+      "ResNet blocks and the up / down samplers (kohya's conv_dim / LyCORIS LoCon), at the same rank. Bigger file, "
+      "more capacity for style; the file still loads in A1111 and ComfyUI. Applies to SDXL-family models only.",
+      advanced=True, family_only="option"),
     # ---- dataset ----------------------------------------------------------------------------------
     P("DATASET_MEGAPIXELS", "Target megapixels", CHOICE, "0.25", "Dataset",
       "Training resolution as an area. Images are bucketed by aspect ratio at about this many pixels (0.5 MP is "
@@ -246,6 +263,9 @@ PARAMS: tuple[Param, ...] = (
 )
 
 BY_KEY: dict[str, Param] = {p.key: p for p in PARAMS}
+
+# family-extension parameters -> the keyword `driver.configure()` receives (see FamilyDescription.family_options)
+DRIVER_OPTIONS = {"SDXL_MIN_SNR_GAMMA": "min_snr_gamma", "SDXL_NOISE_OFFSET": "noise_offset", "SDXL_LOCON": "locon"}
 PRESET_KEYS = tuple(p.key for p in PARAMS if p.preset)
 
 
@@ -319,6 +339,8 @@ def family_shows(param: Param, desc) -> bool:
         return bool(desc.edit_training)
     if f == "speed":
         return bool(desc.preview_speed())
+    if f == "option":
+        return param.key in desc.family_options
     return True
 
 

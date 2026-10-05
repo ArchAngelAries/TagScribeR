@@ -5,7 +5,8 @@
 # LoRAModule does for Conv2d), needed by UNet families such as SDXL; `LoRAFormat(kohya=True)` families (Krea 2) write
 # and read kohya keys (lora_unet_<flattened path>, a LoKR as diffusion_model.<dotted path>, as Fizgig's
 # krea2/trainer.py _save_lora does); a frozen file's `diff_b` bias deltas (the Krea 2 Turbo LoRA's) are applied while the
-# adapter is on (Fizgig krea2/trainer.py _apply_turbo_lora). Behaviour of non-kohya families is unchanged.
+# adapter is on (Fizgig krea2/trainer.py _apply_turbo_lora); `driver.lora_key_name` lets a kohya family write (and read)
+# keys named differently from its module paths (SDXL: LDM names). Behaviour of non-kohya families is unchanged.
 """The family layer's LoRA: wraps a family's Linears, trains one adapter and runs any number of frozen ones.
 
 Which Linears (driver.block_map / lora_target_names) and how files are keyed (description.lora: file prefix, down/up
@@ -225,6 +226,8 @@ class FamilyLoRA:
         self.linears = {n for n, m in dit.named_modules() if isinstance(m, (nn.Linear, nn.Conv2d))
                         and not isinstance(m, (LoRAFactor, LoRAConvFactor))}
         self._flat = {n.replace(".", "_"): n for n in self.linears}
+        # a family whose file key names differ from its module paths (SDXL: LDM names) also reads those
+        self._flat.update({driver.lora_key_name(n).replace(".", "_"): n for n in self.linears})
         self.wrapped = {}
         for full in sorted(self.targets):
             self._wrap(full)
@@ -239,7 +242,8 @@ class FamilyLoRA:
         `lora_unet_<path with dots as underscores>` (a LoKR: `diffusion_model.<dotted path>`, the LyCORIS standard)."""
         f = self.desc.lora
         if f.kohya:
-            return f"diffusion_model.{full}" if lokr else f"{f.file_prefix}{full.replace('.', '_')}"
+            return (f"diffusion_model.{full}" if lokr
+                    else f"{f.file_prefix}{self.driver.lora_key_name(full).replace('.', '_')}")
         return f"{f.file_prefix}{full}"
 
     def _keys(self, full):

@@ -1,7 +1,8 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/families/description.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: entry points are `python -m training.train` / `training.cache`; the Tkinter GUI's
-# legacy ARCHITECTURES adapter (architecture_entry) is dropped; model file paths live in TagScribeR settings.
+# legacy ARCHITECTURES adapter (architecture_entry) is dropped; model file paths live in TagScribeR settings;
+# `ModelFile.default_to` and `family_options` (SDXL: one checkpoint file holds the UNet, VAE and text encoders).
 """FamilyDescription: everything the trainer needs to know about one model family, in one object.
 
 A description holds the family's facts once (model files, latent rules, LoRA key format, presets, sampling
@@ -26,6 +27,8 @@ class ModelFile:
     note: str = ""                    # one plain line shown under the row
     local_name: str = ""              # name in models/ when the repo's own is generic (diffusion_pytorch_model...)
     role: str = ""                    # "dit" | "vae" | "text_encoder" | "training_adapter" | "speed_lora" | ""
+    default_to: str = ""              # role whose file stands in when this row is left empty (SDXL: the VAE and the text
+    #                                   encoders live inside the checkpoint, so an empty row means "use the checkpoint")
 
 
 @dataclass(frozen=True)
@@ -132,6 +135,9 @@ class FamilyDescription:
     train_memory: dict = field(default_factory=dict)
     optimizers: tuple = ("adamw8bit", "adamw")
     network_types: tuple = ("lora",)
+    # parameter keys (training/params.py DRIVER_OPTIONS) of the optional family extensions this family offers; the
+    # Train tab shows them only here and the run passes them to driver.configure()
+    family_options: tuple = ()
     edit_training: bool = False       # Edit LoRA from before/after pairs (the driver's supports_references)
     edit_note: str = ""               # the Edit LoRA section's "What you need" line: pair count and photo size
 
@@ -240,6 +246,12 @@ class FamilyDescription:
             problems.append("driver must be 'module.path:ClassName'")
         if self.driver and not all(self.pref_for(r) for r in ("dit", "vae", "text_encoder")):
             problems.append("a trainable family needs model files with roles dit, vae and text_encoder")
+        roles = {f.role for f in self.model_files}
+        for f in self.model_files:
+            if f.default_to and (f.default_to not in roles or f.default_to == f.role):
+                problems.append(f"{f.pref_key}: default_to must name another row's role")
+            if f.default_to and f.required:
+                problems.append(f"{f.pref_key}: a row that defaults to another file cannot be required")
         if self.training_adapter and self.pref_for("training_adapter") != self.training_adapter:
             problems.append("training_adapter must name the model file whose role is training_adapter")
         if self.driver and not (self.modelspec_arch and self.implementation):

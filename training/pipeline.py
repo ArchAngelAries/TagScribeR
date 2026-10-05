@@ -79,6 +79,29 @@ def precision_key(values, desc) -> str:
     return key if key == "auto" or key in desc.precisions else "auto"
 
 
+def model_path(desc, models: dict, role: str) -> str:
+    """The file a role resolves to: its own row, else the row it defaults to (SDXL: the VAE and text-encoder rows
+    fall back to the checkpoint, which holds both), else ""."""
+    row = next((f for f in desc.model_files if f.role == role), None)
+    if row is None:
+        return ""
+    path = (models.get(row.pref_key) or "").strip()
+    if not path and row.default_to and row.default_to != role:
+        return model_path(desc, models, row.default_to)
+    return path
+
+
+def driver_options(desc, values) -> dict:
+    """The family-extension settings (P.DRIVER_OPTIONS) this family offers, as driver.configure() keywords."""
+    out = {}
+    for key in desc.family_options:
+        name, param = P.DRIVER_OPTIONS.get(key), P.BY_KEY.get(key)
+        if name is None or param is None:
+            continue
+        out[name] = bool(values.get(key, param.default)) if param.kind == P.BOOL else _num(values, key)
+    return out
+
+
 def blocks_to_swap(values) -> int:
     raw = str(values.get("BLOCKS_SWAP") or "").strip()
     if not raw or raw.lower().startswith("auto"):
@@ -325,7 +348,7 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                  resume: str = "") -> tuple[dict, list[str]]:
     """training.train.train_family keyword arguments for these settings (Fizgig's _generic_train_command), and the
     preview prompts."""
-    m = lambda role: (models.get(desc.pref_for(role)) or "").strip()  # noqa: E731
+    m = lambda role: model_path(desc, models, role)  # noqa: E731
     kw = {
         "family": desc.key, "dit_path": m("dit"), "output_dir": str(run_dir),
         "output_name": str(values.get("LORA_NAME")).strip(),
@@ -347,6 +370,9 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
         "vae_path": m("vae") or None, "te_path": m("text_encoder") or None,
         "resume_state_dir": resume or None,
     }
+    opts = driver_options(desc, values)
+    if opts:
+        kw["driver_options"] = opts
     if values.get("ADAPTIVE_LR"):
         kw.update(adaptive_lr=True, adaptive_lr_min=float(P.first_token(values.get("ADAPTIVE_LR_MIN", "1e-5"))),
                   adaptive_lr_max=float(P.first_token(values.get("ADAPTIVE_LR_MAX", "4e-4"))))
@@ -439,7 +465,7 @@ def build_run(desc, values: dict, image_folder: str, models: dict, *, captioner:
         for stage, role in (("latents", "vae"), ("text", "text_encoder")):
             stages.append((f"Caching {stage}", [py, "-m", "training.cache", "--family", desc.key, "--stage", stage,
                                                 "--dataset", str(ds_path), "--model",
-                                                (models.get(desc.pref_for(role)) or "").strip(),
+                                                model_path(desc, models, role),
                                                 "--skip_existing"]))
     stages.append(("Training", [py, "-m", "training.train", "--config", str(cfg_path)]))
     return Run(desc.key, run_dir, kw["output_name"], stages, kw["max_train_epochs"], resume)

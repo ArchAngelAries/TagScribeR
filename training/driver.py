@@ -1,6 +1,7 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/families/driver.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: `supports_batching` (batch size > 1 for fixed-length conditioning, e.g. SDXL), Conv2d LoRA
+# Changes for TagScribeR: `configure` (driver options) and `lora_key_name` (kohya key names that differ from module
+# paths, SDXL), `supports_batching` (batch size > 1 for fixed-length conditioning, e.g. SDXL), Conv2d LoRA
 # targets (lora_target_names may name Conv2d modules; training/lora.py wraps both) and `quant_target_names` (a family
 # whose LoRA covers more Linears than it quantises, e.g. Krea 2).
 """FamilyDriver: the one interface a new model family implements.
@@ -41,6 +42,10 @@ class FamilyDriver:
     """Subclass per family. `description` is the family's FamilyDescription."""
 
     description = None
+
+    def configure(self, **options) -> None:
+        """Family-specific run options (train_family's `driver_options`, e.g. SDXL's min-SNR gamma), applied once
+        right after the driver is created. The default ignores them; a family that offers options overrides this."""
 
     # ---- models ---------------------------------------------------------------------------------
     def load_dit(self, path: str, device):
@@ -153,6 +158,13 @@ class FamilyDriver:
         """Dotted module names (relative to dit) of the Linears (or Conv2d) a LoRA wraps: every module in the block
         map."""
         return [m for g in self.block_map(dit) for b in g.blocks for m in b.modules]
+
+    def lora_key_name(self, module_path: str) -> str:
+        """The dotted module name a kohya-format LoRA file uses for a module (default: the module's own path). A
+        family whose in-memory names differ from the names its LoRA ecosystem expects (SDXL: diffusers names vs
+        the original LDM / SGM names A1111 and ComfyUI load) overrides this; `lora_unet_` + this name with dots as
+        underscores is the file key stem."""
+        return module_path
 
     def quant_target_names(self, dit) -> list:
         """Dotted names of the Linears INT8 / NF4 quantise: by default the LoRA targets. A family whose LoRA covers

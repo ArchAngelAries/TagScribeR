@@ -6,7 +6,8 @@
 #   * Klein's grad-clip-ratio signal fed to Adaptive LR;
 #   * previews never end a run: a failure (usually OOM) disables them for the rest of it (Fizgig's Krea 2 policy),
 #     and each epoch checkpoint's thumbnail is refreshed with its own preview (Fizgig #122);
-#   * TagScribeR's dataset layer and captioners; a CPU device for smoke tests; `--config run.json`.
+#   * TagScribeR's dataset layer and captioners; a CPU device for smoke tests; `--config run.json`;
+#   * `driver_options`: family extensions forwarded to driver.configure() (SDXL min-SNR gamma, noise offset, LoCon).
 # The pause contract, state dirs, resume, schedulers, EMA, adapters and file naming are Fizgig's.
 """The LoRA trainer for any family, driven through the family's driver.
 
@@ -291,12 +292,14 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                  gradient_checkpointing=True, blocks_to_swap=0, network_type="lora", lokr_factor=8,
                  gradient_accumulation=1,
                  log_per_image_loss=False, per_image_lr=False, auto_recaption=False, warmup_look_outliers=False,
-                 trigger_word=None, trigger_position="start", captioner=None, device=None):
+                 trigger_word=None, trigger_position="start", captioner=None, device=None, driver_options=None):
     desc = get_family(family)
     if desc is None or not desc.training_ready:
         raise RuntimeError(f"unknown or untrainable family {family!r}")
     validate_output_name(output_name)
     driver = desc.load_driver()
+    if driver_options:                  # family extensions (e.g. SDXL min-SNR gamma): the Train tab's DRIVER_OPTIONS
+        driver.configure(**driver_options)
     arch = desc.arch_id
     gradient_accumulation = max(1, int(gradient_accumulation or 1))
     speed_desc = desc.preview_speed() if speed_lora else None

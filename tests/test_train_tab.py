@@ -97,14 +97,17 @@ def test_console_step_bar_updates_in_place(app):
     tab.proc = _Proc()
     tab.tracker.reset(20)
     tab.console.clear()
-    for chunk in (b"[ema] ON\nsteps:   0%|          | 0/1200 [00:00<?, ?it/s]",
+    # the trainer's log lines arrive glued to the bar's tail (tqdm ends its line with no newline)
+    for chunk in (b"[ema] ON\nsteps:   0%|          | 0/1200 [00:00<?, ?it/s][warm-up] Warm-up phase - slow\n",
                   b"\rsteps:   0%|          | 1/1200 [00:04<1:21:54,  4.10s/it, avr_loss=0.1011]",
                   b"\rsteps:   0%|          | 2/1200 [00:07<1:11:20,  3.57s/it, avr_loss=0.1009]\n",
                   b"epoch 1/20  avr_loss=0.1009  step=60  3.50s/step  lr=2.828e-04  peak VRAM 16.1 GB\n"):
         tab.proc.chunks.append(chunk)
         tab._read()
     lines = tab.console.toPlainText().splitlines()
-    assert lines[0] == "[ema] ON" and lines[1].startswith("steps:") and "2/1200" in lines[1]
-    assert sum(l.startswith("steps:") for l in lines) == 1 and lines[2].startswith("epoch 1/20")
+    assert lines[0] == "[ema] ON" and lines[1].startswith("steps:") and "0/1200" in lines[1]
+    assert lines[2] == "[warm-up] Warm-up phase - slow"              # not swallowed by the bar it was glued to
+    assert lines[3].startswith("steps:") and "2/1200" in lines[3] and lines[4].startswith("epoch 1/20")
+    assert sum(l.startswith("steps:") for l in lines) == 2
     assert "step 2/1200" in tab.lbl_status.text()
     tab.proc = None

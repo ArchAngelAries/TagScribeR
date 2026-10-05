@@ -32,6 +32,9 @@ from training.registry import training_families
 # the trainer's tqdm step bar, including its first `0/1200 [00:00<?, ?it/s]` line (no rate yet, so the progress
 # tracker does not parse it)
 _STEP_BAR_RE = re.compile(r"^\s*steps:\s+\d+%\|")
+# tqdm leaves its bar without a newline, so the trainer's next log line arrives glued to the bar's tail:
+# `steps: 0%|   | 0/1200 [00:00<?, ?it/s][warm-up] ...`. Group 1 is the bar, group 2 the message.
+_GLUED_RE = re.compile(r"^(\s*steps:\s+\d+%\|[^|]*\|\s*\d+/\d+\s+\[[^\]]*\])(.*\S.*)$")
 
 log = logging.getLogger(__name__)
 
@@ -814,7 +817,11 @@ class TrainTab(QWidget):
         self._buf += data
         parts = self._buf.replace("\r\n", "\n").replace("\r", "\n").split("\n")
         self._buf = parts.pop()
+        lines = []
         for line in parts:
+            glued = _GLUED_RE.match(line)       # a log line stuck to the step bar: keep both, the message as its own line
+            lines.extend(glued.groups() if glued else (line,))
+        for line in lines:
             if not line.strip():
                 continue
             u = self.tracker.consume(line)

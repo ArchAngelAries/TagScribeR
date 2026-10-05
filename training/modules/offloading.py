@@ -1,6 +1,7 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/modules/offloading.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: env var prefix TAGSCRIBER_; otherwise unchanged.
+# Changes for TagScribeR: env var prefix TAGSCRIBER_; the mover thread sets the CUDA device only when the swap device
+# is a CUDA device (a CPU swap device no longer initialises CUDA); otherwise unchanged.
 """
 Fizgig offloading utilities.
 
@@ -313,8 +314,9 @@ class Offloader:
                     f"to {'CUDA' if self.cuda_available else 'device'}"
                 )
 
-            dev = self.device.index if self.device.index is not None else torch.cuda.current_device()
-            torch.cuda.set_device(dev)
+            if self.device.type == "cuda":      # TagScribeR: a CPU swap device (tests) must not initialise CUDA
+                dev = self.device.index if self.device.index is not None else torch.cuda.current_device()
+                torch.cuda.set_device(dev)
 
             sync_event = self.swap_weight_devices(block_to_cpu, block_to_cuda)
 

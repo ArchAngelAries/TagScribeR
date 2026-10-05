@@ -136,6 +136,13 @@ The options as originally presented:
   were verified against two trainers and ComfyUI (table in `description.py`). Rectified flow, Qwen3-0.6B plus T5
   token ids feeding the checkpoint's frozen LLM adapter, the Qwen-Image VAE, kohya keys. The presets are community
   starting points.
+- **MiniMax H3: on hold for a licence decision (2026-10-05).** A still-image port was written and tested on CPU,
+  but it is not in the repository. Fizgig's own headers describe its MiniMax DiT and VAE as faithful ports of
+  ComfyUI's `comfy/ldm/minimax` code, and ComfyUI is GPL-3.0. Including that code would bring GPL terms with it.
+  The options are: leave H3 out; re-implement the model from a permissively licensed reference; or ship those
+  files under GPL-3.0 and accept what that means for distributing the app. The parameter definitions and the
+  preset-key migration for H3 (`MINIMAX_*` in `training/params.py` and `training/presets.py`) are TagScribeR's own
+  code and stay in, unused until a family lists them.
 ## 6. Verification policy
 
 The owner runs all real training. Development verification uses:

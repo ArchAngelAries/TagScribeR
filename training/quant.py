@@ -111,7 +111,7 @@ def available(precision: str, device=None) -> tuple:
     if precision == "nf4":
         import importlib.util
         ok = importlib.util.find_spec("bitsandbytes") is not None
-        return ok, "" if ok else "4-bit NF4 needs the bitsandbytes package (install.bat --with-bnb)"
+        return ok, "" if ok else "4-bit NF4 needs the bitsandbytes package (run update.bat to install it)"
     if precision == "int8":
         dev = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         key = ("int8", dev.type)

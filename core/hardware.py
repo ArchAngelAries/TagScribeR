@@ -76,6 +76,7 @@ def apply_runtime_env() -> None:
         os.environ.setdefault("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")  # flash/mem-efficient SDPA on RDNA3+
         os.environ.pop("ROCBLAS_USE_HIPBLASLT_BATCHED", None)
         _expose_pip_rocm_sdk()
+        _select_bitsandbytes_rocm()
     # Reduce fragmentation when models are loaded/unloaded repeatedly.
     os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True,garbage_collection_threshold:0.8")
     # Don't phone home to the Hub on every from_pretrained when files are cached.
@@ -95,7 +96,8 @@ def _expose_pip_rocm_sdk() -> None:
     core = Path(list(spec.submodule_search_locations)[0])
     os.environ.setdefault("ROCM_PATH", str(core))
     os.environ.setdefault("HIP_PATH", os.environ["ROCM_PATH"])
-    extra = [core / "bin"]
+    import sys
+    extra = [core / "bin", Path(sys.executable).parent]      # hipinfo also lives beside the venv's python
     devel = importlib.util.find_spec("_rocm_sdk_devel")
     if devel is not None and devel.submodule_search_locations:
         extra.append(Path(list(devel.submodule_search_locations)[0]) / "bin")
@@ -103,6 +105,24 @@ def _expose_pip_rocm_sdk() -> None:
     prepend = [str(p) for p in extra if p.is_dir() and str(p) not in current]
     if prepend:
         os.environ["PATH"] = os.pathsep.join(prepend + [current])
+
+
+def _select_bitsandbytes_rocm() -> None:
+    """Tell bitsandbytes which ROCm build of its library to load: BNB_ROCM_VERSION must match the ROCm bundled with
+    the PyTorch wheel (715 for +rocm7.15). Set only when bitsandbytes actually ships that library; otherwise it is
+    left unset and bitsandbytes picks for itself. Must run before bitsandbytes is imported."""
+    if "BNB_ROCM_VERSION" in os.environ:
+        return
+    import re
+    from pathlib import Path
+    m = re.search(r"\+rocm(\d+)\.(\d+)", _installed_torch_version().lower())
+    spec = importlib.util.find_spec("bitsandbytes")
+    if not m or spec is None or not spec.submodule_search_locations:
+        return
+    tag = f"{m.group(1)}{m.group(2)}"
+    pkg = Path(list(spec.submodule_search_locations)[0])
+    if any(pkg.glob(f"libbitsandbytes_rocm{tag}.*")):
+        os.environ["BNB_ROCM_VERSION"] = tag
 
 
 # torch's first import is not thread-safe (concurrent imports can corrupt its op

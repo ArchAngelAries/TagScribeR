@@ -249,7 +249,7 @@ for its linear attention yet — output is correct).</td></tr>
 </table>
 <h3>Model options</h3>
 <ul><li><b>Precision</b> — Auto picks bfloat16 on GPUs that support it (RX 7000+, RTX 30+), else float16.</li>
-<li><b>Quantization</b> — 8-bit/4-bit need bitsandbytes (<code>install.bat --with-bnb</code>).</li>
+<li><b>Quantization</b> — 8-bit/4-bit need bitsandbytes (installed by default; run <code>update.bat</code> if it is missing).</li>
 <li><b>Allow reasoning mode</b> — lets Qwen3.5+ “think” first. Slower; rarely better for captions.</li>
 <li><b>Allow custom model code</b> — only for models from sources you trust.</li></ul>
 """),
@@ -468,7 +468,8 @@ needs bitsandbytes). fp8 checkpoints are loaded as they are.</li>
 uses as few as fit.</li>
 <li><b>Target megapixels</b> sets the training resolution. Higher is sharper but slower and needs more memory.</li>
 <li><b>Gradient accumulation</b> gives a bigger effective batch without more memory.</li>
-<li><b>AdamW 8-bit</b> needs the <code>bitsandbytes</code> package. Without it, runs fall back to AdamW with a
+<li><b>AdamW 8-bit</b> and the 4-bit base need the <code>bitsandbytes</code> package, which the installer adds by
+default. If it is missing (an older install), run <code>update.bat</code>. Without it, runs fall back to AdamW with a
 warning.</li>
 <li>Close other apps holding VRAM (ComfyUI, Forge) before training, and use <b>Free GPU memory</b> in Auto
 Caption.</li>

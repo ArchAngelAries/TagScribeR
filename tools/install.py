@@ -17,7 +17,7 @@ torch, so a CUDA wheel can never replace a ROCm install.
 
 Usage:
   python tools/install.py [--backend auto|rocm|cuda|cpu] [--arch gfx1100]
-                          [--experimental] [--deps-only] [--with-bnb] [--dry-run]
+                          [--experimental] [--deps-only] [--no-bnb] [--dry-run]
 
 Every pin below can be overridden with an environment variable of the same name.
 """
@@ -51,7 +51,9 @@ CUDA_TORCH_PIN = os.environ.get("CUDA_TORCH_PIN", "2.10.0")
 CUDA_VISION_PIN = os.environ.get("CUDA_VISION_PIN", "0.25.0")
 CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 
-# Community Windows ROCm bitsandbytes build (cp312 only) — optional, for 8/4-bit loading.
+# bitsandbytes is installed by default (as Fizgig does): training's default optimizer (AdamW 8-bit) and the 4-bit
+# base need it, and so does 8/4-bit model loading. On Windows ROCm it is a community build (0xDELUXA), cp312 only,
+# built by neither AMD nor TagScribeR - the same pinned wheel Fizgig installs. --no-bnb skips it.
 BNB_ROCM_WIN_WHEEL = os.environ.get(
     "BNB_WHEEL",
     "https://github.com/0xDELUXA/bitsandbytes_win_rocm/releases/download/"
@@ -215,14 +217,28 @@ def install_torch(backend: str, arch: str, experimental: bool, dry: bool) -> Non
 def install_bitsandbytes(backend: str, dry: bool) -> None:
     if backend == "rocm":
         if not IS_WINDOWS:
-            print("bitsandbytes on Linux ROCm: install a build matching your ROCm version manually.")
+            uv(["bitsandbytes>=0.50.0"], dry)        # ships the ROCm libraries on Linux (Fizgig does the same)
             return
         if sys.version_info[:2] != (3, 12):
             print("Skipping bitsandbytes: the Windows ROCm wheel is cp312-only.")
             return
+        print("Installing bitsandbytes (community Windows ROCm wheel, built by neither AMD nor TagScribeR):")
+        print(f"  {BNB_ROCM_WIN_WHEEL}")
         uv([BNB_ROCM_WIN_WHEEL], dry)
     elif backend == "cuda":
         uv(["bitsandbytes>=0.48"], dry)
+    else:
+        print("Skipping bitsandbytes: it needs a GPU build of PyTorch.")
+
+
+def installed_backend() -> str:
+    """rocm / cuda / cpu, read from the installed torch's version string without importing it."""
+    try:
+        from importlib.metadata import version
+        v = version("torch").lower()
+    except Exception:
+        return "cpu"
+    return "rocm" if "+rocm" in v else ("cuda" if "+cu" in v else "cpu")
 
 
 def verify() -> None:
@@ -240,7 +256,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--arch", default=os.environ.get("TAGSCRIBER_GFX", ""), help="AMD gfx target, e.g. gfx1100")
     ap.add_argument("--experimental", action="store_true", help="AMD Windows: floating newest nightlies (unpinned)")
     ap.add_argument("--deps-only", action="store_true", help="Only (re)install requirements.txt; leave torch alone")
-    ap.add_argument("--with-bnb", action="store_true", help="Also install bitsandbytes (8/4-bit model loading)")
+    ap.add_argument("--no-bnb", action="store_true", help="Skip bitsandbytes (8-bit optimizers, 8/4-bit loading)")
+    ap.add_argument("--with-bnb", action="store_true", help=argparse.SUPPRESS)   # older docs: now the default
     ap.add_argument("--dev", action="store_true", help="Also install test tooling")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
@@ -266,8 +283,11 @@ def main(argv: list[str] | None = None) -> int:
             arch = arch or auto_arch
         print(f"\nCompute backend: {backend.upper()}{' (' + arch + ')' if arch else ''}")
         install_torch(backend, arch, args.experimental, args.dry_run)
-        if args.with_bnb:
+        if not args.no_bnb:
             install_bitsandbytes(backend, args.dry_run)
+    elif not args.no_bnb and not _has_module("bitsandbytes"):
+        # update.bat on an install made before bitsandbytes became standard
+        install_bitsandbytes(installed_backend(), args.dry_run)
 
     uv(["-r", str(ROOT / "requirements.txt")], args.dry_run)
     if args.dev:

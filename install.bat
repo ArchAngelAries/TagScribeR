@@ -6,7 +6,7 @@ REM
 REM Options are passed through, e.g.:
 REM   install.bat --backend rocm --arch gfx1100
 REM   install.bat --experimental      (AMD: newest unpinned ROCm nightlies)
-REM   install.bat --with-bnb          (also install bitsandbytes for 8/4-bit loading)
+REM   install.bat --no-bnb            (skip bitsandbytes: 8-bit optimizers, 8/4-bit loading)
 setlocal enabledelayedexpansion
 title TagScribeR Installer
 cd /d "%~dp0"

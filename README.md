@@ -122,11 +122,13 @@ Supported: RX 7000 and RX 9000 series, Radeon PRO W7000, and Ryzen AI APUs (incl
 Other AMD options:
 
 ```cmd
-install.bat --with-bnb         :: add bitsandbytes (8-bit optimizers and 8/4-bit model loading)
+install.bat --no-bnb           :: skip bitsandbytes (8-bit optimizers and 8/4-bit model loading)
 install.bat --experimental     :: use AMD's newest, unpinned ROCm nightlies
 ```
 
 No separate ROCm or HIP SDK install is needed. The app sets the ROCm environment itself when it starts.
+
+bitsandbytes is installed by default. On Windows with an AMD card it is a community ROCm build ([0xDELUXA/bitsandbytes_win_rocm](https://github.com/0xDELUXA/bitsandbytes_win_rocm)), the same pinned wheel the Fizgig trainer uses. It is built by neither AMD nor TagScribeR.
 
 ### NVIDIA (CUDA)
 
@@ -137,7 +139,6 @@ To force it (for example on a machine with both vendors):
 
 ```cmd
 install.bat --backend cuda
-install.bat --backend cuda --with-bnb
 ```
 
 ### Linux
@@ -243,7 +244,7 @@ are not included and have their own licences.
 - **First image is slow (about 20 s) on AMD:** one-time kernel selection after a model loads. Later images take about a second.
 - **Qwen3.5 logs "falling back to its reference PyTorch implementation":** expected on ROCm. Output is correct. Use batch size 2 to 4, or Qwen3-VL for top speed.
 - **Out of GPU memory:** lower *Max image size*, use a smaller model, or close ComfyUI / Forge, which keep models in VRAM. A failed batch is retried one image at a time.
-- **Training falls back from AdamW 8-bit to AdamW:** install bitsandbytes with `install.bat --with-bnb`.
+- **Training falls back from AdamW 8-bit to AdamW:** bitsandbytes is missing. Run `update.bat`, which installs it.
 - **A model says it needs custom code:** enable *Allow custom model code* in Model options, but only for sources you trust.
 - **`install.bat` can't find Python 3.12:** install it from python.org (or `py install 3.12`) and run the installer again.
 

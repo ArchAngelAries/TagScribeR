@@ -341,6 +341,47 @@ def test_turbo_style_file_applies_and_restores_bias_deltas(desc, driver, tmp_pat
     assert torch.equal(dit.first.base.bias, base)
 
 
+def test_staged_turbo_lora_does_not_touch_training(desc, driver, tmp_path):
+    """The Turbo LoRA is a PREVIEW aid only: staged the way train_family stages it (loaded, switched off, parked on
+    CPU), the training loss is bit-identical to a run without it, it gets no gradient, and it is never saved. Switched
+    on - as only the preview renderer does - it does change the model's output."""
+    from safetensors.torch import save_file
+    f = {"diffusion_model.blocks.0.attn.wq.lora_down.weight": torch.randn(4, 64) * 0.5,
+         "diffusion_model.blocks.0.attn.wq.lora_up.weight": torch.randn(64, 4) * 0.5,
+         "diffusion_model.blocks.0.attn.wq.alpha": torch.tensor(4.0),
+         "diffusion_model.first.diff_b": torch.full((64,), 0.5)}
+    path = str(tmp_path / "turbo.safetensors")
+    save_file(f, path)
+
+    def loss_of(stage_turbo, enabled=False):
+        dit = _dit()
+        net = FamilyLoRA(dit, driver)
+        if stage_turbo:
+            assert net.add_file(path, "speed_lora") == 1
+            net.set_enabled("speed_lora", enabled)             # train.py: off right after loading
+            if not enabled:
+                net.move_adapter("speed_lora", "cpu")
+        torch.manual_seed(1)
+        net.add_trainable(4, 4)
+        with torch.no_grad():
+            for p in net.parameters():
+                p.add_(0.01)                                    # a non-zero trainable LoRA, so the path is live
+        loss, _ = driver.training_loss(dit, torch.randn(1, 16, 8, 8, generator=torch.Generator().manual_seed(2)),
+                                       _cond(1), torch.Generator().manual_seed(3))
+        return loss, net
+
+    plain, _ = loss_of(False)
+    staged, net = loss_of(True)
+    assert torch.equal(plain, staged)                           # off = exactly as if it were not there
+    staged.backward()
+    turbo = [p for w in net.wrapped.values() if "speed_lora" in w.adapters for p in w.adapters["speed_lora"].parameters()]
+    assert turbo and all(p.grad is None and not p.requires_grad for p in turbo)
+    assert not any("speed" in k for k in net.state_dict())      # only the trainable LoRA is saved
+    assert len(net.state_dict()) == 3 * len(net.trainable_modules())
+    on, _ = loss_of(True, enabled=True)
+    assert not torch.equal(plain, on)                           # the test would notice if it were left on
+
+
 # ---- loading ------------------------------------------------------------------------------------------------
 def test_loader_reads_bf16_and_rejects_wrong_keys(tmp_path):
     from safetensors.torch import save_file

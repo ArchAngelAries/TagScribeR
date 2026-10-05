@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, Q
 
 from core.config import settings
 from tabs.common import CollapsibleSection, confirm, hint_label
+from tabs.memory_bar import MemoryBar
 from tabs.train_dialogs import LossChart, ProblemImagesDialog, SampleOverrideDialog
 from tabs.workspace.context import workspace
 from training import params as P
@@ -615,6 +616,17 @@ class TrainTab(QWidget):
         lay.addWidget(self.lbl_status)
         self.progress = QProgressBar()
         lay.addWidget(self.progress)
+        # VRAM / RAM with this run's peak, as Fizgig's trainer shows it (Hide stats is remembered across launches)
+        stats = QHBoxLayout()
+        self.memory_bar = MemoryBar()
+        stats.addWidget(self.memory_bar, 1)
+        self.btn_stats = QPushButton()
+        self.btn_stats.setFlat(True)
+        self.btn_stats.setToolTip("Show or hide the VRAM / RAM bars. Peaks are still tracked while hidden.")
+        self.btn_stats.clicked.connect(self._toggle_stats)
+        stats.addWidget(self.btn_stats)
+        lay.addLayout(stats)
+        self._show_stats(bool(self.cfg.get("training.stats_bar_visible", True)))
         tabs = QTabWidget()
         self.chart = LossChart()
         tabs.addTab(self.chart, "Loss")
@@ -651,6 +663,15 @@ class TrainTab(QWidget):
         split.setSizes([380, 300])
         lay.addWidget(split, 1)
         return w
+
+    def _show_stats(self, visible):
+        self.memory_bar.setVisible(visible)
+        self.btn_stats.setText("Hide stats" if visible else "Show stats")
+
+    def _toggle_stats(self):
+        visible = self.memory_bar.isHidden()
+        self._show_stats(visible)
+        self.cfg.set("training.stats_bar_visible", visible)
 
     def _console_progress(self, text):
         """The trainer's `steps: N/total` bar: one console line, replaced by each update (printing it once and never
@@ -754,6 +775,7 @@ class TrainTab(QWidget):
             self.chart.clear()
         self.tracker.reset(self.run.total_epochs)
         self._progress_line, self._stopped = "", False
+        self.memory_bar.reset_peaks()
         for c in checks:
             if c.level == "info":
                 self._console(f"[check] {c.message}")
@@ -904,6 +926,7 @@ class TrainTab(QWidget):
 
     def shutdown(self):
         """Called by main.py on quit (after the user confirmed)."""
+        self.memory_bar.shutdown()
         if self.proc:
             pipeline.kill_tree(int(self.proc.processId()))
             self.proc.waitForFinished(5000)

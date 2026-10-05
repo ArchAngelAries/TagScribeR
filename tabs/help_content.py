@@ -473,6 +473,12 @@ default. If it is missing (an older install), run <code>update.bat</code>. Witho
 warning.</li>
 <li>Close other apps holding VRAM (ComfyUI, Forge) before training, and use <b>Free GPU memory</b> in Auto
 Caption.</li>
+<li>The <b>VRAM</b> and <b>RAM</b> bars under the progress bar show memory in use out of the total, updated every
+second. The white mark and the <i>peak</i> figure are the highest point of the current run; they reset when a run
+starts. Both bars cover the whole machine, so other apps are included. If VRAM is pinned at the top of the bar,
+training is likely spilling into system memory and slowing down: lower Target megapixels, pick a smaller Base
+precision or swap more blocks. <b>Hide stats</b> hides the bars (remembered). A card with no readable counter
+shows "VRAM stats unavailable".</li>
 <li>Photos that are rotated only by EXIF are trained as stored, so the pre-start check warns about them. Edit and save
 them in the Image Editor first.</li>
 </ul>

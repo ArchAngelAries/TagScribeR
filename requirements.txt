@@ -48,4 +48,5 @@ piexif==1.1.3
 # Safety & platform
 send2trash>=1.8        # deletes go to the Recycle Bin
 keyring>=25            # API keys in Windows Credential Manager / OS keychain
-psutil>=5.9            # RAM checks before loading models
+psutil>=5.9            # RAM checks before loading models; the Train tab's RAM bar
+nvidia-ml-py>=12.0     # fast NVIDIA VRAM reads for the Train tab's memory bar (falls back to nvidia-smi)

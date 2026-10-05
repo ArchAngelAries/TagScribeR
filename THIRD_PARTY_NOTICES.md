@@ -37,6 +37,7 @@ uses:
 | `training/modules/fp8.py` | `src/fizgig/krea2/fp8_optimization_utils.py`, `krea2/utils.py` (adapted by Fizgig from musubi-tuner) |
 | `training/families/qwen_image21/` | `src/fizgig/families/qwen_image.py` and `src/fizgig/qwen_image21/` |
 | `training/families/krea2/` | `src/fizgig/krea2/` (`model.py`, `sampling.py`, `vae.py`, `vae_loader.py`, `embedder.py`, `trainer.py`, `caching.py`, `utils.py`), `lora_trainer_gui.py` (presets, model paths), `scripts/fetch_models.py`, `utils/capabilities.py` (measured memory) |
+| `core/vram_monitor.py`, `tabs/memory_bar.py` | `src/fizgig/utils/vram_monitor.py` and the status bar of `lora_trainer_gui.py` (VRAM / RAM readers, peak marker; redrawn in Qt) |
 
 The training presets, parameter names and defaults (`training/params.py`) follow Fizgig's Training tab.
 

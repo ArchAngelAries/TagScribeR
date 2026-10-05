@@ -68,6 +68,15 @@ class FamilyDriver:
         the high-noise LR scale, the trained blocks - Fizgig minimax/trainer.py _run_provenance). Default: none."""
         return {}
 
+    def speed_lora_extras(self, dit, path: str, strength: float):
+        """What a preview speed LoRA carries beyond the Linears the LoRA layer hosts (MiniMax H3: the Turbo LoRA's
+        full-model AdaLN rows, injected at run time on the pruned base). Called once, after the file's Linears are
+        attached; returns an opaque handle for set_speed_lora_extras, or None. Default: nothing."""
+        return None
+
+    def set_speed_lora_extras(self, dit, handle, on: bool, device=None) -> None:
+        """Switch the handle from speed_lora_extras on for a preview render and off after it (idempotent)."""
+
     def trainable_blocks(self):
         """Block ids (driver.block_map) the trainable adapter covers; None = every target. A family with block
         targeting (Klein's Model Area) returns its configured selection."""

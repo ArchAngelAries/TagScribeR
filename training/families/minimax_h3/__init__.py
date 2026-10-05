@@ -7,7 +7,6 @@ THIRD_PARTY_NOTICES.md.
 
 Not ported (Fizgig has them; this family does not): video clips, audio / voice items, reference images (RefMods),
 multi-concept, reference distillation, the rotation full fine-tune, TREAD token routing (Fizgig runs it on clip steps
-only, never on stills), "clip still" (a clip feature), the high-noise LR % dial (Fizgig never applies it under Automagic
-v3, the preset optimiser), HQQ / NF4-streamed H2D rings and the int8 attention kernel, the Turbo-LoRA previews, the
+only, never on stills), "clip still" (a clip feature), HQQ / NF4-streamed H2D rings and the int8 attention kernel, the
 adapter ramp, the movement limiter and the 66 GB bf16 base.
 """

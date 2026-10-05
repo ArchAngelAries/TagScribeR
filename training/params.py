@@ -322,6 +322,16 @@ PARAMS: tuple[Param, ...] = (
     P("FAMILY_TURBO_STRENGTH", "Turbo LoRA strength", FLOAT, -1.0, "Samples",
       "The family's speed LoRA for fast previews (needs its file under Model files). 0 = previews without it; "
       "-1 = the family default.", preset=False, minimum=-1.0, maximum=2.0, family_only="speed"),
+    # MiniMax H3 Turbo preview pace: Fizgig's Samples-tab keys and defaults (lora_trainer_gui.py:2203-2205,
+    # 13093-13118; _NON_TRAINING_ENTRY_KEYS, so not part of presets). Read by training/pipeline.py train_kwargs.
+    P("MINIMAX_TURBO_STEPS", "Turbo preview steps", INT, 6, "Samples",
+      "MiniMax H3, used when the Turbo LoRA is set under Model files: previews render in these few steps with the "
+      "Turbo on top of your training LoRA - previews only, never the saved LoRA. 6 steps at 75% is the tested "
+      "recommendation; without the Turbo file, the Steps box above applies as before.", preset=False, minimum=1,
+      maximum=200, family_only="option"),
+    P("MINIMAX_TURBO_STRENGTH", "Turbo preview strength %", FLOAT, 75.0, "Samples",
+      "MiniMax H3: the Turbo LoRA's strength for previews, in percent (75 recommended; 0-200).", preset=False,
+      minimum=0.0, maximum=200.0, family_only="option"),
     P("FAMILY_EDIT_REF", "Edit preview photo", PATH, "", "Samples",
       "Edit LoRA: the photo every preview applies the edit to (empty = the first original).", preset=False,
       family_only="edit"),
@@ -413,8 +423,8 @@ def family_shows(param: Param, desc) -> bool:
         return "lokr" in desc.network_types
     if f == "edit":
         return bool(desc.edit_training)
-    if f == "speed":
-        return bool(desc.preview_speed())
+    if f == "speed":                    # a family with its own Turbo pace keys (MiniMax H3) shows those instead
+        return bool(desc.preview_speed()) and not any(k.endswith("_TURBO_STRENGTH") for k in desc.family_options)
     if f == "option":
         return param.key in desc.family_options
     return True

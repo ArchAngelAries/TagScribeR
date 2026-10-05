@@ -215,7 +215,7 @@ def _load_references(paths, width, height):
 
 
 def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_name, steps, cfg, neg, width,
-                     height, seed, ema=None, speed=None, lowmem=False, swapped=False, refs=None):
+                     height, seed, ema=None, speed=None, lowmem=False, swapped=False, refs=None, speed_extras=None):
     """Previews on the RESIDENT training model: training adapter OFF (the deployment setup), the family's speed LoRA
     ON if one is loaded (it lives on CPU between previews), EMA weights swapped in. On small cards the model parks on
     CPU for the decode. File names: <name>_e<epoch:06d>_<idx:02d>_<timestamp>_<seed>.png."""
@@ -228,6 +228,11 @@ def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_n
     if speed is not None:
         net.move_adapter(SPEED, device)
         net.set_enabled(SPEED, True)
+        if speed_extras is not None:
+            driver.set_speed_lora_extras(dit, speed_extras, True, device)
+    # a speed LoRA that keeps the Samples tab's CFG and negative prompt (MiniMax H3's Turbo: Fizgig changes only the
+    # steps and the strength) says so in its options
+    keep_cfg = speed is not None and dict(speed.options or ()).get("keep_cfg")
     if ema is not None:
         ema.swap_in()
     was_training = dit.training
@@ -241,7 +246,7 @@ def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_n
         lats = []
         for i, cond in enumerate(encoded):
             cond = {k: v.to(device) if hasattr(v, "to") else v for k, v in cond.items()}
-            if speed is not None:
+            if speed is not None and not keep_cfg:
                 lats.append(driver.generate(dit, cond, width, height, steps=steps, seed=seed + i, cfg=speed.cfg,
                                             sigmas=speed.sigmas, options=speed.options, **ref_kw))
             else:
@@ -266,6 +271,8 @@ def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_n
             ema.swap_out()
         if speed is not None:
             net.set_enabled(SPEED, False)
+            if speed_extras is not None:
+                driver.set_speed_lora_extras(dit, speed_extras, False)
             net.move_adapter(SPEED, "cpu")
         net.set_enabled(ADAPTER, True)
         dit.train(was_training)
@@ -402,8 +409,10 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         n = net.add_file(context_lora_path, CONTEXT, context_lora_strength)
         logger.info(f"[context] {os.path.basename(context_lora_path)} frozen + active at {context_lora_strength:g} "
                     f"({n} modules)")
+    speed_extras = None
     if speed_lora and encoded is not None:
-        n = net.add_file(speed_lora, SPEED, speed_desc.strength if speed_lora_strength is None else speed_lora_strength)
+        speed_strength = speed_desc.strength if speed_lora_strength is None else speed_lora_strength
+        n = net.add_file(speed_lora, SPEED, speed_strength)
         if n == 0:
             net.remove(SPEED)
             logger.warning(f"[sample] {os.path.basename(speed_lora)} matched no {desc.display_name} layers "
@@ -416,6 +425,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             net.move_adapter(SPEED, "cpu")
             logger.info(f"[sample] {speed_desc.name}: {n} modules, on CPU between previews, on only while they "
                         f"render ({sample_steps} steps)")
+            speed_extras = driver.speed_lora_extras(dit, speed_lora, speed_strength)
     if network_type == "lokr" and "lokr" not in desc.network_types:
         raise RuntimeError(f"{desc.display_name} does not offer LoKR")
     net.add_trainable(network_dim, network_alpha, blocks=driver.trainable_blocks(), kind=network_type,
@@ -550,7 +560,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                                      steps=sample_steps, cfg=sample_cfg_scale, neg=neg, width=w, height=h,
                                      seed=sd, ema=ema,
                                      speed=speed_desc.settings if (speed_lora and speed_desc) else None,
-                                     lowmem=lowmem, swapped=bool(swapped), refs=ref_latents)
+                                     lowmem=lowmem, swapped=bool(swapped), refs=ref_latents,
+                                     speed_extras=speed_extras)
         except Exception:
             previews_on[0] = False
             logger.exception(f"[sample] epoch {epoch}: preview failed - previews are off for the rest of this run; "

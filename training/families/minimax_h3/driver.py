@@ -290,6 +290,31 @@ class MiniMaxH3Driver(FamilyDriver):
         return S.sample_image(dit, text, width=width, height=height, steps=steps, cfg_scale=cfg, uncond_embeds=uncond,
                               seed=seed, noise=noise, on_step=on_step, device=device, dtype=self.compute_dtype)
 
+    # ---- the Turbo LoRA's AdaLN rows (previews) -----------------------------------------------------
+    def speed_lora_extras(self, dit, path, strength):
+        """Fizgig trainer.py load_preview_turbo: the Turbo's AdaLN rows cannot be hosted by the pruned base as weights
+        and come back as (module, A, B x strength) pairs for the run-time injection. Never a run-killer."""
+        from training.families.minimax_h3 import turbo
+        try:
+            pairs = turbo.read_adaln_pairs(dit, path, strength)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[turbo] could not read the AdaLN rows ({type(e).__name__}: {e}) — previews render "
+                           f"without them")
+            return None
+        if pairs:
+            logger.info(f"[turbo] {len(pairs)} adaln via run-time injection at strength {float(strength):g}")
+        return pairs or None
+
+    def set_speed_lora_extras(self, dit, handle, on, device=None):
+        from training.families.minimax_h3 import turbo
+        if not handle:
+            return
+        if on:
+            n = turbo.adaln_patch(dit, handle, device, self.compute_dtype)
+            logger.info("[preview] Turbo LoRA on" + (f", {n} adaln injected" if n else ""))
+        else:
+            turbo.adaln_unpatch(handle)
+
     @torch.no_grad()
     def decode(self, vae, latents, width, height):
         from PIL import Image

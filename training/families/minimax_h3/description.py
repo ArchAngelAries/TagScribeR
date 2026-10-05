@@ -6,7 +6,7 @@
 # every value cites its file; the presets keep Fizgig's keys and values verbatim (the MINIMAX_* keys this app expresses
 # differently are mapped by training/presets.py migrate_legacy).
 """MiniMax H3 (image LoRA training only): the 33B omni DiT trained on single still images."""
-from training.description import FamilyDescription, LoRAFormat, ModelFile, SamplingSettings
+from training.description import FamilyDescription, LoRAFormat, ModelFile, SamplingSettings, SpeedLoRA
 
 _REPO = "Comfy-Org/MiniMax-H3"
 _FETCH = "Fizgig scripts/fetch_models.py FAMILIES['minimax']"
@@ -70,6 +70,12 @@ MINIMAX_H3 = FamilyDescription(
                   "minimax_h3_image_training_adapter.safetensors", 0.62,
                   "Optional but recommended for photos: a frozen helper LoRA on for every training step, off for "
                   "previews, never saved into your LoRA.", role="training_adapter"),
+        ModelFile("minimax_turbo_lora", "Turbo LoRA (previews)", False, "larryvrh/MiniMax-H3-Turbo-Lora",
+                  "minimax_h3_turbo_v4_step600.safetensors", 0.78,
+                  "Optional: fast in-training previews. With this set, previews render in 6 steps with the community "
+                  "Turbo LoRA at 75% on top of your training LoRA instead of the full 20-step pass. Previews only: it "
+                  "is switched in for the render and out before the next training step, and your saved LoRA never "
+                  "contains it. Steps and strength are under Samples.", role="speed_lora"),
     ),
     text_encoder_label="Qwen3-VL-32B",
     vae_label="MiniMax H3 video VAE",
@@ -123,6 +129,30 @@ MINIMAX_H3 = FamilyDescription(
                               "was mostly trained on: it answers 'is the LoRA learning?', not final quality.",
                          source="Fizgig minimax/sampling.py sample_schedule / _sample_image_impl"),
     ),
+    speed_loras=(
+        SpeedLoRA(
+            name="MiniMax H3 Turbo (v4, step 600)",
+            repo="larryvrh/MiniMax-H3-Turbo-Lora",
+            file="minimax_h3_turbo_v4_step600.safetensors",
+            pairs_with="MiniMax H3 fl2va (pruned int8)",
+            strength=0.75,                                   # trainer.py turbo_lora_strength, MINIMAX_TURBO_STRENGTH 75
+            settings=SamplingSettings("Turbo 6-step", steps=6, cfg=1.0, sampler="res_multistep", scheduler="simple",
+                                      options=(("keep_cfg", True),),
+                                      note="The same sampler and shift-12 schedule as the plain pass: Fizgig changes "
+                                           "only the step count and applies the LoRA; the Samples tab's CFG and "
+                                           "negative prompt still apply.",
+                                      source="Fizgig lora_trainer_gui.py:34709-34726 (6 steps, 75%), "
+                                             "minimax/trainer.py:4776-4800 (sample_image unchanged)"),
+            load_unmerged=True,
+            pref_key="minimax_turbo_lora",
+            caveats=("The file also adapts the AdaLN projections in the full model's 2688-wide time-embedding space, "
+                     "which the pruned base cannot host as weights. They are injected at run time from a precomputed "
+                     "grid (assets/h3_silu_temb_grid.safetensors) while a preview renders, and removed after.",),
+            source=f"{_FETCH}; Fizgig minimax/trainer.py load_preview_turbo, turbo_adaln_patch",
+        ),
+    ),
+    preview_speed_lora="MiniMax H3 Turbo (v4, step 600)",
+    preview_speed_steps=6,                                   # MINIMAX_TURBO_STEPS
     preview_steps=20,
     preview_cfg=1.0,
     preview_width=512,                                       # Fizgig _build_minimax_train_command fallback "512"
@@ -133,7 +163,8 @@ MINIMAX_H3 = FamilyDescription(
         ("✨ MiniMax H3 (rank 16, 60 epochs)", dict(_DEFAULTS)),
         ("✨ MiniMax H3 Style (LoRA 8)", dict(_STYLE)),
     ),
-    family_options=("MINIMAX_LOWNOISE_PCT", "MINIMAX_HIGHNOISE_LR_PCT", "MINIMAX_LIKENESS_MODE", "MINIMAX_BLOCKS"),
+    family_options=("MINIMAX_LOWNOISE_PCT", "MINIMAX_HIGHNOISE_LR_PCT", "MINIMAX_LIKENESS_MODE", "MINIMAX_BLOCKS",
+                    "MINIMAX_TURBO_STEPS", "MINIMAX_TURBO_STRENGTH"),
 
     helper_files=(("Qwen/Qwen3-VL-4B-Instruct", ("chat_template.json", "generation_config.json", "merges.txt",
                                                   "preprocessor_config.json", "tokenizer.json",
@@ -141,8 +172,12 @@ MINIMAX_H3 = FamilyDescription(
                                                   "vocab.json")),),
 
     notes=(
-        ("Image LoRA training only: video clips, voice, reference images (RefMods), multi-concept, distillation, the "
-         "rotation full fine-tune and the Turbo-LoRA previews are not part of this port.", "docs/TRAINING_PLAN.md"),
+        ("Image LoRA training only: video clips, voice, reference images (RefMods), multi-concept, distillation and the "
+         "rotation full fine-tune are not part of this port.", "docs/TRAINING_PLAN.md"),
+        ("Turbo-LoRA previews: with the Turbo file set, previews render at MINIMAX_TURBO_STEPS (6) with the LoRA at "
+         "MINIMAX_TURBO_STRENGTH (75%) on the same sampler and schedule; its AdaLN rows are injected at run time on the "
+         "pruned base. The training adapter is off and the context LoRA on for the render, as before.",
+         "Fizgig minimax/trainer.py:1233-1310, 3825-3857, 4774-4787; lora_trainer_gui.py:34709-34726"),
         ("Training target is x0 - noise on noised = (1 - sigma) x0 + sigma noise, t = 1 - sigma fed to the DiT (sign "
          "convention matched to ComfyUI). The Low-noise training % dial sets the schedule shift (1 - P) / P; the "
          "default 60% is shift 0.667.", "Fizgig minimax/trainer.py:1-14, lora_trainer_gui.py:518-540"),

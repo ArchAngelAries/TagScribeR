@@ -509,7 +509,7 @@ Tools; without them the run trains normally and says so.</li>
 <li><b>Images only.</b> TagScribeR trains H3 LoRAs from still images. Clips, sound and voice items aren't
 supported here.</li>
 <li><b>Files:</b> the pruned INT8 DiT (about 21 GB), the Qwen3-VL-32B text encoder, the H3 video VAE, and the optional
-training adapter. <i>Get</i> opens each download page.</li>
+training adapter and Turbo LoRA. <i>Get</i> opens each download page.</li>
 <li><b>Memory:</b> loading the DiT needs about 22 GB of free system RAM. Caching captions needs about 15 GB of free
 VRAM; with less, the text encoder streams from system RAM and is slower.</li>
 <li>The default mode trains blocks 20 to 49. <b>Low-noise %</b> and the training mode are under <i>Show all
@@ -519,8 +519,11 @@ settings</i>.</li>
 steps drawn from the noisy half of the range, where pose, framing and face shape are decided. Leave it at 100 unless
 you are experimenting; lower values bias a run toward surface detail. It only acts with the AdamW optimizer:
 Automagic v3 sets its own rate and ignores it.</li>
-<li>Previews run at 20 steps on the training model. Fizgig's Turbo-LoRA previews and HQQ 4-bit aren't available
-yet.</li>
+<li><b>Previews</b> run at 20 steps on the training model. Set the optional <b>Turbo LoRA</b> under Model files and
+they render in 6 steps with the Turbo at 75% on top of your LoRA. It is used for previews only and is never saved into
+your LoRA. <i>Turbo preview steps</i> and <i>Turbo preview strength %</i> (Samples) change the pace; CFG and the
+negative prompt still apply. Without the file, the Steps box applies.</li>
+<li>Fizgig's HQQ 4-bit base isn't available yet.</li>
 </ul>
 <h3>FLUX.2 Klein Base 9B</h3>
 <ul>

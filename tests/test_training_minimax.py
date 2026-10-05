@@ -427,3 +427,126 @@ def test_loop_scales_the_optimizer_lr_not_the_loss(tmp_path, monkeypatch, optimi
     sd = load_file(str(run.run_dir / "band.safetensors"))
     up = sum(float(v.abs().sum()) for k, v in sd.items() if "lora_up" in k)
     assert (up > 0) is moves
+
+
+# ---- Turbo-LoRA previews (Fizgig load_preview_turbo / turbo_adaln_patch) -------------------------------------------
+E_WIDE = 12          # the tiny stand-in for the full model's 2688-wide silu(t_emb) space
+
+
+def _turbo_file(path, dit, rank=2, dotted=False):
+    """A tiny 'Turbo' LoRA: block Linears the base can host, plus AdaLN rows in the full model's (E_WIDE) space."""
+    from safetensors.torch import save_file
+    g = torch.Generator().manual_seed(7)
+    sd = {}
+
+    def put(mod, n_in, n_out):
+        stem = f"diffusion_model.{mod}" if dotted else "lora_unet_" + mod.replace(".", "_")
+        a, b = (".lora_A.weight", ".lora_B.weight") if dotted else (".lora_down.weight", ".lora_up.weight")
+        sd[stem + a] = torch.randn(rank, n_in, generator=g) * 0.3
+        sd[stem + b] = torch.randn(n_out, rank, generator=g) * 0.3
+        if not dotted:
+            sd[stem + ".alpha"] = torch.tensor(float(rank))
+    for i in range(len(dit.blocks)):
+        lin = dit.blocks[i].attn.qkv_proj
+        put(f"blocks.{i}.attn.qkv_proj", lin.in_features, lin.out_features)
+        put(f"blocks.{i}.adaln_proj.linear", E_WIDE, dit.blocks[i].adaln_proj.linear.out_features)
+    put("final_layer.adaln_proj.linear", E_WIDE, dit.final_layer.adaln_proj.linear.out_features)
+    save_file(sd, str(path))
+    return sd
+
+
+def test_turbo_grid_asset_is_the_full_models_table():
+    from training.families.minimax_h3 import turbo
+    grid = turbo.load_h3_egrid()
+    assert tuple(grid.shape) == (1025, 2688) and torch.isfinite(grid.float()).all()
+
+
+@pytest.mark.parametrize("dotted", [False, True])
+def test_turbo_adaln_rows_are_injected_and_removed(tmp_path, dotted):
+    from training.families.minimax_h3 import turbo
+    dit = _dit(pruned=True)
+    f = tmp_path / "turbo.safetensors"
+    sd = _turbo_file(f, dit, dotted=dotted)
+    pairs = turbo.read_adaln_pairs(dit, str(f), 0.75)
+    assert len(pairs) == len(dit.blocks) + 1                     # every AdaLN projection, none of the block Linears
+    egrid = torch.randn(9, E_WIDE, generator=torch.Generator().manual_seed(3))
+    ap = dit.blocks[1].adaln_proj
+    stem = "diffusion_model.blocks.1.adaln_proj.linear" if dotted else "lora_unet_blocks_1_adaln_proj_linear"
+    A = sd[stem + (".lora_A.weight" if dotted else ".lora_down.weight")]
+    B = sd[stem + (".lora_B.weight" if dotted else ".lora_up.weight")]
+    t_emb = dit.adaln_t_table[[2, 6]].float()                    # exactly on table rows 2 and 6
+    before = torch.cat(ap(t_emb), dim=-1)
+    assert turbo.adaln_patch(dit, pairs, "cpu", torch.float32, egrid=egrid) == len(pairs)
+    after = torch.cat(ap(t_emb), dim=-1)
+    want = (0.75 * B @ (A @ egrid[[2, 6]].T)).T.reshape(after.shape)   # x += B @ A @ silu(t_emb), strength in B
+    assert torch.allclose(after - before, want, atol=1e-5)
+    off = dit.adaln_t_table[[2, 6]].float() + 1e-4               # near a row: the nearest row's grid entry stands in
+    assert torch.allclose(torch.cat(ap(off), dim=-1) - torch.cat(turbo._adaln_forward(ap, [], dit.adaln_t_table,
+                                                                 egrid)(off), dim=-1), want, atol=1e-5)
+    turbo.adaln_unpatch(pairs)
+    turbo.adaln_unpatch(pairs)                                   # idempotent
+    assert torch.equal(torch.cat(ap(t_emb), dim=-1), before) and "forward" not in vars(ap)
+    assert turbo.adaln_patch(dit, pairs, "cpu", torch.float32) == 0        # the real grid has 1025 rows, not 9
+    assert turbo.adaln_patch(_dit(), pairs, "cpu", torch.float32, egrid=egrid) == 0   # a full base needs no injection
+
+
+def test_turbo_preview_render_switches_everything_on_then_off(desc, driver, tmp_path, monkeypatch):
+    from PIL import Image
+    from training import train
+    from training.families.minimax_h3 import turbo
+    dit = _dit(pruned=True)
+    f = tmp_path / "turbo.safetensors"
+    _turbo_file(f, dit)
+    egrid = torch.randn(9, E_WIDE, generator=torch.Generator().manual_seed(3))
+    monkeypatch.setattr(turbo, "load_h3_egrid", lambda: egrid)
+    monkeypatch.setattr(MiniMaxH3Driver, "decode", lambda self, vae, lat, w, h: Image.new("RGB", (w, h)))
+    net = FamilyLoRA(dit, driver)
+    assert net.add_file(str(f), train.SPEED, 0.75) == len(dit.blocks)      # the AdaLN rows do not fit as weights
+    net.set_enabled(train.SPEED, False)
+    net.add_trainable(4, 4)
+    extras = driver.speed_lora_extras(dit, str(f), 0.75)
+    assert len(extras) == len(dit.blocks) + 1
+    cond = {"hidden_states": torch.randn(7, 24)}
+    speed = desc.preview_speed()
+    assert (speed.strength, speed.settings.steps, desc.preview_speed_defaults()) == (0.75, 6, (6, 0.75))
+    seen = []
+    real = driver.generate
+
+    def spy(d, c, w, h, **kw):
+        ap = d.blocks[0].adaln_proj
+        seen.append(("forward" in vars(ap), d.blocks[0].attn.qkv_proj.scales[train.SPEED], kw["steps"], kw["cfg"],
+                     kw.get("neg_cond") is not None))
+        return real(d, c, w, h, **kw)
+    monkeypatch.setattr(driver, "generate", spy)
+    neg = {"hidden_states": torch.randn(3, 24)}
+    paths = train._render_previews(driver, dit, net, None, [cond], str(tmp_path / "sample"), 1, output_name="t",
+                                   steps=6, cfg=2.5, neg=neg, width=64, height=64, seed=5, speed=speed.settings,
+                                   speed_extras=extras)
+    assert len(paths) == 1
+    # on for the render: AdaLN patched, the Linears at 0.75 x alpha/rank, 6 steps, and the Samples tab's CFG + negative
+    assert seen == [(True, 0.75, 6, 2.5, True)]
+    assert "forward" not in vars(dit.blocks[0].adaln_proj) and dit.blocks[0].attn.qkv_proj.scales[train.SPEED] == 0.0
+    plain = real(dit, cond, 64, 64, steps=2, seed=5)
+    net.set_enabled(train.SPEED, True)
+    driver.set_speed_lora_extras(dit, extras, True, "cpu")
+    assert not torch.allclose(plain, real(dit, cond, 64, 64, steps=2, seed=5))   # the Turbo changes the render
+
+
+def test_turbo_pipeline_pace_and_visibility(desc, tmp_path):
+    from training.families.krea2.description import KREA2
+    assert P.family_shows(P.BY_KEY["MINIMAX_TURBO_STEPS"], desc) and P.family_shows(P.BY_KEY["MINIMAX_TURBO_STRENGTH"], desc)
+    assert not P.family_shows(P.BY_KEY["FAMILY_TURBO_STRENGTH"], desc)      # H3 shows Fizgig's own two boxes
+    assert P.family_shows(P.BY_KEY["FAMILY_TURBO_STRENGTH"], KREA2) and not P.family_shows(P.BY_KEY["MINIMAX_TURBO_STEPS"], KREA2)
+    assert not P.BY_KEY["MINIMAX_TURBO_STEPS"].preset and "MINIMAX_TURBO_STEPS" not in P.PRESET_KEYS
+    assert (P.BY_KEY["MINIMAX_TURBO_STEPS"].default, P.BY_KEY["MINIMAX_TURBO_STRENGTH"].default) == (6, 75.0)
+    turbo = tmp_path / "turbo.safetensors"
+    turbo.write_bytes(b"x")
+    vals = {**P.defaults(), "LORA_NAME": "h3", "SAMPLE_STEPS": 20, "SAMPLE_PROMPT": "a photo"}
+    models = {"minimax_dit": "d", "minimax_vae": "v", "minimax_text_encoder": "t", "minimax_turbo_lora": str(turbo)}
+    kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", models)
+    assert (kw["speed_lora"], kw["speed_lora_strength"], kw["sample_steps"]) == (str(turbo), 0.75, 6)
+    kw, _ = pipeline.train_kwargs(desc, {**vals, "MINIMAX_TURBO_STEPS": 4, "MINIMAX_TURBO_STRENGTH": 250}, tmp_path / "run",
+                                  models)
+    assert (kw["speed_lora_strength"], kw["sample_steps"]) == (2.0, 4)       # Fizgig clamps the strength to 0-2
+    kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", {**models, "minimax_turbo_lora": ""})
+    assert "speed_lora" not in kw and kw["sample_steps"] == 20              # no Turbo file: the Steps box applies

@@ -424,7 +424,13 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                 kw["sample_negative"] = neg
             sp = desc.preview_speed()
             speed_path = (models.get(sp.pref_key) or "").strip() if sp and sp.pref_key else ""
-            if speed_path and os.path.isfile(speed_path):
+            if speed_path and os.path.isfile(speed_path) and "MINIMAX_TURBO_STRENGTH" in desc.family_options:
+                # Fizgig _build_minimax_train_command (lora_trainer_gui.py:34709-34726): the Turbo LoRA takes over the
+                # preview pace when its file is set - its own steps and strength, nothing else changed
+                steps = _num(values, "MINIMAX_TURBO_STEPS", int)
+                kw.update(speed_lora=speed_path, sample_steps=steps if steps > 0 else 6,
+                          speed_lora_strength=min(2.0, max(0.0, _num(values, "MINIMAX_TURBO_STRENGTH") / 100.0)))
+            elif speed_path and os.path.isfile(speed_path):
                 default = desc.preview_speed_defaults()[1]
                 ts = _num(values, "FAMILY_TURBO_STRENGTH")
                 ts = default if ts < 0 else ts

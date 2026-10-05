@@ -1,6 +1,8 @@
 # Third-party notices
 
-TagScribeR includes code adapted from the projects below. Each component stays under its upstream licence; the
+TagScribeR as a whole is licensed under the GNU General Public License v3.0 (see [LICENSE](LICENSE)). It includes code adapted from the projects below; Apache-2.0 and MIT code may be combined into a GPL-3.0 work, and the notices here are kept as those licences require.
+
+Each component stays under its upstream licence; the
 full Apache License 2.0 text is in [licenses/Apache-2.0.txt](licenses/Apache-2.0.txt). Every ported file carries a
 header naming its source file and the changes made for TagScribeR.
 

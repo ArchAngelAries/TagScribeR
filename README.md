@@ -259,4 +259,6 @@ Developer notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Run the tests wit
 - **AI backend:** [Hugging Face Transformers](https://huggingface.co/docs/transformers/index), [ONNX Runtime](https://onnxruntime.ai/), [WD Taggers](https://huggingface.co/SmilingWolf).
 - **AMD support:** [ROCm for Windows](https://github.com/ROCm/TheRock).
 
+**Licence:** TagScribeR is free software under the [GNU General Public License v3.0](LICENSE). Use it, change it and share it freely; if you redistribute it or a modified version, keep the source open under the same licence. The licence covers the program only: the LoRAs, captions and images you make with it are yours. Code adapted from other projects keeps its original notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Model weights are not included and have their own licences.
+
 Created by **ArchAngelAries**. Code assisted by Google's Gemini and Anthropic's Claude.

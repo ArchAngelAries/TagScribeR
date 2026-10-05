@@ -63,10 +63,10 @@ def collect(values: dict) -> dict:
     return {k: values[k] for k in P.PRESET_KEYS if k in values}
 
 
-# Fizgig keys that have no counterpart here (Krea 2 torch.compile and the rotating fine-tune; Klein's fp8 base, attention
+# Fizgig keys that have no counterpart here (the Krea 2 rotating fine-tune; Klein's fp8 base, attention
 # backend, LoRA dropout / LoRA+, fp8 text encoder, logging, LR decay, and the hidden loss-weighting boxes - the family's
 # docstring lists each as not ported). TARGET_LAYERS / TRAINING_BLOCKS are real parameters (Klein's Model Area).
-LEGACY_IGNORED = ("COMPILE_BLOCKS", "FP8", "SCALED", "ATTENTION_MECHANISM", "NETWORK_DROPOUT", "LORA_LR_RATIO",
+LEGACY_IGNORED = ("FP8", "SCALED", "ATTENTION_MECHANISM", "NETWORK_DROPOUT", "LORA_LR_RATIO",
                   "FP8_TEXT_ENCODER", "IMG_IN_TXT_IN_OFFLOADING", "LOGGING_DIR", "LOG_WITH", "LOG_PREFIX",
                   "LR_DECAY_STEPS", "GRADIENT_CHECKPOINTING", "WEIGHTING_SCHEME", "MODE_SCALE")
 LEGACY_AREAS = {"All Layers": "Full Model", "Identity Blocks": "Identity", "Style+Composition Blocks":
@@ -86,6 +86,14 @@ def _legacy_precision(value) -> str:
         if v.startswith(starts):
             return key
     return "auto"
+
+
+def _legacy_compile(value) -> str:
+    """Fizgig's COMPILE_BLOCKS: the combobox label ("Auto" / "On" / "Off") or the settings value in lower case
+    ("auto" | "on" | "off" | "outside", lora_trainer_gui.py:6589-6592, 34102-34108). Unknown values mean Auto."""
+    v = str(value or "").strip().lower()
+    return {"auto": "Auto", "on": "On", "off": "Off", "outside": "Outside", "true": "On", "false": "Off",
+            "1": "On", "0": "Off"}.get(v, "Auto")
 
 
 def _is_number(value) -> bool:
@@ -167,6 +175,8 @@ def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
                 ignored.append(key)
             else:
                 _migrate_minimax(key, value, preset, out, notes, ignored)
+        elif key == "COMPILE_BLOCKS":
+            out[key] = _legacy_compile(value)
         elif key == "TARGET_LAYERS":
             out[key] = LEGACY_AREAS.get(value, value)
         elif key == "TRAINING_BLOCKS" and isinstance(value, dict):

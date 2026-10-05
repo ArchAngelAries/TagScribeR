@@ -489,6 +489,13 @@ second model. Leave it empty to preview the RAW model at 28 steps.</li>
 leave room on the cache drive.</li>
 <li>Measured by Fizgig at 0.25 MP: INT8 about 16 GB, 4-bit about 11 GB, fp8 about 19 GB (each swapped block saves
 about 0.4 GB). bf16 holds 26 GB of weights alone. Each extra image in the batch adds about 2.4 GB.</li>
+<li>The <b>fp8-scaled text encoder</b> also stays fp8 in memory, which saves VRAM while captions are cached.</li>
+<li><b>Automagic v3</b> (Optimizer) sets its own learning rate for each group of layers: text fusion, attention, MLP
+and input/output. The Learning rate box is only its starting value, and Adaptive LR, the scheduler and per-image LR
+are ignored with it.</li>
+<li><b>Compile blocks</b> (Memory &amp; Precision, under Show all settings) mainly speeds up NVIDIA cards. Auto leaves
+it off on AMD, with block swap, on fp8 and bf16 bases, and on short runs. On Windows it needs Triton and the C++ Build
+Tools; without them the run trains normally and says so.</li>
 </ul>
 <h3>MiniMax H3</h3>
 <ul>

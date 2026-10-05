@@ -115,10 +115,12 @@ KREA2 = FamilyDescription(
     # fp8: 18.7 GB MEASURED (_FP8_PEAK_GB), 0.42 GB per swapped block MEASURED on fp8 (18.7 - 0.42 * swap).
     train_memory={"fp8": (((0.25, 18.7), (1.0, 18.9)), 0.42), "int8": (((0.25, 16.2), (1.0, 16.4)), 0.42),
                   "nf4": (((0.25, 11.4), (1.0, 11.6)), 0.0)},
-    # Fizgig's Krea 2 list is its whole optimizer catalogue (optimizers.available_optimizers). Automagic v3 is left
-    # out: its per-family parameter groups (family_param_groups) and sign window 16 are not ported, and a single
-    # group is the compromise rate Fizgig's own comment warns against.
-    optimizers=("adamw8bit", "adamw", "pagedadamw8bit", "ademamix8bit", "pagedademamix8bit", "lion8bit"),
+    # Fizgig's Krea 2 list is its whole optimizer catalogue (optimizers.available_optimizers). Automagic v3 runs as
+    # Fizgig runs it (krea2/trainer.py:2559-2594): the LoRA split into txtfusion / attn / mlp / io groups that each
+    # vote their own rate, sign window 16, the LR box is only its start rate, and Adaptive LR, the LR scheduler, the
+    # per-image LR and the look warm-up stand down (Krea2Driver.optimizer_params, training/train.py).
+    optimizers=("adamw8bit", "adamw", "pagedadamw8bit", "ademamix8bit", "pagedademamix8bit", "lion8bit", "automagic3"),
+    family_options=("COMPILE_BLOCKS",),                      # torch.compile of the blocks (Auto / On / Off / Outside)
     network_types=("lora", "lokr"),                          # _GUI: Network Type wired for krea2_train
 
     sampling=(
@@ -184,8 +186,12 @@ KREA2 = FamilyDescription(
         ("Training timesteps: logit-normal, shifted by exp(mu) with mu from the image-token count; a noise range "
          "(min / max timestep) rescales into the window instead of clamping.",
          "Fizgig krea2/trainer.py sample_krea2_timesteps"),
-        ("Not part of this port: fp8 base, torch.compile, rotating-block full fine-tune and regularisation images, "
-         "the fp8-Turbo-checkpoint preview engine, Automagic per-family groups, captioning with the encoder, RefMods.",
-         "docs/TRAINING_PLAN.md"),
+        ("Not part of this port: the rotating-block full fine-tune and regularisation images, the fp8-Turbo-checkpoint "
+         "preview engine, captioning with the encoder, RefMods, and the flash / sageattn / xformers attention "
+         "backends Fizgig's Krea 2 never selects.", "docs/TRAINING_PLAN.md"),
+        ("torch.compile (Compile Blocks Auto / On / Off): Auto is off on ROCm, with block swap, without a matching "
+         "triton or a C compiler, on fp8 / bf16 bases, on short runs and when it will not fit; On overrides what it "
+         "can. Compiled per block after the LoRA is in place.",
+         "Fizgig utils/capabilities.py should_compile, krea2/trainer.py _compile_blocks"),
     ),
 )

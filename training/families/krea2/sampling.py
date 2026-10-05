@@ -19,10 +19,10 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-# Fizgig attention.py _TRIM_MULTIPLE default (env FIZGIG_ATTN_TRIM_MULTIPLE=64): gather_valid_text rounds the padded
-# text length up to a multiple of it. Fizgig measured this as a deliberately accepted perturbation (~5e-3 relative on
-# short captions, bf16) in exchange for fewer distinct shapes; the value is kept so training sees what Fizgig's does.
-TEXT_PAD_MULTIPLE = 64
+# Fizgig attention.py _TRIM_MULTIPLE (default 64, env TAGSCRIBER_ATTN_TRIM_MULTIPLE here): gather_valid_text rounds the
+# padded text length up to a multiple of it. Fizgig measured this as a deliberately accepted perturbation (~5e-3
+# relative on short captions, bf16) in exchange for fewer distinct shapes; set the variable to 1 for exact lengths.
+from training.families.krea2.attention import TRIM_MULTIPLE as TEXT_PAD_MULTIPLE  # noqa: E402
 
 
 def roundup(value, multiple, name):

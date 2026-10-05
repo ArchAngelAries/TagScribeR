@@ -112,9 +112,16 @@ The options as originally presented:
   - *fp8 base (added 2026-10-05):* fp8 and fp8-scaled RAW files load as fp8 and are dequantised per matmul, a
     bf16 file can be quantised to fp8, and either feeds INT8 / NF4 (`training/modules/fp8.py`). Auto follows
     Fizgig's order: INT8, NF4, fp8, then fp8 with block swap, skipping what the machine cannot run.
-  - *Not ported:* the fp8 `_scaled_mm` fast path (NVIDIA Ada and newer), torch.compile, the
-    rotating-block full fine-tune and regularisation images, the fp8-Turbo-checkpoint preview engine, Automagic v3's
-    per-family groups (so it is not offered here), captioning with the encoder, reference images and RefMods.
+  - *Restored to match Fizgig (2026-10-05):* Automagic v3 with Fizgig's per-family groups (text fusion,
+    attention, MLP, I/O) and sign window 16; the fp8-scaled text encoder kept fp8; Fizgig's attention path with the
+    uniform-length trim and the SDPA backend switch; torch.compile (Compile Blocks: Auto / On / Off / Outside) with
+    Fizgig's Auto rules, which leave it off on AMD.
+  - *Checked against the owner's real files (headers only):* the fp8-scaled RAW DiT and the fp8-scaled text encoder
+    both match the loaders key for key.
+  - *Not ported:* the fp8 `_scaled_mm` fast path (NVIDIA Ada and newer), the rotating-block full fine-tune and
+    regularisation images, the fp8-Turbo-checkpoint preview engine, captioning with the encoder, reference images
+    and RefMods. Flash, sage, xformers and split attention are not ported because Fizgig's Krea 2 always runs the
+    torch attention mode and nothing in Fizgig selects another.
   - *Unverified without weights:* the real checkpoints' key layout, the fp8_scaled text-encoder dequantisation, the
     tokenizer download, the Turbo LoRA's key and `diff_b` naming, INT8 / swap memory at 12.9B, and bf16 memory.
     CPU tests cover the objective, masks, batching, timestep sampler, LoRA keys and round trips, the loader's refusals

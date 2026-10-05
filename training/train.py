@@ -428,8 +428,19 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 f": {len(net.trainable_modules())} modules, {sum(p.numel() for p in params) / 1e6:.2f}M trainable "
                 f"params")
 
-    from training.optimizers import create_optimizer, owns_its_rate
-    optimizer, opt_label = create_optimizer(optimizer_type, params, learning_rate, optimizer_args)
+    res_max = max((w * h for w, h in dataset.buckets), default=0) / 1e6
+    driver.prepare_training(dit, net, precision=precision, blocks_to_swap=int(swapped or 0),
+                            total_steps=dataset.num_items * max_train_epochs, megapixels=res_max,
+                            batch_size=dataset.batch_size)
+
+    from training.optimizers import create_optimizer, group_rates, owns_its_rate
+    # the family may structure the optimizer's parameters (Krea 2: Automagic v3 per-family groups, Fizgig krea2/trainer.py)
+    opt_params, optimizer_args, fam_counts = driver.optimizer_params(net, optimizer_type, learning_rate, optimizer_args)
+    optimizer, opt_label = create_optimizer(optimizer_type, opt_params, learning_rate, optimizer_args)
+    if fam_counts and len(optimizer.param_groups) > 1:
+        logger.info("[optimizer] per-family rates: "
+                    + ", ".join(f"{g['family']} ({fam_counts.get(g['family'], 0)} modules)"
+                                for g in optimizer.param_groups) + " - each votes its own learning rate")
     if owns_its_rate(optimizer):        # Automagic v3 sets its own rate: the watcher and schedulers stand down
         if adaptive_lr:
             logger.info("[adaptive_lr] ignored - the optimizer sets its own learning rate")
@@ -437,7 +448,10 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             logger.info("[per-image LR] per-image LR and the look warm-up are off - the optimizer sets its own rate")
         adaptive_lr = per_image_lr = warmup_look_outliers = False
         logger.info(f"[optimizer] {opt_label} owns the learning rate from here ({learning_rate:.2e} is its start); "
-                    f"the LR scheduler stands down")
+                    f"the LR scheduler and the adaptive watcher stand down (they set a group rate it does not read); "
+                    f"its own trust-region clip bounds each step")
+        if lr_scheduler and lr_scheduler != "constant":
+            logger.info(f"[lr_scheduler] '{lr_scheduler}' ignored - the optimizer sets its own rate")
     if adaptive_lr:                     # the watcher owns the rate: start at the geometric midpoint of Min/Max
         learning_rate = AdaptiveLR.start_lr(adaptive_lr_min, adaptive_lr_max)
         for g in optimizer.param_groups:
@@ -612,7 +626,9 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         peak = torch.cuda.max_memory_reserved() / 1024 ** 3 if torch.cuda.is_available() else 0.0
         logger.info(f"epoch {epoch + 1}/{max_train_epochs}  avr_loss={recorder.moving_average:.4f}  step={global_step}  "
                     f"{(time.time() - t0) / max(1, steps_per_epoch):.2f}s/step  "
-                    f"lr={optimizer.param_groups[0]['lr']:.3e}  peak VRAM {peak:.1f} GB")
+                    f"lr={optimizer.param_groups[0]['lr']:.3e}  peak VRAM {peak:.1f} GB"
+                    + (f"  {group_rates(optimizer)}" if owns_its_rate(optimizer) else ""))
+        driver.after_epoch(epoch, steps_per_epoch * (max_train_epochs - epoch - 1))
         if adaptive:
             adaptive.epoch_boundary(epoch, recorder.moving_average, net.trainable_modules(), optimizer)
         # problem-image verdicts + queued caption fixes / auto-recaptions, re-encoded before the next epoch

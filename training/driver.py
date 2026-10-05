@@ -3,7 +3,8 @@
 # Changes for TagScribeR: `configure` (driver options) and `lora_key_name` (kohya key names that differ from module
 # paths, SDXL), `supports_batching` (batch size > 1 for fixed-length conditioning, e.g. SDXL), Conv2d LoRA
 # targets (lora_target_names may name Conv2d modules; training/lora.py wraps both) and `quant_target_names` (a family
-# whose LoRA covers more Linears than it quantises, e.g. Krea 2).
+# whose LoRA covers more Linears than it quantises, e.g. Krea 2) `optimizer_params` (Krea 2's Automagic v3 groups) and
+# `prepare_training` / `after_epoch` (Krea 2's torch.compile and attention-backend switch).
 """FamilyDriver: the one interface a new model family implements.
 
 The generic code - caching, training, previews, the LoRA layer and the Train tab - talks to a family ONLY through
@@ -46,6 +47,21 @@ class FamilyDriver:
     def configure(self, **options) -> None:
         """Family-specific run options (train_family's `driver_options`, e.g. SDXL's min-SNR gamma), applied once
         right after the driver is created. The default ignores them; a family that offers options overrides this."""
+
+    def optimizer_params(self, net, optimizer_type: str, lr: float, optimizer_args: str):
+        """(params or param groups, optimizer args, {group: module count}) for create_optimizer. The default is the
+        flat parameter list and the user's args. A family whose optimizer wants structure (Krea 2: Automagic v3 keeps
+        one rate per group and Fizgig splits the LoRA by module family) overrides this."""
+        return net.parameters(), optimizer_args, {}
+
+    def prepare_training(self, dit, net, *, precision: str, blocks_to_swap: int, total_steps: int, megapixels: float,
+                         batch_size: int) -> None:
+        """Called once the model, every frozen adapter and the trainable adapter are in place, before the first step: the
+        family's last chance to transform the model (Krea 2 compiles its blocks here, after the LoRA wrapped their
+        forwards). total_steps = items x epochs; megapixels = the largest bucket in use. The default does nothing."""
+
+    def after_epoch(self, epoch: int, steps_remaining: int) -> None:
+        """Called at every epoch boundary (Krea 2: the cuDNN attention switch). The default does nothing."""
 
     def trainable_blocks(self):
         """Block ids (driver.block_map) the trainable adapter covers; None = every target. A family with block

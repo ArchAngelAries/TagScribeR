@@ -15,6 +15,8 @@
 * sampling: Euler with the shifted schedule, optional CFG; the Turbo LoRA's schedule pins mu = 1.15
 * LoRA: every Linear of the DiT (264); only the 28 main blocks' Linears are quantised (INT8 / NF4)
 """
+import logging
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -22,18 +24,70 @@ import torch.nn.functional as F
 from training.driver import Block, BlockGroup, FamilyDriver
 from training.families.krea2 import sampling as S
 
+logger = logging.getLogger(__name__)
+
 _BLOCK_MODULES = ("attn.wq", "attn.wk", "attn.wv", "attn.gate", "attn.wo", "mlp.gate", "mlp.up", "mlp.down")
 # Everything outside the main blocks (Fizgig: LoRA wraps every Linear of the DiT, krea2/trainer.py
 # load_dit_for_training -> create_network(None, "lora_unet", ...))
 _IO_IN = ("first", "tmlp.0", "tmlp.2", "tproj.1", "txtmlp.1", "txtmlp.3")
 _IO_OUT = ("last.linear",)
 _TXT_BLOCKS = {"layerwise": "txtfusion.layerwise_blocks", "refiner": "txtfusion.refiner_blocks"}
-# Below this much free VRAM the text encoder loads with INT8 language-model weights instead of bf16 (4B: ~8.3 GB bf16
-# + the 37-layer hidden-state stack of a batch of 8 captions; a 12 GB card cannot hold both comfortably).
-TE_BF16_MIN_FREE_GB = 11.0
 
 
 class Krea2Driver(FamilyDriver):
+
+    compile_blocks = "auto"        # Compile Blocks: auto | on | off | outside (the Train tab's COMPILE_BLOCKS)
+    _compile_requested = False
+
+    def configure(self, **options):
+        if "compile_blocks" in options:
+            self.compile_blocks = str(options["compile_blocks"] or "auto")
+
+    def optimizer_params(self, net, optimizer_type, lr, optimizer_args):
+        """Automagic v3 keeps one rate per parameter GROUP, so the LoRA is split by module family (txtfusion / attn / mlp /
+        io), each finding its own rate instead of one compromise for all 264 modules, and its sign window is 16: the
+        8-step default reads Krea 2's per-step gradient noise as overshoot (batch one, logit-normal timesteps across
+        the full range, bucketed resolutions - consecutive steps are genuinely different problems). Fizgig
+        krea2/trainer.py:2559-2587 (Peter, 17 Sep 2026). An explicit polarity_history in Optimizer Args wins."""
+        if str(optimizer_type or "").lower() != "automagic3":
+            return super().optimizer_params(net, optimizer_type, lr, optimizer_args)
+        from training.lora import TRAINABLE
+        from training.optimizers import family_groups
+        items = [("lora_unet_" + self.lora_key_name(full).replace(".", "_"),
+                  [p for p in w.adapters[TRAINABLE].parameters() if p.requires_grad])
+                 for full, w in net.wrapped.items() if TRAINABLE in w.adapters]
+        groups, counts = family_groups(items, lr)
+        if "polarity_history" not in (optimizer_args or ""):
+            optimizer_args = ((optimizer_args or "") + " polarity_history=16").strip()
+            logger.info("[optimizer] Automagic v3: sign window 16 (this family's default - the 8-step window reads "
+                        "Krea 2's per-step gradient noise as overshoot). Set polarity_history in Optimizer Args to "
+                        "override.")
+        return (groups or net.parameters()), optimizer_args, counts
+
+    def prepare_training(self, dit, net, *, precision, blocks_to_swap, total_steps, megapixels, batch_size):
+        """torch.compile of the blocks, AFTER the LoRA wrapped their forwards (Fizgig load_dit_for_training, last step)."""
+        from training.families.krea2 import compile as C
+        do = C.resolve(self.compile_blocks, precision=precision, blocks_to_swap=blocks_to_swap,
+                       total_steps=total_steps, mp=megapixels or 0.25, batch=batch_size)
+        self._compile_requested = bool(do)
+        if do:
+            C.compile_blocks(dit, blocks_to_swap, fp8_scaled=precision == "fp8",
+                             boundary="outside" if do == "outside" else "inside")
+
+    def after_epoch(self, epoch, steps_remaining):
+        """Attention backend: cuDNN's kernel is ~6% faster per step but costs ~1.3 s per distinct sequence shape to plan,
+        so it only wins on runs long enough to amortise that. After a full epoch every shape the dataset produces has
+        been seen. SUPPRESSED when compile was asked for: flipping the backend mid-run changes the branch every compiled
+        block traced (Fizgig krea2/trainer.py:3321-3335)."""
+        if self._compile_requested:
+            return
+        from training.modules.sdpa import consider_training_backend
+        switch = consider_training_backend(steps_remaining)
+        if switch:
+            n_shapes, needed = switch
+            logger.info(f"[attention] switching to the cuDNN backend for the rest of the run - {n_shapes} distinct "
+                        f"sequence shape(s), which pays back within {needed} steps and this run has more left. "
+                        f"Expect a slower first pass over each shape while it plans, then ~6% faster steps.")
 
     # Every cached caption has the same shape (512 padded tokens + mask), so a bucket's items stack into a batch
     # (Fizgig trains Krea 2 at dataset batch size > 1 the same way; its VRAM is +2.4 GB per extra image).
@@ -62,12 +116,10 @@ class Krea2Driver(FamilyDriver):
         return load_vae(path, input_channels=3, device=device).eval().requires_grad_(False)
 
     def load_text_encoder(self, path, device):
-        """Language model only (no vision tower or LM head): bf16 when it fits the free VRAM with room to run, else
-        INT8 weights (about 4.5 GB)."""
+        """Qwen3-VL-4B as Fizgig loads it: bf16, or the fp8_scaled file with its language Linears kept fp8 (no
+        expansion to bf16 at load)."""
         from training.families.krea2.embedder import Krea2TextEncoder
-        from training.quant import free_vram_gb
-        dev = torch.device(device)
-        return Krea2TextEncoder(path, device=dev, int8=dev.type == "cuda" and free_vram_gb() < TE_BF16_MIN_FREE_GB)
+        return Krea2TextEncoder(path, device=torch.device(device))
 
     def unload_text_encoder(self, te):
         te.unload()

@@ -155,6 +155,16 @@ PARAMS: tuple[Param, ...] = (
     P("BLOCKS_SWAP", "Blocks to swap", CHOICE, SWAP_AUTO, "Memory & Precision",
       "Stream this many model blocks between system RAM and the GPU to fit a smaller card (slower). Auto uses as "
       "few as fit. Not with 4-bit NF4.", options=(SWAP_AUTO, "0", "4", "8", "12", "16", "20", "24", "30")),
+    # Krea 2 (Fizgig lora_trainer_gui.py:5853-5880, krea2/trainer.py): torch.compile of the DiT blocks. A driver option.
+    P("COMPILE_BLOCKS", "Compile blocks (torch.compile)", CHOICE, "Auto", "Memory & Precision",
+      "Krea 2 only. Auto turns torch.compile on only when this run is long enough to repay it. It fuses the per-matmul "
+      "quantise / dequantise work that bounds the INT8 and 4-bit paths (about 2x per step on INT8, 1.28x on 4-bit, on "
+      "NVIDIA) but costs a compile pause of about 90 s first, so a short run is slower overall; break-even is about 600 "
+      "steps on INT8, 1200 on 4-bit. It mainly benefits NVIDIA cards: on AMD ROCm Auto leaves it OFF (it recompiles "
+      "for every bucket shape on HIP; On overrides that). Needs Triton and, on Windows, the C++ Build Tools. Never "
+      "used with Blocks to swap, and Auto only compiles INT8 and 4-bit bases. Outside = On with the gradient "
+      "checkpoint kept outside the compiled region (the high-resolution fit, chosen automatically when needed).",
+      options=("Auto", "On", "Off", "Outside"), advanced=True, family_only="option"),
     P("SAVE_STATE", "Save state at each checkpoint", BOOL, True, "Memory & Precision",
       "Also save the optimizer and training state with each checkpoint, so a run can be resumed or extended."),
     P("SAVE_STATE_ON_TRAIN_END", "Save state at the end", BOOL, True, "Memory & Precision",
@@ -318,6 +328,7 @@ DRIVER_OPTIONS.update({"TARGET_LAYERS": "target_layers", "TRAINING_BLOCKS": "tra
                        "TIMESTEP_SAMPLING": "timestep_sampling", "DISCRETE_FLOW_SHIFT": "discrete_flow_shift",
                        "SIGMOID_SCALE": "sigmoid_scale", "LOGIT_MEAN": "logit_mean", "LOGIT_STD": "logit_std",
                        "PRESERVE_DISTRIBUTION": "preserve_distribution"})
+DRIVER_OPTIONS.update({"COMPILE_BLOCKS": "compile_blocks"})
 DRIVER_OPTIONS.update({"MINIMAX_LOWNOISE_PCT": "lownoise_pct", "MINIMAX_LIKENESS_MODE": "likeness_mode",
                        "MINIMAX_BLOCKS": "blocks"})
 PRESET_KEYS = tuple(p.key for p in PARAMS if p.preset)

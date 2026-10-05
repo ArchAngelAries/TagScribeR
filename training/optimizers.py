@@ -1,7 +1,8 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/training/optimizers.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: import path of the vendored Automagic v3; the Krea 2 per-family param grouping is kept for
-# when that family arrives (T4). Catalog, LR warnings and the AdamW fallback are unchanged.
+# Changes for TagScribeR: import path of the vendored Automagic v3; the Krea 2 per-family param grouping also takes a
+# plain (lora_name, params) list (`family_groups`), which is how the family layer's FamilyLoRA feeds it (Fizgig's
+# `family_param_groups` reads a kohya network's `unet_loras`). Catalog, LR warnings and the AdamW fallback are unchanged.
 """Optimizer selection, shared by the trainers.
 
 Krea 2 hardcoded `bnb.optim.AdamW8bit` — a good default, but the only choice, which is the one
@@ -114,12 +115,19 @@ def family_param_groups(network, lr: float):
     """-> ([{"params": [...], "lr": lr, "family": name}, ...], {name: n_modules}) or (None, {})
     when the network exposes no named modules (then the caller keeps its flat list)."""
     loras = list(getattr(network, "unet_loras", None) or [])
-    if not loras:
+    return family_groups([(getattr(m, "lora_name", ""), [p for p in m.parameters() if p.requires_grad])
+                          for m in loras], lr)
+
+
+def family_groups(items, lr: float):
+    """family_param_groups on a plain list of (kohya lora name, [trainable params]) - one entry per wrapped module.
+    The name must be the kohya-flattened one (`lora_unet_blocks_3_attn_wq`): the family split matches on it."""
+    items = list(items)
+    if not items:
         return None, {}
     buckets, counts = {}, {}
-    for mod in loras:
-        fam = family_of(getattr(mod, "lora_name", ""))
-        ps = [p for p in mod.parameters() if p.requires_grad]
+    for name, ps in items:
+        fam = family_of(name)
         if not ps:
             continue
         buckets.setdefault(fam, []).extend(ps)

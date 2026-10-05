@@ -58,7 +58,7 @@ def test_description_is_valid_and_registered_first(desc):
     assert (desc.latent_channels, desc.spatial_factor, desc.bucket_step) == (16, 8, 16)
     assert desc.precisions == ("bf16", "fp8", "int8", "nf4") and set(desc.train_memory) == {"fp8", "int8", "nf4"}
     assert desc.auto_order == ("int8", "nf4", "fp8") and desc.auto_swap_order == ("fp8",)     # Fizgig's ladder
-    assert "automagic3" not in desc.optimizers and "adamw8bit" in desc.optimizers
+    assert "automagic3" in desc.optimizers and "adamw8bit" in desc.optimizers
     assert desc.network_types == ("lora", "lokr") and desc.ema_default == "0.98"
     assert {desc.pref_for(r) for r in ("dit", "vae", "text_encoder", "speed_lora")} == set(desc.pref_keys)
     sp = desc.preview_speed()
@@ -70,7 +70,7 @@ def test_preset_keys_are_known_or_migrated(desc):
     for name, values in desc.presets:
         migrated, notes, ignored = presets.migrate_legacy(values)
         assert [k for k in migrated if k not in P.BY_KEY] == [], name
-        assert set(ignored) <= {"COMPILE_BLOCKS", "TARGET_LAYERS"}
+        assert set(ignored) <= {"TARGET_LAYERS"}
         assert notes == []
         new, rep = presets.apply(values, P.defaults(), desc)
         assert rep.refused == [], (name, rep.refused)
@@ -97,7 +97,7 @@ def test_legacy_precision_and_ema_keys_map(desc):
     new, rep = presets.apply({"QUANT_4BIT_MODE": "nf4", "KREA2_EMA": "Off", "KREA2_FINETUNE_ROTATION": 3,
                               "COMPILE_BLOCKS": "On"}, cur, desc)
     assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["nf4"] and new["FAMILY_EMA"] == "Off"
-    assert sorted(rep.ignored) == ["COMPILE_BLOCKS", "KREA2_FINETUNE_ROTATION"] and rep.refused == []
+    assert rep.ignored == ["KREA2_FINETUNE_ROTATION"] and rep.refused == [] and new["COMPILE_BLOCKS"] == "On"
     new, rep = presets.apply({"QUANT_4BIT_MODE": "fp8"}, cur, desc)
     assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["fp8"] and rep.refused == []
     for old, want in (("no_4bit", "int8"), ("Off", "int8"), ("On", "nf4"), ("Auto (recommended)", "auto"),
@@ -356,18 +356,6 @@ def test_loader_reads_bf16_and_rejects_wrong_keys(tmp_path):
     save_file({k: v for k, v in sd.items() if k != "first.weight"}, partial)
     with pytest.raises(ValueError, match="mismatch"):
         load_krea2_dit(partial, device="cpu", config=TINY)
-
-
-def test_text_encoder_prequantized_dequantisation():
-    from training.families.krea2.embedder import dequantize_prequantized
-    w = torch.randn(4, 8)
-    q = {"a.weight": (w / 0.1), "a.weight_scale": torch.tensor(0.1), "b.weight": w, "c.weight": w,
-         "c.weight_scale": torch.full((4,), 0.5), "a.comfy_quant": torch.zeros(1)}
-    out = dequantize_prequantized(q)
-    assert set(out) == {"a.weight", "b.weight", "c.weight"}
-    assert torch.allclose(out["a.weight"].float(), w, atol=2e-2) and torch.equal(out["b.weight"], w)
-    assert torch.allclose(out["c.weight"].float(), w * 0.5, atol=2e-2)
-    assert dequantize_prequantized({"x.weight": w}) == {"x.weight": w}
 
 
 def test_text_encoder_hidden_state_stack_layout():

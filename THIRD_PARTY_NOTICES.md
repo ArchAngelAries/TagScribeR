@@ -33,7 +33,7 @@ uses:
 | `training/adaptive_lr.py` | `src/fizgig/krea2/trainer.py` (`AdaptiveLR`) + the clip-ratio signal of `src/fizgig/training/trainer.py` |
 | `training/dataset.py` | `src/fizgig/dataset/image_dataset.py`, `config.py` (image-only subset) |
 | `training/ema.py`, `optimizers.py`, `metadata.py`, `progress.py`, `train_utils.py`, `loss_logger.py` | the same-named modules in `src/fizgig/training/` |
-| `training/modules/offloading.py`, `int8_train.py`, `nf4.py` | `src/fizgig/modules/` |
+| `training/modules/offloading.py`, `int8_train.py`, `nf4.py`, `sdpa.py`, `compile_util.py` | `src/fizgig/modules/` |
 | `training/modules/fp8.py` | `src/fizgig/krea2/fp8_optimization_utils.py`, `krea2/utils.py` (adapted by Fizgig from musubi-tuner) |
 | `training/families/qwen_image21/` | `src/fizgig/families/qwen_image.py` and `src/fizgig/qwen_image21/` |
 | `training/families/krea2/` | `src/fizgig/krea2/` (`model.py`, `sampling.py`, `vae.py`, `vae_loader.py`, `embedder.py`, `trainer.py`, `caching.py`, `utils.py`), `lora_trainer_gui.py` (presets, model paths), `scripts/fetch_models.py`, `utils/capabilities.py` (measured memory) |
@@ -52,7 +52,7 @@ TagScribeR detects GPUs with its own `core/hardware.py`.
   flow-matching sampler (`sampling.py`, from `extensions_built_in/diffusion_models/flux2/src/sampling.py`).
 - **musubi-tuner (kohya-ss and contributors), Apache License 2.0**: the training hooks in `model.py` (gradient
   checkpointing, block-swap wiring), the flow-matching timestep recipe (`krea2_shift`) in `sampling.py`, the attention
-  design `model.py` simplifies, and the Qwen-Image VAE key conversion and loader in `vae_loader.py`.
+  dispatch and length trim in `attention.py`, and the Qwen-Image VAE key conversion and loader in `vae_loader.py`.
 - **Diffusers / the Qwen-Image Team, Wan Team and The HuggingFace Team, Apache License 2.0**: `vae.py` is Fizgig's copy
   of diffusers' `AutoencoderKLQwenImage`, kept with its original header.
 

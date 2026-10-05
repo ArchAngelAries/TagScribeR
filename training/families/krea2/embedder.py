@@ -1,12 +1,10 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/krea2/embedder.py (Qwen3VLConditioner,
 # the vendored Qwen3-VL-4B config, the checkpoint loader).
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: ENCODE ONLY - no captioning, reference images or style-caption prompts (the vision tower and
-# LM head are dropped at load: the language model's hidden states are all Krea 2 conditions on); an fp8-scaled
-# checkpoint is dequantised to bf16 at load (Fizgig keeps it fp8 behind a dequantising forward), or the language
-# model's Linears are INT8 on small cards (the Qwen Image 2.1 encoder's weight-only per-group scheme); the tokenizer
-# comes from a qwen3vl_tokenizer/ folder next to the checkpoint or the Hugging Face cache (Fizgig also bundles
-# the files).
+# Changes for TagScribeR: ENCODE ONLY - no captioning, reference images or style-caption prompts (the LM head is
+# dropped at load: the base model gives the same hidden states without logits); the fp8_scaled checkpoint stays fp8 as
+# in Fizgig (training/modules/fp8.py is the dequantising forward); the tokenizer comes from a qwen3vl_tokenizer/ folder
+# next to the checkpoint or the Hugging Face cache (Fizgig also bundles the files).
 """Krea 2 text conditioning: Qwen3-VL-4B-Instruct, a stack of 12 hidden-state layers per token.
 
 The prompt goes into the fixed descriptor template (byte-identical to ComfyUI's Text-Encode-(Krea2) node; changing it
@@ -74,42 +72,44 @@ def tokenizer_source(model_path: str) -> str:
     return QWEN3_VL_4B_INSTRUCT_REPO_ID
 
 
-def dequantize_prequantized(sd: dict, dtype=torch.bfloat16) -> dict:
-    """ComfyUI fp8_scaled -> plain weights: each `X.weight` with an `X.weight_scale` becomes weight * scale (a
-    per-tensor scalar or a per-output-channel vector), the scale and `.comfy_quant` marker keys are dropped. A file
-    without scales passes through. (Fizgig applies the scales per matmul instead; the values are the same.)"""
-    if not any(k.endswith((".weight_scale", ".scale_weight")) for k in sd):
-        return sd
-    out = {}
-    for k, v in sd.items():
-        if k.endswith(".comfy_quant"):
-            continue
-        if k.endswith((".weight_scale", ".scale_weight")):
-            continue
-        stem = k[:-len(".weight")] if k.endswith(".weight") else None
-        scale = sd.get(stem + ".weight_scale", sd.get(stem + ".scale_weight")) if stem else None
-        if scale is not None:
-            s = scale.float()
-            s = s.reshape(1) if s.ndim == 0 else (s.unsqueeze(1) if s.ndim == 1 else s)
-            out[k] = (v.float() * s).to(dtype)
-        else:
-            out[k] = v
-    return out
+def build_language_model(sd: dict, config=None, dtype=torch.bfloat16):
+    """The Qwen3-VL model from a state dict in the ComfyUI or the official layout (Fizgig krea2/embedder.py
+    `_load_qwen3_vl_model`). A ComfyUI fp8_scaled file keeps its language Linears fp8 with their scales and a
+    dequantising forward (training/modules/fp8.py; Fizgig: "keeping the weights fp8 and dequantising per matmul is
+    what actually saves the ~3.6 GB"); the vision tower and everything else are bf16. The LM head is dropped (tied to
+    the embeddings; the base model is called, which returns the same hidden states without vocabulary-wide logits).
+    Never cast an fp8 model to a dtype - that would expand the weights."""
+    from accelerate import init_empty_weights
+    from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration
+
+    from training.families.qwen_image21.embedder import convert_comfyui_qwen3vl_state_dict
+    from training.modules import fp8
+    cfg = Qwen3VLConfig.from_dict(config or QWEN3_VL_4B_INSTRUCT_CONFIG)
+    with init_empty_weights():
+        model = Qwen3VLForConditionalGeneration._from_config(cfg)
+    model.lm_head = None
+    sd = convert_comfyui_qwen3vl_state_dict(sd)
+    sd = {k: v for k, v in sd.items() if not k.startswith("lm_head.")}
+    missing, unexpected, n_fp8 = fp8.load_state_dict(model, sd, dtype)
+    if unexpected or missing:
+        raise RuntimeError(f"Qwen3-VL-4B checkpoint mismatch: missing={missing[:8]}, unexpected={unexpected[:8]} - "
+                           f"is this the Krea 2 text encoder?")
+    logger.info(f"[text encoder] {'fp8_scaled checkpoint: ' + str(n_fp8) + ' language Linears stay fp8' if n_fp8 else 'bf16'}")
+    return model
 
 
 class Krea2TextEncoder:
-    """Loads the Qwen3-VL-4B language model and encodes prompts into the Krea 2 conditioning stack."""
+    """Loads the Qwen3-VL-4B model and encodes prompts into the Krea 2 conditioning stack."""
 
-    def __init__(self, model_path=None, device="cuda", dtype=torch.bfloat16, int8=False, *, model=None,
-                 tokenizer=None, max_length=MAX_LENGTH, select_layers=SELECT_LAYERS):
-        """model_path: a Qwen3-VL-4B safetensors (ComfyUI or official key layout; bf16 or fp8_scaled). int8: the
-        language model's Linears as 8-bit weights (about 4.5 GB instead of 8.3), for cards that cannot hold bf16.
+    def __init__(self, model_path=None, device="cuda", dtype=torch.bfloat16, *, model=None, tokenizer=None,
+                 max_length=MAX_LENGTH, select_layers=SELECT_LAYERS):
+        """model_path: a Qwen3-VL-4B safetensors (ComfyUI or official key layout; bf16 or fp8_scaled).
         `model` / `tokenizer` inject ready objects (tests)."""
         self.device, self.dtype = torch.device(device), dtype
         self.max_length, self.select_layers = max_length, tuple(select_layers)
         if model is None:
-            model, tokenizer = self._load(model_path, dtype, int8, self.device)
-        self.model = model.to(self.device).eval().requires_grad_(False)
+            model, tokenizer = self._load(model_path, dtype)
+        self.model = model.to(self.device).eval().requires_grad_(False)    # a device move only: fp8 stays fp8
         self.tokenizer = tokenizer
         n_prefix = len(tokenizer(PREFIX).input_ids)
         if n_prefix != PREFIX_START_IDX:
@@ -117,12 +117,10 @@ class Krea2TextEncoder:
                                f"{PREFIX_START_IDX} - is it the Qwen3-VL tokenizer?")
 
     @staticmethod
-    def _load(model_path, dtype, int8, device):
-        from accelerate import init_empty_weights
-        from transformers import AutoTokenizer, Qwen3VLConfig, Qwen3VLForConditionalGeneration
+    def _load(model_path, dtype):
+        from transformers import AutoTokenizer
 
-        from training.families.qwen_image21.embedder import (_disable_broken_hf_transfer, _int8_weights,
-                                                             convert_comfyui_qwen3vl_state_dict, load_split_weights)
+        from training.families.qwen_image21.embedder import _disable_broken_hf_transfer, load_split_weights
         _disable_broken_hf_transfer()
         source = tokenizer_source(model_path)
         try:
@@ -132,25 +130,8 @@ class Krea2TextEncoder:
                 f"Couldn't load the Qwen3-VL tokenizer from {source} ({type(e).__name__}: {e}). Offline: download "
                 f"{', '.join(QWEN3_VL_TOKENIZER_FILES)} from https://huggingface.co/{QWEN3_VL_4B_INSTRUCT_REPO_ID}"
                 f" into a qwen3vl_tokenizer/ folder next to {model_path}.") from e
-        config = Qwen3VLConfig.from_dict(QWEN3_VL_4B_INSTRUCT_CONFIG)
-        with init_empty_weights():
-            model = Qwen3VLForConditionalGeneration._from_config(config)
-        model.lm_head = None                        # tied to the embeddings, never needed to encode
-        model.model.visual = None                   # reference images / captioning are not used here
         logger.info(f"Loading Krea 2 text encoder (Qwen3-VL-4B) weights from {model_path}")
-        sd = convert_comfyui_qwen3vl_state_dict(load_split_weights(str(model_path)))
-        sd = {k: v for k, v in sd.items() if not k.startswith(("model.visual.", "lm_head."))}
-        sd = dequantize_prequantized(sd, dtype)
-        sd = {k: (v.to(dtype) if v.is_floating_point() else v) for k, v in sd.items()}
-        info = model.load_state_dict(sd, strict=False, assign=True)
-        if info.unexpected_keys or info.missing_keys:
-            raise RuntimeError(f"Qwen3-VL-4B checkpoint mismatch: missing={info.missing_keys[:8]}, "
-                               f"unexpected={info.unexpected_keys[:8]} - is this the Krea 2 text encoder?")
-        del sd
-        if int8:
-            n = _int8_weights(model, "language_model.layers.", device)
-            logger.info(f"[text encoder] 8-bit weights: {n} language-model Linears (low-VRAM card); matmuls stay bf16")
-        return model, tokenizer
+        return build_language_model(load_split_weights(str(model_path)), dtype=dtype), tokenizer
 
     @torch.no_grad()
     def encode(self, prompts):

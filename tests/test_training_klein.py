@@ -466,7 +466,7 @@ def test_train_kwargs_map_timesteps_area_and_preview(desc, tmp_path):
 
 
 def test_params_are_family_only(desc):
-    other = registry.get("krea2")
+    other = registry.get("qwen_image21")      # a family with no options (Krea 2 has Compile Blocks)
     for key in ("TARGET_LAYERS", "TIMESTEP_SAMPLING", "PRESERVE_DISTRIBUTION"):
         assert P.family_shows(P.BY_KEY[key], desc) and not P.family_shows(P.BY_KEY[key], other)
     assert pipeline.driver_options(other, P.defaults()) == {}

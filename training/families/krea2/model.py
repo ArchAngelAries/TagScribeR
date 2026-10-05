@@ -1,11 +1,10 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/krea2/model.py (+ the config and loader of
 # krea2/utils.py, the attention of krea2/attention.py).
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: einops is replaced by plain torch reshapes (not installed here); attention is torch SDPA with
-# a key-padding mask (Fizgig's flash / sageattn / xformers dispatch, split attention and the uniform-length trim are
-# not ported - the trim only saves compute, the mask keeps the maths identical); block swap uses training.modules.
-# offloading.ModelOffloader the way the Qwen DiT does; the Repair Studio activation cache (forward_cached) is not
-# ported; the loader reads bf16 and pre-quantised fp8 checkpoints (training/modules/fp8.py keeps fp8 weights fp8).
+# Changes for TagScribeR: einops is replaced by plain torch reshapes (not installed here); attention goes through
+# training/families/krea2/attention.py (Fizgig's torch-SDPA mode with its uniform-length trim; the other backends are
+# unreachable for Krea 2 there); block swap uses training.modules.offloading.ModelOffloader the way the Qwen DiT does;
+# the Repair Studio activation cache (forward_cached) is not ported; the loader reads bf16 and pre-quantised fp8 checkpoints (training/modules/fp8.py keeps fp8 weights fp8).
 # Fizgig's own header follows.
 #
 # Upstream: the backbone is ported from ai-toolkit (Ostris, LLC - MIT;
@@ -24,6 +23,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch import Tensor
+
+from training.families.krea2.attention import AttentionParams, attention as common_attention
 
 logger = logging.getLogger(__name__)
 
@@ -164,8 +165,8 @@ class Attention(nn.Module):
         self.qknorm = QKNorm(self.headdim)
         self.wo = nn.Linear(dim, dim, bias=bias)
 
-    def forward(self, qkv: Tensor, freqs: Tensor | None = None, key_mask: Tensor | None = None) -> Tensor:
-        """key_mask: bool [B, 1, 1, L], True = a real token (padded keys are not attended), or None."""
+    def forward(self, qkv: Tensor, freqs: Tensor | None = None, attn_params: AttentionParams | None = None) -> Tensor:
+        """attn_params: the forward's AttentionParams (key-padding mask, uniform-length trim), or None."""
         q, k, v, gate = self.wq(qkv), self.wk(qkv), self.wv(qkv), self.gate(qkv)
         # QKNorm + RoPE run in [B, H, L, D] (K2-native layout) to preserve the reference numerics.
         q = q.unflatten(-1, (self.heads, -1)).transpose(1, 2)
@@ -174,14 +175,9 @@ class Attention(nn.Module):
         q, k, v = self.qknorm(q, k, v)
         if freqs is not None:
             q, k = ropeapply(q, k, freqs)
-        if self.heads != self.kvheads:
-            # GQA: expand k/v to q's head count (Fizgig attention.py: enable_gqa forces SDPA onto the slow math
-            # kernel; the repeat is numerically identical).
-            g = self.heads // self.kvheads
-            k = k.repeat_interleave(g, dim=1)
-            v = v.repeat_interleave(g, dim=1)
-        x = F.scaled_dot_product_attention(q, k, v, attn_mask=key_mask)
-        x = x.transpose(1, 2).reshape(x.shape[0], x.shape[2], -1)
+        # The shared attention expects [B, L, H, D] and returns [B, L, H*D]; GQA (heads != kvheads) is handled inside it.
+        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+        x = common_attention(q, k, v, attn_params=attn_params)
         return self.wo(x * torch.sigmoid(gate))
 
 
@@ -206,8 +202,8 @@ class TextFusionBlock(nn.Module):
         self.attn = Attention(dim=features, heads=heads, bias=bias, kvheads=kvheads)
         self.mlp = SwiGLU(features, multiplier, bias)
 
-    def forward(self, x: Tensor, key_mask: Tensor | None = None) -> Tensor:
-        x = x + self.attn(self.prenorm(x), key_mask=key_mask)
+    def forward(self, x: Tensor, attn_params: AttentionParams | None = None) -> Tensor:
+        x = x + self.attn(self.prenorm(x), attn_params=attn_params)
         return x + self.mlp(self.postnorm(x))
 
 
@@ -223,18 +219,19 @@ class TextFusionTransformer(nn.Module):
         self.refiner_blocks = nn.ModuleList(
             [TextFusionBlock(txt_dim, heads, multiplier, bias, kvheads) for _ in range(2)])
 
-    def forward(self, x: Tensor, txt_key_mask: Tensor | None = None) -> Tensor:
+    def forward(self, x: Tensor, attn_params_nomask: AttentionParams | None = None,
+                attn_params: AttentionParams | None = None) -> Tensor:
         """x (b, l, n, d): b prompts, l tokens, n encoder layers. The per-layer blocks flatten to (b*l, n, d) and
         attend across the layer stack for each token (the token count is their BATCH, so a key-padding mask does not
         apply to them); the refiner attends the token sequence itself and masks the padding."""
         b, l, n, d = x.shape
         x = x.reshape(b * l, n, d)
         for block in self.layerwise_blocks:
-            x = block(x.contiguous())
+            x = block(x.contiguous(), attn_params=attn_params_nomask)
         x = x.reshape(b, l, n, d).permute(0, 1, 3, 2)              # (b l) n d -> b l d n
         x = self.projector(x).squeeze(-1)
         for block in self.refiner_blocks:
-            x = block(x, key_mask=txt_key_mask)
+            x = block(x, attn_params=attn_params)
         return x
 
 
@@ -247,9 +244,9 @@ class SingleStreamBlock(nn.Module):
         self.attn = Attention(dim=features, heads=heads, bias=bias, kvheads=kvheads)
         self.mlp = SwiGLU(features, multiplier, bias)
 
-    def forward(self, x: Tensor, vec: Tensor, freqs: Tensor, key_mask: Tensor | None = None) -> Tensor:
+    def forward(self, x: Tensor, vec: Tensor, freqs: Tensor, attn_params: AttentionParams | None = None) -> Tensor:
         prescale, preshift, pregate, postscale, postshift, postgate = self.mod(vec)
-        x = x + pregate * self.attn((1 + prescale) * self.prenorm(x) + preshift, freqs, key_mask)
+        x = x + pregate * self.attn((1 + prescale) * self.prenorm(x) + preshift, freqs, attn_params)
         return x + postgate * self.mlp((1 + postscale) * self.postnorm(x) + postshift)
 
 
@@ -332,7 +329,9 @@ class SingleStreamDiT(nn.Module):
         # Fizgig notes (krea2/model.py): padding the text is NOT numerically inert in the text-fusion stage (its
         # per-layer blocks carry the text length in their batch dimension) - sampling.gather_valid_text documents
         # the accepted perturbation.
-        context = self.txtfusion(context, txtmask[:, None, None, :])
+        txt_attn_params_nomask = AttentionParams.create_attention_params_from_mask(0, None)
+        txt_attn_params = AttentionParams.create_attention_params_from_mask(0, txtmask)
+        context = self.txtfusion(context, txt_attn_params_nomask, txt_attn_params)
         context = self.txtmlp(context)
 
         combined = torch.cat((img, context), dim=1)                 # image first, then text
@@ -344,18 +343,24 @@ class SingleStreamDiT(nn.Module):
             combined = F.pad(combined, (0, 0, 0, padlen))
             pos = F.pad(pos, (0, 0, 0, padlen))
             txtmask = F.pad(txtmask, (0, padlen), value=False)
-        key_mask = F.pad(txtmask, (imglen, 0), value=True)[:, None, None, :]   # [B, 1, 1, img + txt (+ pad)]
+        # bidirectional attention over [image (all valid) + text (padded)]; image-first keeps each sample's valid tokens a
+        # contiguous prefix, which the uniform-length trim relies on
+        attn_params = AttentionParams.create_attention_params_from_mask(imglen, txtmask)
 
         freqs = self.posemb(pos)
         blocks = list(self.blocks) if self.blocks_to_swap else None
         for index, block in enumerate(self.blocks):
             if self.blocks_to_swap:
                 self.offloader.wait_for_block(index)
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                combined = torch.utils.checkpoint.checkpoint(block, combined, tvec, freqs, key_mask,
+            if getattr(block, "_handles_checkpointing", False):
+                # torch.compile wraps blocks in a module that checkpoints itself, so the recompute is captured inside
+                # the compiled graph; checkpointing again here would nest it (Fizgig krea2/model.py)
+                combined = block(combined, tvec, freqs, attn_params)
+            elif torch.is_grad_enabled() and self.gradient_checkpointing:
+                combined = torch.utils.checkpoint.checkpoint(block, combined, tvec, freqs, attn_params,
                                                              use_reentrant=False)
             else:
-                combined = block(combined, tvec, freqs, key_mask)
+                combined = block(combined, tvec, freqs, attn_params)
             if self.blocks_to_swap:
                 self.offloader.submit_move_blocks_forward(blocks, index)
 

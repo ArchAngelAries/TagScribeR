@@ -36,11 +36,11 @@ SECRET_PATTERNS = {
     "e-mail address": r"[A-Za-z0-9._%+-]+@(?!example\.|anthropic\.com|users\.noreply)[A-Za-z0-9.-]+\.[a-z]{2,}",
     "Windows user folder": r"(?i)[a-z]:[\\/]+users[\\/]+(?!public|default)[^\\/\s\"']+",
     "Unix home folder": r"/(?:home|Users)/(?!user|you|name)[A-Za-z0-9._-]+",
-    "private IP address": r"\b(?:10|192\.168|172\.(?:1[6-9]|2[0-9]|3[01]))\.\d{1,3}\.\d{1,3}(?:\.\d{1,3})?\b",
+    "private IP address": r"(?<![\d.=])(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2[0-9]|3[01]))\.\d{1,3}\.\d{1,3}\b",
     "Windows machine name": r"\b(?:DESKTOP|LAPTOP)-[A-Z0-9]{5,}\b",
 }
 # drive paths that are clearly placeholders in docs, tooltips and the screenshot tool
-PLACEHOLDER_PATHS = re.compile(r"(?i)^[a-z]:[\\/]+(datasets|models|tagscriber|path|program files)\b")
+PLACEHOLDER_PATHS = re.compile(r"(?i)^[a-z]:[\\/]+(datasets|models|tagscriber|path|program files|windows|my)\b")
 DRIVE_PATH = re.compile(r"(?i)(?<![A-Za-z0-9])[a-z]:\\{1,2}[A-Za-z0-9 _.-]+(?:\\{1,2}[A-Za-z0-9 _.-]+)+")
 SENSITIVE_NAMES = re.compile(r"(?i)(^|/)(user_data/|config\.json$|api_presets\.json$|user_tags\.txt$|\.env$|"
                              r".*\.log$|.*\.pem$|.*\.key$|settings\.json$|models/|dataset collections/|image edits/)")

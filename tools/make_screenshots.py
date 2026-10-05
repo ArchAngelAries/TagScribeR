@@ -1461,6 +1461,8 @@ def build_shots() -> None:
              "Live status: epoch, step, speed and time remaining, read from the trainer's output.", (0.3, 0.3)),
         Note(g("tab_train.console"),
              "The full console output of the cache and training stages, also saved as run.log.", (0.3, 0.75)),
+        Note(lambda s: WINDOW.memory_strip.bar,
+             "VRAM and RAM in use, on every tab. The white mark is the peak of this run.", (0.3, 0.9)),
     ], after=reset_train))
     S(Shot("11_train_samples.png", shot_train_samples, [
         Note(g("tab_train.samples"),

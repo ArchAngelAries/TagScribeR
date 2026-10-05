@@ -66,7 +66,7 @@ def collect(values: dict) -> dict:
 # Fizgig keys that have no counterpart here (the Krea 2 rotating fine-tune; Klein's fp8 base, attention
 # backend, LoRA dropout / LoRA+, fp8 text encoder, logging, LR decay, and the hidden loss-weighting boxes - the family's
 # docstring lists each as not ported). TARGET_LAYERS / TRAINING_BLOCKS are real parameters (Klein's Model Area).
-LEGACY_IGNORED = ("FP8", "SCALED", "ATTENTION_MECHANISM", "NETWORK_DROPOUT", "LORA_LR_RATIO",
+LEGACY_IGNORED = ("FP8", "SCALED", "NETWORK_DROPOUT", "LORA_LR_RATIO",
                   "FP8_TEXT_ENCODER", "IMG_IN_TXT_IN_OFFLOADING", "LOGGING_DIR", "LOG_WITH", "LOG_PREFIX",
                   "LR_DECAY_STEPS", "GRADIENT_CHECKPOINTING", "WEIGHTING_SCHEME", "MODE_SCALE")
 LEGACY_AREAS = {"All Layers": "Full Model", "Identity Blocks": "Identity", "Style+Composition Blocks":

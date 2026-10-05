@@ -25,6 +25,8 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.utils.checkpoint import checkpoint
 
+from training.modules.sdpa import sdpa_backend_ctx
+
 logger = logging.getLogger(__name__)
 
 
@@ -97,6 +99,7 @@ class KleinDiT(nn.Module):
         self.final_layer = LastLayer(self.hidden_size, self.out_channels)
 
         self.gradient_checkpointing = False
+        self.attn_mode = "torch"
         self.blocks_to_swap = None
 
         self.offloader_double = None
@@ -111,6 +114,13 @@ class KleinDiT(nn.Module):
     @property
     def dtype(self):
         return next(self.parameters()).dtype
+
+    def set_attn_mode(self, mode: str):
+        """Fizgig passes attn_mode to KleinDiT(...) and on to every block via AttentionParams (klein/model.py:463-485,
+        707): "torch" (sdpa) or "flash3". Every block reads it, also on a gradient-checkpoint recompute."""
+        self.attn_mode = mode
+        for block in list(self.double_blocks) + list(self.single_blocks):
+            block.attn_mode = mode
 
     # ---- gradient checkpointing ------------------------------------------------------------------------------
     def enable_gradient_checkpointing(self, on: bool = True):
@@ -362,6 +372,7 @@ class SingleStreamBlock(nn.Module):
         self.mlp_act = SiLUActivation()
 
         self.gradient_checkpointing = False
+        self.attn_mode = "torch"
 
     def _forward(self, x: Tensor, pe: Tensor, mod) -> Tensor:
         mod_shift, mod_scale, mod_gate = mod
@@ -376,7 +387,7 @@ class SingleStreamBlock(nn.Module):
         del qkv
         q, k = self.norm(q, k, v)
 
-        attn = attention(q, k, v, pe)
+        attn = attention(q, k, v, pe, self.attn_mode)
         del q, k, v, pe
 
         # compute activation in mlp stream, cat again and run second linear layer
@@ -417,6 +428,7 @@ class DoubleStreamBlock(nn.Module):
             nn.Linear(mlp_hidden_dim, hidden_size, bias=False),
         )
         self.gradient_checkpointing = False
+        self.attn_mode = "torch"
 
     def _forward(self, img: Tensor, txt: Tensor, pe: Tensor, pe_ctx: Tensor, mod_img, mod_txt):
         img_mod1, img_mod2 = mod_img
@@ -460,7 +472,7 @@ class DoubleStreamBlock(nn.Module):
 
         pe = torch.cat((pe_ctx, pe), dim=2)
         del pe_ctx
-        attn = attention(q, k, v, pe)
+        attn = attention(q, k, v, pe, self.attn_mode)
         del q, k, v, pe
         txt_attn, img_attn = attn[:, :txt_len], attn[:, txt_len:]
         del attn
@@ -575,12 +587,18 @@ def _split_qkv(qkv: Tensor, num_heads: int):
     return qkv[0], qkv[1], qkv[2]
 
 
-def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor) -> Tensor:
+def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, attn_mode: str = "torch") -> Tensor:
     """RoPE, then full-sequence scaled-dot-product attention (no mask). q, k, v (B, H, L, D) -> (B, L, H * D).
     Fizgig's attention() transposes to (B, L, H, D) for its dispatcher and its torch path transposes back; the maths is
-    the same."""
+    the same. attn_mode "torch" is PyTorch SDPA inside the shared backend context (cuDNN for no-grad renders, PyTorch's
+    own choice while training: modules/sdpa.py). Any other mode raises exactly as Fizgig's dispatcher does: its
+    modules/attention.py has no branch for "flash3" (the GUI's second option), so it ends in the final else."""
     q, k = apply_rope(q, k, pe)
-    x = F.scaled_dot_product_attention(q, k, v)
+    if attn_mode == "torch":
+        with sdpa_backend_ctx(q.device.type):
+            x = F.scaled_dot_product_attention(q, k, v)
+    else:
+        raise ValueError(f"Unsupported attention mode: {attn_mode}")       # Fizgig modules/attention.py:245
     return x.transpose(1, 2).reshape(x.shape[0], x.shape[2], -1)
 
 

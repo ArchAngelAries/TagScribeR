@@ -102,18 +102,19 @@ def test_first_preset_and_style_timestep_conversion(desc):
 
 
 def test_legacy_klein_keys_map_or_are_ignored(desc):
-    legacy = {"FP8": True, "SCALED": True, "QUANT_4BIT": False, "QUANT_4BIT_MODE": "auto", "ATTENTION_MECHANISM": "sdpa",
+    legacy = {"FP8": True, "SCALED": True, "QUANT_4BIT": False, "QUANT_4BIT_MODE": "auto",
               "NETWORK_DROPOUT": 0, "LORA_LR_RATIO": 1, "FP8_TEXT_ENCODER": True, "LR_DECAY_STEPS": "",
               "GRADIENT_CHECKPOINTING": True, "WEIGHTING_SCHEME": "none", "MODE_SCALE": "1.29",
-              "TARGET_LAYERS": "Identity Blocks", "MAX_TIMESTEP": "1000", "MIN_TIMESTEP": "250",
+              "TARGET_LAYERS": "Identity Blocks", "ATTENTION_MECHANISM": "flash3", "MAX_TIMESTEP": "1000", "MIN_TIMESTEP": "250",
               "TRAINING_BLOCKS": {"double_blocks.0": True, "double_blocks.1": False, "single_blocks.5": True},
               "TIMESTEP_SAMPLING": "flux2_shift", "DISCRETE_FLOW_SHIFT": "0", "SIGMOID_SCALE": "1.0"}
     new, rep = presets.apply(legacy, P.defaults(), desc)
     assert rep.refused == [], rep.refused
+    assert new["ATTENTION_MECHANISM"] == "flash3"                            # carried, no longer ignored
     assert new["TARGET_LAYERS"] == "Identity" and new["TRAINING_BLOCKS"] == "double_blocks.0, single_blocks.5"
     assert (new["MIN_TIMESTEP"], new["MAX_TIMESTEP"]) == (0.25, 1.0)
     assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["auto"]
-    assert {"FP8", "SCALED", "ATTENTION_MECHANISM", "NETWORK_DROPOUT", "LORA_LR_RATIO", "FP8_TEXT_ENCODER",
+    assert {"FP8", "SCALED", "NETWORK_DROPOUT", "LORA_LR_RATIO", "FP8_TEXT_ENCODER",
             "LR_DECAY_STEPS", "GRADIENT_CHECKPOINTING", "WEIGHTING_SCHEME", "MODE_SCALE"} <= set(rep.ignored)
     bad, rep = presets.apply({"TIMESTEP_SAMPLING": "qwen_shift"}, P.defaults(), desc)
     assert rep.refused and bad["TIMESTEP_SAMPLING"] == "flux2_shift"          # Fizgig: an unsupported mode is refused
@@ -453,7 +454,8 @@ def test_train_kwargs_map_timesteps_area_and_preview(desc, tmp_path):
     assert kw["optimizer_type"] == "adamw8bit" and kw["ema_decay"] == 0.0 and "speed_lora" not in kw
     assert kw["driver_options"] == {"target_layers": "Style", "training_blocks": "", "timestep_sampling": "flux2_shift",
                                     "discrete_flow_shift": 3.0, "sigmoid_scale": 1.0, "logit_mean": 0.0,
-                                    "logit_std": 1.0, "preserve_distribution": False}
+                                    "logit_std": 1.0, "preserve_distribution": False,
+                                    "attention_mechanism": "sdpa"}
     assert prompts and kw["sample_cfg_scale"] == 4.5 and "sample_steps" not in kw      # 0 = the family's 40
     d = desc.load_driver()
     d.configure(**kw["driver_options"])
@@ -471,3 +473,64 @@ def test_params_are_family_only(desc):
         assert P.family_shows(P.BY_KEY[key], desc) and not P.family_shows(P.BY_KEY[key], other)
     assert pipeline.driver_options(other, P.defaults()) == {}
     assert KleinDriver.supports_batching is True
+
+
+# ---- Attention Mechanism (Fizgig lora_trainer_gui.py:10778-10788, trainer.py:1954-1963) -------------------------
+def test_attention_mechanism_param_and_presets(desc):
+    p = P.BY_KEY["ATTENTION_MECHANISM"]
+    assert (p.kind, p.default, p.options, p.strict, p.family_only) == (P.CHOICE, "sdpa", ("sdpa", "flash3"), True, "option")
+    assert "flash-attn" in p.tip and "Hopper or Blackwell" in p.tip
+    assert P.DRIVER_OPTIONS["ATTENTION_MECHANISM"] == "attention_mechanism" and "ATTENTION_MECHANISM" in desc.family_options
+    assert not P.family_shows(p, registry.get("krea2"))
+    new, rep = presets.apply({"ATTENTION_MECHANISM": "flash3"}, P.defaults(), desc)
+    assert new["ATTENTION_MECHANISM"] == "flash3" and rep.refused == [] and "ATTENTION_MECHANISM" not in rep.ignored
+    new, rep = presets.apply({"ATTENTION_MECHANISM": "xformers"}, P.defaults(), desc)      # a readonly combobox's rule
+    assert rep.refused and new["ATTENTION_MECHANISM"] == "sdpa"
+
+
+def test_attention_reaches_driver_and_model(desc, tmp_path):
+    vals = dict(P.defaults(), LORA_NAME="k9")
+    models = {"klein_dit": "d", "klein_vae": "v", "klein_text_encoder": "t"}
+    kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "r", models)
+    assert kw["driver_options"]["attention_mechanism"] == "sdpa"
+    vals["ATTENTION_MECHANISM"] = "flash3"
+    kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "r", models)
+    assert kw["driver_options"]["attention_mechanism"] == "flash3"
+    d = desc.load_driver()
+    d.configure(**kw["driver_options"])
+    assert d.attention_mechanism == "flash3"
+    with pytest.raises(ValueError, match="attention mechanism"):
+        desc.load_driver().configure(attention_mechanism="xformers")
+
+
+def test_sdpa_default_and_flash3_selection_reach_every_block(driver, tmp_path):
+    from safetensors.torch import save_file
+    dit = _dit()
+    assert dit.attn_mode == "torch" and {b.attn_mode for b in list(dit.double_blocks) + list(dit.single_blocks)} == {"torch"}
+    path = tmp_path / "k.safetensors"
+    save_file({k: v.contiguous() for k, v in dit.state_dict().items()}, str(path))
+    import training.families.klein.model as M
+    orig = M.load_klein_dit
+    M.load_klein_dit = lambda p, device="cpu": orig(p, device=device, params=TINY)
+    try:
+        assert driver.load_dit(str(path), "cpu").attn_mode == "torch"          # default option = sdpa
+        driver.configure(attention_mechanism="flash3")
+        loaded = driver.load_dit(str(path), "cpu")
+    finally:
+        M.load_klein_dit = orig
+    assert loaded.attn_mode == "flash3"
+    assert {b.attn_mode for b in list(loaded.double_blocks) + list(loaded.single_blocks)} == {"flash3"}
+
+
+def test_flash3_fails_like_fizgig_with_no_flash_attn(driver):
+    """Fizgig's dispatcher (modules/attention.py:245) has no flash3 branch: the first forward raises, whether or not
+    flash-attn is installed. flash-attn is not installed here either way."""
+    import importlib.util
+    assert importlib.util.find_spec("flash_attn") is None
+    dit = _dit()
+    dit.set_attn_mode("flash3")
+    with pytest.raises(ValueError, match="Unsupported attention mode: flash3"):
+        driver.training_loss(dit, torch.randn(1, 16, 6, 4), _cond(1), torch.Generator().manual_seed(1))
+    dit.set_attn_mode("torch")
+    loss, _ = driver.training_loss(dit, torch.randn(1, 16, 6, 4), _cond(1), torch.Generator().manual_seed(1))
+    assert torch.isfinite(loss)

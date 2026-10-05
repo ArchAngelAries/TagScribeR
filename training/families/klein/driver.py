@@ -39,6 +39,8 @@ IDENTITY_PATTERNS = [r".*single_blocks\.(1[0-6]|[1-9])\..*"]
 DETAILS_PATTERNS = [r".*single_blocks\.(1[2-9]|2[0-3])\..*"]
 AREA_PATTERNS = {"Identity": IDENTITY_PATTERNS, "Style": STYLE_COMP_PATTERNS,
                  "Style+Composition": STYLE_COMP_PATTERNS, "Details": DETAILS_PATTERNS}
+# ATTENTION_MECHANISM -> the DiT's attn_mode (Fizgig trainer.py:1954-1963: --sdpa -> "torch", --flash3 -> "flash3")
+ATTENTION_MODES = {"sdpa": "torch", "flash3": "flash3"}
 AREAS = ("Full Model", "Identity", "Style", "Style+Composition", "Details", "Custom")
 
 
@@ -56,6 +58,7 @@ class KleinDriver(FamilyDriver):
     logit_mean = 0.0
     logit_std = 1.0
     preserve_distribution = False
+    attention_mechanism = "sdpa"          # Fizgig ATTENTION_MECHANISM (lora_trainer_gui.py:10781): sdpa | flash3
 
     def configure(self, **options):
         for key, value in options.items():
@@ -64,6 +67,9 @@ class KleinDriver(FamilyDriver):
             setattr(self, key, value)
         if self.timestep_sampling not in S.TIMESTEP_MODES:
             raise ValueError(f"timestep sampling must be one of {S.TIMESTEP_MODES}, got {self.timestep_sampling!r}")
+        if self.attention_mechanism not in ATTENTION_MODES:
+            raise ValueError(f"attention mechanism must be one of {tuple(ATTENTION_MODES)}, got "
+                             f"{self.attention_mechanism!r}")
         self.trainable_blocks()          # a bad Custom list fails here, before anything loads
 
     # ---- Model Area ---------------------------------------------------------------------------------------------
@@ -103,7 +109,9 @@ class KleinDriver(FamilyDriver):
     # ---- models ---------------------------------------------------------------------------------
     def load_dit(self, path, device):
         from training.families.klein.model import load_klein_dit
-        return load_klein_dit(path, device=device).eval().requires_grad_(False)
+        dit = load_klein_dit(path, device=device).eval().requires_grad_(False)
+        dit.set_attn_mode(ATTENTION_MODES[self.attention_mechanism])
+        return dit
 
     def max_blocks_to_swap(self, dit=None):
         # Fizgig's swap formula (klein/model.py enable_block_swap) accepts 1-16 for 8 + 24 blocks; its GUI range is 0-16

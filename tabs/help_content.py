@@ -522,6 +522,9 @@ The built-in presets set it for you.</li>
 <li><b>Timestep sampling</b> defaults to <code>flux2_shift</code>, which adapts to the image size. The other modes
 are for experiments.</li>
 <li>Previews render on the training model at 40 steps. The 4-step Distilled preview model isn't supported.</li>
+<li><b>Attention mechanism</b> (under Show all settings): <code>sdpa</code> runs on any GPU and is the default.
+<code>flash3</code> is listed because Fizgig lists it, but Fizgig has no working flash3 path, so choosing it stops the
+first training step with an error. Use sdpa.</li>
 <li>On cards under about 16 GB, Auto picks the 4-bit base (about 8.5 GB at 0.5 MP).</li>
 </ul>
 <h3>SDXL, Pony, Illustrious, NoobAI</h3>

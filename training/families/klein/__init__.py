@@ -15,5 +15,9 @@ Not ported (Fizgig has them; this family does not):
     steps, CFG 4.5 (Fizgig's no-Distilled path); reference-image (edit) previews and edit training
   * the SD3 loss weightings (WEIGHTING_SCHEME / MODE_SCALE: hidden in Fizgig's Klein GUI, always "none") and dataset
     timestep buckets
-  * the Repair Studio activation cache, the profiler and extraction, Fizgig's flash / sage / xformers attention
+  * the Repair Studio activation cache, the profiler and extraction, and the flash / sage / xformers attention
+    backends. The "Attention Mechanism" setting IS ported: sdpa (default) runs PyTorch SDPA inside the shared backend
+    context (training/modules/sdpa.py); flash3 reaches the model as attn_mode "flash3" and fails on the first forward
+    with "Unsupported attention mode: flash3" - exactly what Fizgig's modules/attention.py does, which has no flash3
+    branch (open question for the owner)
 """

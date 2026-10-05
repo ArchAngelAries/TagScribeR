@@ -223,6 +223,9 @@ PARAMS: tuple[Param, ...] = (
       "log signal-to-noise draw.", minimum=-20.0, maximum=20.0, advanced=True, family_only="option"),
     P("LOGIT_STD", "Logit std", FLOAT, 1.0, "Timesteps", "logsnr and qinglong_flux sampling: the spread of the "
       "log signal-to-noise draw.", minimum=0.0, maximum=20.0, advanced=True, family_only="option"),
+    P("ATTENTION_MECHANISM", "Attention mechanism", CHOICE, "sdpa", "Memory & Precision",
+      "sdpa runs on any GPU. flash3 needs flash-attn and a Hopper or Blackwell card (H100, RTX 5090).",
+      options=("sdpa", "flash3"), strict=True, advanced=True, family_only="option"),
     P("PRESERVE_DISTRIBUTION", "Preserve distribution shape", BOOL, False, "Timesteps",
       "With a noise range set: keep drawing until the noise levels fall inside it (the natural curve, cut off) "
       "instead of squeezing the whole curve into the range.", advanced=True, family_only="option"),
@@ -329,6 +332,7 @@ DRIVER_OPTIONS.update({"TARGET_LAYERS": "target_layers", "TRAINING_BLOCKS": "tra
                        "SIGMOID_SCALE": "sigmoid_scale", "LOGIT_MEAN": "logit_mean", "LOGIT_STD": "logit_std",
                        "PRESERVE_DISTRIBUTION": "preserve_distribution"})
 DRIVER_OPTIONS.update({"COMPILE_BLOCKS": "compile_blocks"})
+DRIVER_OPTIONS.update({"ATTENTION_MECHANISM": "attention_mechanism"})
 DRIVER_OPTIONS.update({"MINIMAX_LOWNOISE_PCT": "lownoise_pct", "MINIMAX_LIKENESS_MODE": "likeness_mode",
                        "MINIMAX_BLOCKS": "blocks"})
 PRESET_KEYS = tuple(p.key for p in PARAMS if p.preset)

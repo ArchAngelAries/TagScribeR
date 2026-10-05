@@ -110,7 +110,7 @@ KLEIN_9B = FamilyDescription(
     network_types=("lora",),                                 # Fizgig: LoKR is wired for Krea 2 / H3 / Qwen only
     # the Train tab shows these only for this family; they reach KleinDriver.configure (params.DRIVER_OPTIONS)
     family_options=("TARGET_LAYERS", "TRAINING_BLOCKS", "TIMESTEP_SAMPLING", "DISCRETE_FLOW_SHIFT", "SIGMOID_SCALE",
-                    "LOGIT_MEAN", "LOGIT_STD", "PRESERVE_DISTRIBUTION"),
+                    "LOGIT_MEAN", "LOGIT_STD", "PRESERVE_DISTRIBUTION", "ATTENTION_MECHANISM"),
 
     sampling=(
         SamplingSettings("Base", steps=40, cfg=4.5, sampler="euler", scheduler="simple", negative_prompt=True,
@@ -156,6 +156,10 @@ KLEIN_9B = FamilyDescription(
         ("Model area: Identity = single blocks 1-16; Style and Style+Composition = all 8 double blocks + single 0-1; "
          "Details = single blocks 12-23; Custom = the ticked blocks; Style also trains only timesteps 0-0.4.",
          f"{_GUI} 33372-33405, 18805-18822"),
+        ("Attention mechanism: sdpa (default) is PyTorch SDPA. flash3 is offered because Fizgig's dropdown offers it, but "
+         "Fizgig's attention dispatcher has no flash3 branch, so choosing it stops the first step with 'Unsupported "
+         "attention mode: flash3' (here too).", f"{_GUI} 10781, Fizgig training/trainer.py 1962, modules/attention.py "
+         "dispatch"),
         ("Not part of this port: accelerate, the fp8 base, TensorBoard / wandb, LoRA dropout and LoRA+, "
          "regularisation, the Distilled preview model, edit / reference images, the SD3 loss weightings.",
          "docs/TRAINING_PLAN.md"),

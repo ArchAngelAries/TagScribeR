@@ -353,7 +353,8 @@ def test_pipeline_driver_options_and_train_kwargs(desc, tmp_path):
     tp = presets.TrainingPresets(desc)
     vals, _ = presets.apply(tp.load(tp.default_name), P.defaults(), desc)
     vals.update(LORA_NAME="h3")
-    assert pipeline.driver_options(desc, vals) == {"lownoise_pct": 60.0, "likeness_mode": "Default", "blocks": "all"}
+    assert pipeline.driver_options(desc, vals) == {"lownoise_pct": 60.0, "highnoise_lr_pct": 100.0,
+                                                   "likeness_mode": "Default", "blocks": "all"}
     models = {"minimax_dit": "d.safetensors", "minimax_vae": "v.safetensors", "minimax_text_encoder": "t.safetensors",
               "minimax_circlestone_adapter": str(tmp_path / "ad.safetensors")}
     (tmp_path / "ad.safetensors").write_bytes(b"x")
@@ -366,3 +367,63 @@ def test_pipeline_driver_options_and_train_kwargs(desc, tmp_path):
     assert pipeline.driver_options(desc, vals)["lownoise_pct"] == 25.0
     cfg = pipeline.dataset_config(desc, vals, str(tmp_path), None)
     assert cfg["caption_dropout"] == 0.05 if "caption_dropout" in cfg else True
+
+
+# ---- Medium to High Noise LR (Fizgig --highnoise_lr_scale) ---------------------------------------------------------
+def test_highnoise_lr_scale_is_reported_per_step_and_stamped(desc):
+    d = MiniMaxH3Driver()
+    d.description = desc
+    d.compute_dtype = torch.float32
+    d.configure(likeness_mode=OFF, blocks="all")
+    dit = _dit()
+    _, info = d.training_loss(dit, torch.randn(1, 24, 4, 6), _cond(), torch.Generator().manual_seed(1))
+    assert "lr_scale" not in info                                     # 100% = the loop is left alone
+    d.configure(highnoise_lr_pct=25)
+    assert d.highnoise_lr_scale == 0.25
+    seen = set()
+    for seed in range(40):
+        _, info = d.training_loss(dit, torch.randn(1, 24, 4, 6), _cond(), torch.Generator().manual_seed(seed))
+        assert info["lr_scale"] == (0.25 if info["t"] >= 0.5 else 1.0)  # Fizgig: sigma >= 0.5 is the noisy half
+        seen.add(info["lr_scale"])
+    assert seen == {0.25, 1.0}
+    md = d.extra_metadata()
+    assert md["ss_highnoise_lr_scale"] == "0.25" and md["ss_timestep_density"] == "shift0.666667"
+    for bad in (-1, 101):
+        with pytest.raises(ValueError):
+            d.configure(highnoise_lr_pct=bad)
+    assert P.BY_KEY["MINIMAX_HIGHNOISE_LR_PCT"].default == 100.0 and "MINIMAX_HIGHNOISE_LR_PCT" in desc.family_options
+
+
+@pytest.mark.parametrize("optimizer,moves", [("adamw", False), ("automagic3", True)])
+def test_loop_scales_the_optimizer_lr_not_the_loss(tmp_path, monkeypatch, optimizer, moves):
+    """A step multiplier of 0 freezes an AdamW run (the LR is what is scaled) and is ignored by Automagic v3, which
+    sets its own rate (Fizgig trainer.py:5266 `and not _automagic`)."""
+    from safetensors.torch import load_file
+    from tests import tiny_family as T
+    from training import cache, train
+    tiny = T.register()
+    data = T.make_dataset(str(tmp_path / "scratch_dataset"))
+    models = T.write_models(str(tmp_path / "models"))
+    orig = T.TinyDriver.training_loss
+
+    def loss(self, *a, **k):
+        l, info = orig(self, *a, **k)
+        return l, {**info, "lr_scale": 0.0}
+    monkeypatch.setattr(T.TinyDriver, "training_loss", loss)
+    vals = P.defaults()
+    vals.update({"LORA_OUTPUT_DIR": str(tmp_path / "runs"), "LORA_NAME": "band", "NETWORK_DIM": 4, "NETWORK_ALPHA": 4,
+                 "MAX_TRAIN_EPOCHS": 1, "OPTIMIZER_TYPE": optimizer, "LEARNING_RATE": 1e-3, "FAMILY_EMA": "Off",
+                 "DATASET_MEGAPIXELS": "0.01", "SAMPLE_ENABLED": False, "GRADIENT_ACCUMULATION": 2})
+    run = pipeline.build_run(tiny, vals, data, models)
+    for _label, argv in run.stages:
+        if argv[2] == "training.cache":
+            cache.main(argv[3:] + ["--device", "cpu"])
+        else:
+            cfg_path = argv[argv.index("--config") + 1]
+            cfg = json.loads(open(cfg_path, encoding="utf-8").read())
+            cfg["train"]["device"] = "cpu"
+            open(cfg_path, "w", encoding="utf-8").write(json.dumps(cfg))
+            train.main(argv[3:])
+    sd = load_file(str(run.run_dir / "band.safetensors"))
+    up = sum(float(v.abs().sum()) for k, v in sd.items() if "lora_up" in k)
+    assert (up > 0) is moves

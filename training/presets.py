@@ -105,9 +105,8 @@ def _is_number(value) -> bool:
 
 
 # MiniMax H3 keys with no generic equivalent: they switch on machinery this port does not have (clip / video / voice
-# features, the adapter ramp, the movement limiter, distillation, the fine-tune) or that Fizgig leaves inert under the
-# preset optimiser (the high-noise LR % band multiplier: never applied under Automagic v3) - ignored, not refused
-_MINIMAX_IGNORED = ("MINIMAX_TREAD", "MINIMAX_CLIP_STILL", "MINIMAX_ADAPTER_RAMP", "MINIMAX_HIGHNOISE_LR_PCT",
+# features, the adapter ramp, the movement limiter, distillation, the fine-tune) - ignored, not refused
+_MINIMAX_IGNORED = ("MINIMAX_TREAD", "MINIMAX_CLIP_STILL", "MINIMAX_ADAPTER_RAMP",
                     "MINIMAX_TRAIN_ADALN", "MINIMAX_SLOW_BLOCKS", "MINIMAX_SLOW_LR_SCALE", "MINIMAX_BLOCK_LIMIT",
                     "MINIMAX_LR_WARMUP", "MINIMAX_LIKENESS_OPT")
 

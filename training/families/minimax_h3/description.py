@@ -133,7 +133,7 @@ MINIMAX_H3 = FamilyDescription(
         ("✨ MiniMax H3 (rank 16, 60 epochs)", dict(_DEFAULTS)),
         ("✨ MiniMax H3 Style (LoRA 8)", dict(_STYLE)),
     ),
-    family_options=("MINIMAX_LOWNOISE_PCT", "MINIMAX_LIKENESS_MODE", "MINIMAX_BLOCKS"),
+    family_options=("MINIMAX_LOWNOISE_PCT", "MINIMAX_HIGHNOISE_LR_PCT", "MINIMAX_LIKENESS_MODE", "MINIMAX_BLOCKS"),
 
     helper_files=(("Qwen/Qwen3-VL-4B-Instruct", ("chat_template.json", "generation_config.json", "merges.txt",
                                                   "preprocessor_config.json", "tokenizer.json",
@@ -146,6 +146,10 @@ MINIMAX_H3 = FamilyDescription(
         ("Training target is x0 - noise on noised = (1 - sigma) x0 + sigma noise, t = 1 - sigma fed to the DiT (sign "
          "convention matched to ComfyUI). The Low-noise training % dial sets the schedule shift (1 - P) / P; the "
          "default 60% is shift 0.667.", "Fizgig minimax/trainer.py:1-14, lora_trainer_gui.py:518-540"),
+        ("Medium to High Noise LR % scales the optimizer's learning rate (never the loss) for steps drawn at sigma 0.5 "
+         "and above, averaged over an accumulation window. Automagic v3, the preset optimizer, sets its own rate, so the "
+         "dial only acts with AdamW - the same in Fizgig.",
+         "Fizgig minimax/trainer.py:4359-4369, 5259-5270, 5498; lora_trainer_gui.py:553-565"),
         ("Caption dropout 0.05 swaps in the cached empty-prompt embedding for that share of steps.",
          "Fizgig minimax/trainer.py:5385, scripts/minimax_cache_text.py:298"),
         ("Default training mode trains blocks 20-49 only; blocks 0-19 would only ever hold zero-initialised adapters "

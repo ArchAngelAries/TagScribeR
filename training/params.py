@@ -236,6 +236,13 @@ PARAMS: tuple[Param, ...] = (
       "detail and identity are learned. 60 is the tuned default for stills; 50 is the plain uniform schedule; 8 is "
       "the model's own video schedule (mostly composition and movement). Fizgig maps it to the schedule shift "
       "(1 - P) / P.", minimum=1.0, maximum=99.0, family_only="option"),
+    # Fizgig "Medium to High Noise LR" (lora_trainer_gui.py:553-565 minimax_highnoise_lr, 8176-8200; trainer.py
+    # highnoise_lr_scale). 0-100; 100 = unchanged.
+    P("MINIMAX_HIGHNOISE_LR_PCT", "Medium to High Noise LR %", FLOAT, 100.0, "Timesteps",
+      "MiniMax H3: scales the learning rate of the steps drawn from the noisy half (sigma 0.5 and above): pose, "
+      "framing, face shape. Best left at 100 unless you are experimenting; 0 means those steps train nothing. It "
+      "changes only how much is learned from those steps, not which noise levels are drawn. Not applied under "
+      "Automagic v3 (it sets its own rate), as in Fizgig.", minimum=0.0, maximum=100.0, family_only="option"),
     P("MINIMAX_LIKENESS_MODE", "Training mode", CHOICE, "Default", "Training Parameters",
       "MiniMax H3: which of the 50 blocks the LoRA trains. Default = blocks 20-49 (the identity blocks: quickest steps "
       "and the measured best for characters and styles). More Blocks = 6-49 (slower, holds the dataset's global "
@@ -334,7 +341,7 @@ DRIVER_OPTIONS.update({"TARGET_LAYERS": "target_layers", "TRAINING_BLOCKS": "tra
 DRIVER_OPTIONS.update({"COMPILE_BLOCKS": "compile_blocks"})
 DRIVER_OPTIONS.update({"ATTENTION_MECHANISM": "attention_mechanism"})
 DRIVER_OPTIONS.update({"MINIMAX_LOWNOISE_PCT": "lownoise_pct", "MINIMAX_LIKENESS_MODE": "likeness_mode",
-                       "MINIMAX_BLOCKS": "blocks"})
+                       "MINIMAX_BLOCKS": "blocks", "MINIMAX_HIGHNOISE_LR_PCT": "highnoise_lr_pct"})
 PRESET_KEYS = tuple(p.key for p in PARAMS if p.preset)
 
 

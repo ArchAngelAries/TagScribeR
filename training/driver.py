@@ -63,6 +63,11 @@ class FamilyDriver:
     def after_epoch(self, epoch: int, steps_remaining: int) -> None:
         """Called at every epoch boundary (Krea 2: the cuDNN attention switch). The default does nothing."""
 
+    def extra_metadata(self) -> dict:
+        """Family facts stamped into every saved LoRA beside the generic ss_ keys (MiniMax H3: the timestep density,
+        the high-noise LR scale, the trained blocks - Fizgig minimax/trainer.py _run_provenance). Default: none."""
+        return {}
+
     def trainable_blocks(self):
         """Block ids (driver.block_map) the trainable adapter covers; None = every target. A family with block
         targeting (Klein's Model Area) returns its configured selection."""
@@ -132,7 +137,9 @@ class FamilyDriver:
                       refs=None):
         """One training forward. latents (B, C, h, w) on device (B = 1 unless supports_batching), cond = the cached dict (batched), refs = the pair's
         reference latents [(1, C, rh, rw), ...] (edit training) or None.
-        Returns (loss tensor, info dict e.g. {"t": 0.63}). Owns the family's noise/target/timestep rules."""
+        Returns (loss tensor, info dict e.g. {"t": 0.63}). Owns the family's noise/target/timestep rules.
+        info may carry "lr_scale": a multiplier on the optimizer's learning rate for this step (MiniMax H3's
+        Medium to High Noise LR); the loop applies the mean over an accumulation window."""
         raise NotImplementedError
 
     # ---- sampling -------------------------------------------------------------------------------

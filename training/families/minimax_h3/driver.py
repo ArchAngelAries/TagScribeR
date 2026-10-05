@@ -105,6 +105,7 @@ class MiniMaxH3Driver(FamilyDriver):
         self.lownoise_pct = DEFAULT_LOWNOISE_PCT
         self.likeness_mode = "default"
         self.blocks_spec = "all"
+        self.highnoise_lr_scale = 1.0    # Fizgig --highnoise_lr_scale: LR multiplier for steps at sigma >= 0.5
         self._warned_range = False
 
     # ---- run options (driver_options: the Train tab's H3 dials) --------------------------------------------------
@@ -129,7 +130,17 @@ class MiniMaxH3Driver(FamilyDriver):
             self.likeness_mode = self._mode(options["likeness_mode"])
         if "blocks" in options:
             self.blocks_spec = str(options["blocks"] or "all").strip() or "all"
+        if "highnoise_lr_pct" in options:
+            # Fizgig lora_trainer_gui.py minimax_highnoise_lr: percent -> a plain multiplier, 0..1 (0 = those steps
+            # train nothing; the ceiling is 100)
+            pct = float(options["highnoise_lr_pct"])
+            if not (0.0 <= pct <= 100.0):
+                raise ValueError(f"Medium to High Noise LR % must be between 0 and 100 (got {pct:g})")
+            self.highnoise_lr_scale = pct / 100.0
         self._block_index = None
+        if abs(self.highnoise_lr_scale - 1.0) > 1e-9:      # Fizgig trainer.py:4367
+            logger.info(f"[lr] steps above sigma {S.LOWNOISE_SIGMA:g} train at "
+                        f"{self.highnoise_lr_scale * 100:.0f}% of the learning rate.")
         logger.info(f"[h3] low-noise {self.lownoise_pct:g}% -> schedule shift {self.shift:.4g}; training mode "
                     f"{self.likeness_mode}: blocks {self.trained_blocks_spec()}")
 
@@ -246,7 +257,18 @@ class MiniMaxH3Driver(FamilyDriver):
         a_noise = torch.randn(2 * 2, dit.config.audio_latents_dim, generator=generator).to(device)
         pred = dit(noised.to(dt), t, text, audio_noise=a_noise)
         loss = F.mse_loss(pred.float(), (x0 - noise).float())
-        return loss, {"t": float(sigma[0])}
+        info = {"t": float(sigma[0])}
+        if abs(self.highnoise_lr_scale - 1.0) > 1e-9:
+            # Fizgig trainer.py:5498: this step's band multiplier - the loop scales the optimizer's LR by the window's
+            # mean (never the loss: Adam's update is invariant to a constant factor on the gradient)
+            info["lr_scale"] = self.highnoise_lr_scale if info["t"] >= S.LOWNOISE_SIGMA else 1.0
+        return loss, info
+
+    def extra_metadata(self) -> dict:
+        """Fizgig trainer.py _run_provenance: the schedule facts stamped into the LoRA."""
+        return {"ss_timestep_density": f"shift{self.shift:g}",
+                "ss_highnoise_lr_scale": f"{self.highnoise_lr_scale:g}",
+                "ss_train_blocks": self.trained_blocks_spec()}
 
     # ---- sampling -------------------------------------------------------------------------------
     @torch.no_grad()

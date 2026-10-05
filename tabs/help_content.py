@@ -515,8 +515,12 @@ VRAM; with less, the text encoder streams from system RAM and is slower.</li>
 <li>The default mode trains blocks 20 to 49. <b>Low-noise %</b> and the training mode are under <i>Show all
 settings</i>.</li>
 <li>The presets use the Automagic v3 optimizer, which sets its own learning rate, so Adaptive LR is off for them.</li>
-<li>Previews run at 20 steps on the training model. Fizgig's Turbo-LoRA previews, HQQ 4-bit and the high-noise
-LR dial aren't available yet.</li>
+<li><b>Medium to High Noise LR %</b> (Timesteps, under <i>Show all settings</i>) scales the learning rate of the
+steps drawn from the noisy half of the range, where pose, framing and face shape are decided. Leave it at 100 unless
+you are experimenting; lower values bias a run toward surface detail. It only acts with the AdamW optimizer:
+Automagic v3 sets its own rate and ignores it.</li>
+<li>Previews run at 20 steps on the training model. Fizgig's Turbo-LoRA previews and HQQ 4-bit aren't available
+yet.</li>
 </ul>
 <h3>FLUX.2 Klein Base 9B</h3>
 <ul>

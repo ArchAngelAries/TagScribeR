@@ -512,6 +512,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         if context_lora_path:
             md.update({"ss_context_lora": os.path.basename(context_lora_path),
                        "ss_context_lora_strength": str(context_lora_strength)})
+        md.update(driver.extra_metadata())
         return {k: v for k, v in md.items() if v is not None}
 
     def save_lora(path, epoch):
@@ -576,12 +577,28 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                     mininterval=1.0 if sys.stderr.isatty() else 2.0)
     dit.train()
 
+    lr_scales = []                      # this window's per-step LR multipliers (driver info["lr_scale"])
+    self_rated = owns_its_rate(optimizer)
+    lr_scale_noted = []
+
     def optimizer_step():
         if max_grad_norm:
             norm = torch.nn.utils.clip_grad_norm_(params, max_grad_norm)
             if adaptive is not None:
                 adaptive.note_clip(norm, max_grad_norm)
-        optimizer.step()
+        # Fizgig minimax/trainer.py _boundary_step: the window's mean band multiplier scales the optimizer's LR for
+        # this one step (never the loss), and is not applied when the optimizer sets its own rate (Automagic v3)
+        bm = (sum(lr_scales) / len(lr_scales)) if lr_scales else 1.0
+        lr_scales.clear()
+        if bm != 1.0 and not self_rated:
+            base_lrs = [g["lr"] for g in optimizer.param_groups]
+            for g in optimizer.param_groups:
+                g["lr"] = g["lr"] * bm
+            optimizer.step()
+            for g, lr0 in zip(optimizer.param_groups, base_lrs):
+                g["lr"] = lr0
+        else:
+            optimizer.step()
         if scheduler is not None:
             scheduler.step()
         if ema is not None:
@@ -616,6 +633,11 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             mult = watch.multiplier(batch)     # per-image LR (batch size 1): the raw loss is still what's recorded
             scaled = loss * mult if mult != 1.0 else loss
             (scaled / gradient_accumulation if gradient_accumulation > 1 else scaled).backward()
+            if "lr_scale" in _info:
+                if self_rated and not lr_scale_noted:
+                    lr_scale_noted.append(True)
+                    logger.info("[lr] the per-step LR multiplier is not applied - the optimizer sets its own rate")
+                lr_scales.append(float(_info["lr_scale"]))
             pending += 1
             if pending >= gradient_accumulation or i == steps_per_epoch - 1:
                 optimizer_step()

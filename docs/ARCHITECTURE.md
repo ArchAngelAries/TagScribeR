@@ -56,7 +56,7 @@ tabs/                   UI only
   gallery.py caption.py editor.py datasets.py metadata.py settings.py
   train.py train_dialogs.py   Train tab: presets, parameters, run panel (QProcess stages), loss chart,
                         samples, queue, Problem Images, preview override
-  memory_bar.py         Train tab: VRAM / RAM bars with the run's peak (readers in core/vram_monitor.py)
+  memory_bar.py         VRAM / RAM bars under every tab, with the peak (readers in core/vram_monitor.py)
   review.py             AI caption review window (diff, accept/reject)
   palette.py            Ctrl+K command palette
   help.py help_content.py   Help Center (searchable, context-aware)

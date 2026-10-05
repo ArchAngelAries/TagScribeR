@@ -79,8 +79,18 @@ class MainWindow(QMainWindow):
                     self.tab_metadata, self.tab_train, self.tab_settings):
             self.stack.addWidget(tab)
 
+        # VRAM / RAM under every tab: what training and captioning models are using, with the peak
+        from tabs.memory_bar import MemoryStrip
+        self.memory_strip = MemoryStrip(settings())
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+        right_layout.addWidget(self.stack, 1)
+        right_layout.addWidget(self.memory_strip)
+
         main_layout.addWidget(sidebar_container)
-        main_layout.addWidget(self.stack)
+        main_layout.addWidget(right, 1)
         self.sidebar.setCurrentRow(0)
         self.setup_hotkeys()
 
@@ -193,6 +203,7 @@ class MainWindow(QMainWindow):
         worker.cancel_all()
         jobs.cancel_all()
         manager().unload_all(blocking=True)
+        self.memory_strip.shutdown()       # the sampling thread and its typeperf child must not outlive the window
         event.accept()
 
 

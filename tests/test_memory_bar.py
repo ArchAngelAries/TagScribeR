@@ -79,17 +79,33 @@ def test_bar_tracks_peak_and_resets(app):
     assert reader.stopped
 
 
-def test_train_tab_has_the_bar_and_remembers_hide(app):
-    from tabs.train import TrainTab
-    tab = TrainTab()
-    was = tab.cfg.get("training.stats_bar_visible", True)
+def test_strip_remembers_hide_and_a_training_start_resets_peaks(app):
+    """The window's strip: Hide stats is remembered, and starting a run zeroes the peaks of every live bar."""
+    from core.config import settings
+    from tabs import memory_bar
+    cfg = settings()
+    reader = _Reader()
+    strip = memory_bar.MemoryStrip(cfg, reader)
+    assert not strip.bar.isHidden() and strip.btn.text() == "Hide stats"          # shown by default
+    strip.toggle()
+    assert strip.bar.isHidden() and strip.btn.text() == "Show stats" and cfg.get(memory_bar.VISIBLE_KEY) is False
+    assert memory_bar.MemoryStrip(cfg, _Reader()).bar.isHidden()                  # the next launch remembers
+    strip.toggle()
+    assert not strip.bar.isHidden() and cfg.get(memory_bar.VISIBLE_KEY) is True
+    reader.give((18 * GIB, 20 * GIB), (12 * GIB, 32 * GIB))
+    strip.bar.poll()
+    assert strip.bar.vram.peak == 18 * GIB
+    memory_bar.reset_all_peaks()                                                  # what TrainTab.start does
+    assert strip.bar.vram.peak == 0 and strip.bar.ram.peak == 0
+    strip.shutdown()
+    assert reader.stopped
+
+
+def test_main_window_has_the_strip_under_every_tab(app):
+    import main
+    win = main.MainWindow()
     try:
-        tab._show_stats(True)
-        tab._toggle_stats()
-        assert tab.memory_bar.isHidden() and tab.btn_stats.text() == "Show stats"
-        assert tab.cfg.get("training.stats_bar_visible") is False
-        tab._toggle_stats()
-        assert not tab.memory_bar.isHidden() and tab.btn_stats.text() == "Hide stats"
+        assert win.memory_strip.parentWidget() is win.stack.parentWidget()        # beside the tab stack, not inside a tab
+        assert not hasattr(win.tab_train, "memory_bar")
     finally:
-        tab.cfg.set("training.stats_bar_visible", was)
-        tab.memory_bar.shutdown()
+        win.memory_strip.shutdown()

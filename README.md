@@ -200,7 +200,7 @@ What you get while it runs:
 
 - **Adaptive learning rate.** You give a minimum and maximum; it probes up while the loss improves, backs off on a plateau, and rolls back if training turns unstable.
 - **Sample previews** after each epoch, rendered with the LoRA so far. Every saved epoch is a usable LoRA.
-- **Memory bar.** Live VRAM and RAM use under the progress bar, with a marker for the run's peak.
+- **Memory bar.** Live VRAM and RAM use at the bottom of the window, on every tab, with a marker for the peak.
 - **Problem Images.** A loss watch flags images that never learn. Fix the caption in the window and the run picks it up at the next epoch. It can also re-caption stuck images for you.
 - **Pause and resume** at any epoch, a **run queue**, and resumable state for training more epochs later.
 - **Automatic memory planning.** It picks a base precision (bf16, 8-bit or 4-bit) and block swapping from your free VRAM.

@@ -730,7 +730,7 @@ def make_neutral_status(c: Ctx) -> None:
     c.window.tab_train._update_dataset_label()
     c.window.tab_train.lbl_dataset.setText(clean_text(c.window.tab_train.lbl_dataset.text()))
     # The memory bar would show this machine's real VRAM / RAM: give it fixed demo readings instead.
-    bar = c.window.tab_train.memory_bar
+    bar = c.window.memory_strip.bar
     bar.shutdown()
     bar.reader = _DemoMemoryReader()
     bar.vram.peak, bar.ram.peak = int(17.8 * 2 ** 30), int(21.5 * 2 ** 30)

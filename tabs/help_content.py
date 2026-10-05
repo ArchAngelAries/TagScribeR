@@ -473,8 +473,9 @@ default. If it is missing (an older install), run <code>update.bat</code>. Witho
 warning.</li>
 <li>Close other apps holding VRAM (ComfyUI, Forge) before training, and use <b>Free GPU memory</b> in Auto
 Caption.</li>
-<li>The <b>VRAM</b> and <b>RAM</b> bars under the progress bar show memory in use out of the total, updated every
-second. The white mark and the <i>peak</i> figure are the highest point of the current run; they reset when a run
+<li>The <b>VRAM</b> and <b>RAM</b> bars at the bottom of the window (under every tab) show memory in use out of the
+total, updated every second, so you can also see what a captioning model takes. The white mark and the <i>peak</i>
+figure are the highest point since the last training run started (or since the app opened); they reset when a run
 starts. Both bars cover the whole machine, so other apps are included. If VRAM is pinned at the top of the bar,
 training is likely spilling into system memory and slowing down: lower Target megapixels, pick a smaller Base
 precision or swap more blocks. <b>Hide stats</b> hides the bars (remembered). A card with no readable counter

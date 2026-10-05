@@ -1,18 +1,30 @@
-"""The Train tab's memory bar: live VRAM and RAM use with a per-run peak marker, as Fizgig's trainer shows it
+"""The memory bar at the bottom of the window: live VRAM and RAM use with a peak marker, as Fizgig's trainer shows it
 (lora_trainer_gui.py: _draw_status_segment, _poll_status_bar, reset_status_peaks, _toggle_status_bar).
 
 Both figures are for the whole machine, not only the training process, so other apps holding memory are included.
 The numbers come from core/vram_monitor.py on a background thread; this widget only draws, once a second.
+Fizgig's bar belongs to its trainer window; here it sits under every tab, so it also shows what a captioning model
+takes. Peaks reset when a training run starts.
 """
 from __future__ import annotations
 
+import weakref
+
 from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from core.vram_monitor import MemoryReader
 
 GIB = 1073741824          # binary GB: matches the "20 GB" on the card's box
+VISIBLE_KEY = "ui.stats_bar_visible"
+_bars: weakref.WeakSet = weakref.WeakSet()
+
+
+def reset_all_peaks() -> None:
+    """Zero the peak markers of every live bar. The Train tab calls this when a run starts."""
+    for bar in list(_bars):
+        bar.reset_peaks()
 
 
 class _Segment(QWidget):
@@ -73,12 +85,13 @@ class MemoryBar(QWidget):
         super().__init__(parent)
         self.reader = reader or MemoryReader()
         self.vram = _Segment("VRAM", "#3FB950", "#E5534B",                      # green -> red
-                             "Video memory in use on the training GPU, out of its total, and the highest it reached "
-                             "during this run (the white mark). This is the whole card: other apps holding VRAM "
-                             "are included.")
+                             "Video memory in use on the GPU, out of its total, and the highest it has reached "
+                             "since the last training run started or the app opened (the white mark). This is "
+                             "the whole card: other apps holding VRAM are included.")
         self.ram = _Segment("RAM", "#3B82F6", "#EAC54F",                        # blue -> yellow
-                            "System memory in use, out of the total, and the highest it reached during this run "
-                            "(the white mark). This is the whole machine, not only training.")
+                            "System memory in use, out of the total, and the highest it has reached since the last "
+                            "training run started or the app opened (the white mark). This is the whole machine, "
+                            "not only TagScribeR.")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.vram, 1)
@@ -86,6 +99,7 @@ class MemoryBar(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self.poll)
+        _bars.add(self)
 
     def showEvent(self, event):
         """Sampling starts the first time the bar is actually on screen, so a tab that is never opened costs nothing."""
@@ -108,3 +122,34 @@ class MemoryBar(QWidget):
     def shutdown(self) -> None:
         self._timer.stop()
         self.reader.stop()
+
+
+class MemoryStrip(QWidget):
+    """The bar plus its Hide stats / Show stats button, for the bottom of the main window. The choice is remembered."""
+
+    def __init__(self, cfg, reader: MemoryReader | None = None, parent=None):
+        super().__init__(parent)
+        self.cfg = cfg
+        self.bar = MemoryBar(reader)
+        self.btn = QPushButton()
+        self.btn.setFlat(True)
+        self.btn.setToolTip("Show or hide the VRAM / RAM bars. Peaks are still tracked while hidden.")
+        self.btn.clicked.connect(self.toggle)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 3, 8, 3)
+        lay.addWidget(self.bar, 1)
+        lay.addWidget(self.btn)
+        # the key was training.stats_bar_visible while the bar lived in the Train tab
+        self.set_shown(bool(cfg.get(VISIBLE_KEY, cfg.get("training.stats_bar_visible", True))))
+
+    def set_shown(self, visible: bool) -> None:
+        self.bar.setVisible(visible)
+        self.btn.setText("Hide stats" if visible else "Show stats")
+
+    def toggle(self) -> None:
+        visible = self.bar.isHidden()
+        self.set_shown(visible)
+        self.cfg.set(VISIBLE_KEY, visible)
+
+    def shutdown(self) -> None:
+        self.bar.shutdown()

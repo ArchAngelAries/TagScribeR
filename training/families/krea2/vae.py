@@ -1,7 +1,8 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/krea2/vae.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: the one-line `get_activation` helper (Fizgig krea2/qwen_image_modules.py) is inlined and the
-# import-time logging.basicConfig() call and an unused local in decode_to_pixels are dropped; the model code is unchanged.
+# import-time logging.basicConfig() call and an unused local in decode_to_pixels are dropped; the attention block's 384-wide head goes through
+# training/modules/wide_attention.py (the built-in attention is wrong for it on AMD ROCm); the rest is unchanged.
 # Copied and modified from Diffusers. Original copyright notice follows.
 
 # Copyright 2025 The Qwen-Image Team, Wan Team and The HuggingFace Team. All rights reserved.
@@ -29,6 +30,8 @@ from typing import Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from training.modules.wide_attention import attention as wide_attention
 import numpy as np
 
 
@@ -382,7 +385,9 @@ class QwenImageAttentionBlock(nn.Module):
         q, k, v = qkv.chunk(3, dim=-1)
 
         # apply attention
-        x = F.scaled_dot_product_attention(q, k, v)
+        # TagScribeR: one 384-wide head. The built-in attention is wrong for heads above 256 on ROCm (streaks in
+        # decoded images, shifted latents) - see training/modules/wide_attention.py.
+        x = wide_attention(q, k, v)
 
         x = x.squeeze(1).permute(0, 2, 1).reshape(batch_size * time, channels, height, width)
 

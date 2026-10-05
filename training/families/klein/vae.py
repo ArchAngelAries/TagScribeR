@@ -2,7 +2,8 @@
 # klein/model_utils.py (load_vae).
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: einops is replaced by plain torch reshapes; the loader builds the module on CPU instead of
-# accelerate's empty-weights context (the AE is 84M parameters). Fizgig's own header follows.
+# accelerate's empty-weights context (the AE is 84M parameters); the attention block's 512-wide head goes through
+# training/modules/wide_attention.py (the built-in attention is wrong for it on AMD ROCm). Fizgig's own header follows.
 #
 # Fizgig-native Klein DiT model
 # Based on FLUX repo: https://github.com/black-forest-labs/flux
@@ -15,6 +16,8 @@ from dataclasses import dataclass, field
 
 import torch
 from torch import Tensor, nn
+
+from training.modules.wide_attention import attention as wide_attention
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +80,9 @@ class AttnBlock(nn.Module):
         q = q.reshape(b, 1, c, h * w).transpose(2, 3).contiguous()      # b c h w -> b 1 (h w) c
         k = k.reshape(b, 1, c, h * w).transpose(2, 3).contiguous()
         v = v.reshape(b, 1, c, h * w).transpose(2, 3).contiguous()
-        h_ = nn.functional.scaled_dot_product_attention(q, k, v)
+        # TagScribeR: one 512-wide head; the built-in attention is wrong for heads above 256 on ROCm
+        # (training/modules/wide_attention.py)
+        h_ = wide_attention(q, k, v)
 
         return h_.transpose(2, 3).reshape(b, c, h, w)                   # b 1 (h w) c -> b c h w
 

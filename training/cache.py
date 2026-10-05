@@ -21,6 +21,10 @@ import torch
 
 logger = logging.getLogger("training.cache")
 FORMAT_VERSION = "1.0.0"
+# Bumped when the way latents are ENCODED changes, so --skip_existing re-encodes caches written the old way.
+#   2: the VAEs' wide single-head attention is computed correctly (training/modules/wide_attention.py). Caches
+#      without this mark may have been encoded through the broken built-in attention on AMD ROCm.
+LATENT_REV = "2"
 
 
 def _clean(t, what, key):
@@ -44,7 +48,17 @@ def save_latents(desc, item, latent, controls=()):
         sd[f"latent_control_{i}_{c.shape[-2]}x{c.shape[-1]}"] = _clean(c, "control latent", item.item_key)
     save_file(sd, item.latent_cache_path, metadata={
         "architecture": desc.arch_id, "width": str(item.original_size[0]), "height": str(item.original_size[1]),
-        "dtype": _dtype_str(latent.dtype), "format_version": FORMAT_VERSION})
+        "dtype": _dtype_str(latent.dtype), "format_version": FORMAT_VERSION, "latent_rev": LATENT_REV})
+
+
+def latent_rev(path) -> str:
+    """The encoder revision a latent cache was written with ("" for caches from before the mark). Header only."""
+    try:
+        from safetensors import safe_open
+        with safe_open(path, framework="pt") as f:
+            return (f.metadata() or {}).get("latent_rev", "")
+    except Exception:
+        return ""
 
 
 def _ref_sizes(item):
@@ -174,7 +188,8 @@ def run_latents(desc, driver, dataset, model_path, device, *, skip_existing=Fals
     for it in items:
         if skip_existing and os.path.exists(it.latent_cache_path):
             ok = latent_cache_matches_reso(it.latent_cache_path, it.bucket_size, desc.spatial_factor)
-            if ok and _has_controls(it.latent_cache_path) == bool(it.control_paths):
+            if (ok and _has_controls(it.latent_cache_path) == bool(it.control_paths)
+                    and latent_rev(it.latent_cache_path) == LATENT_REV):
                 continue
         todo.append(it)
     logger.info(f"[cache] latents: {len(items)} image(s), {len(todo)} to encode")

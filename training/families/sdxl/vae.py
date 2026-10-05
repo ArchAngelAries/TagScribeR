@@ -42,4 +42,9 @@ def load_vae(path: str, device="cpu", config: dict = None, dtype=torch.float32):
     if r.missing_keys or r.unexpected_keys:
         raise ValueError(f"{path} does not match the SDXL VAE: missing {r.missing_keys[:3]}, unexpected "
                          f"{r.unexpected_keys[:3]}")
+    # The VAE's mid-block attention is one 512-wide head. diffusers' default processor calls the built-in
+    # scaled_dot_product_attention, which is wrong for heads above 256 on AMD ROCm (training/modules/wide_attention.py),
+    # so use the classic processor (plain matmul + softmax) on every platform.
+    from diffusers.models.attention_processor import AttnProcessor
+    vae.set_attn_processor(AttnProcessor())
     return vae.to(device=device, dtype=dtype).eval().requires_grad_(False)

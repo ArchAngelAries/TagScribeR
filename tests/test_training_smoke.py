@@ -195,6 +195,20 @@ def test_stale_cache_removed_and_latents_skipped(setup):
     assert lat.stat().st_mtime_ns == mtime                       # --skip_existing kept the valid latent
     assert not list(cache_dir.glob("img03_*"))                   # the deleted image's caches are gone
 
+    # a cache written before the encoder revision mark (or with an older one) is encoded again
+    from safetensors import safe_open
+    from safetensors.torch import load_file, save_file
+
+    from training import cache as C
+    assert C.latent_rev(str(lat)) == C.LATENT_REV
+    with safe_open(str(lat), framework="pt") as f:
+        md = dict(f.metadata())
+    md.pop("latent_rev")
+    save_file(load_file(str(lat)), str(lat), metadata=md)
+    assert C.latent_rev(str(lat)) == ""
+    _run_stages(pipeline.build_run(desc, vals, data, models))
+    assert C.latent_rev(str(lat)) == C.LATENT_REV
+
 
 def test_qwen_driver_on_a_tiny_config():
     """The ported Qwen Image 2.1 DiT and driver objective run end to end (forward + backward) on a 2-layer,

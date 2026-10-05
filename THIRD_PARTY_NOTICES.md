@@ -32,6 +32,7 @@ uses:
 | `training/dataset.py` | `src/fizgig/dataset/image_dataset.py`, `config.py` (image-only subset) |
 | `training/ema.py`, `optimizers.py`, `metadata.py`, `progress.py`, `train_utils.py`, `loss_logger.py` | the same-named modules in `src/fizgig/training/` |
 | `training/modules/offloading.py`, `int8_train.py`, `nf4.py` | `src/fizgig/modules/` |
+| `training/modules/fp8.py` | `src/fizgig/krea2/fp8_optimization_utils.py`, `krea2/utils.py` (adapted by Fizgig from musubi-tuner) |
 | `training/families/qwen_image21/` | `src/fizgig/families/qwen_image.py` and `src/fizgig/qwen_image21/` |
 | `training/families/krea2/` | `src/fizgig/krea2/` (`model.py`, `sampling.py`, `vae.py`, `vae_loader.py`, `embedder.py`, `trainer.py`, `caching.py`, `utils.py`), `lora_trainer_gui.py` (presets, model paths), `scripts/fetch_models.py`, `utils/capabilities.py` (measured memory) |
 

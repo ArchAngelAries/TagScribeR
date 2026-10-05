@@ -5,8 +5,9 @@ flow-matching objective and timestep sampler, the 12-layer text conditioning, th
 the Turbo-LoRA preview recipe and the measured memory figures. See docs/TRAINING_PLAN.md and THIRD_PARTY_NOTICES.md.
 
 Not ported (Fizgig has them; this family does not):
-  * the fp8 base and fp8 matmul (no matmul path on AMD ROCm; a pre-quantised fp8 DiT is refused with a clear error,
-    INT8 / 4-bit bases are made from the bf16 RAW checkpoint by training/quant.py)
+  * the fp8 _scaled_mm fast path (NVIDIA Ada and newer only; off on ROCm in Fizgig too). The fp8 base itself IS
+    supported: fp8 / fp8-scaled RAW files load as fp8 and are dequantised per matmul (training/modules/fp8.py),
+    a bf16 file can be quantised to fp8, and either file feeds the INT8 / 4-bit bases
   * torch.compile of the blocks
   * the rotating-block full fine-tune and regularisation images
   * the classic fp8-Turbo-checkpoint preview engine (previews run on the training model with the Turbo LoRA)

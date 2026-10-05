@@ -12,7 +12,7 @@
 
 Fizgig preset JSON files apply here unchanged (same keys and value formats). Fizgig's Krea 2 keys that this app
 expresses differently are migrated first (migrate_legacy): KREA2_EMA -> FAMILY_EMA, QUANT_4BIT_MODE -> FAMILY_PRECISION
-(fp8 is not offered: it becomes Auto, with a note), blank noise-range boxes -> the defaults; torch.compile and the
+(fp8 maps to the fp8 base), blank noise-range boxes -> the defaults; torch.compile and the
 fine-tune keys do nothing here and are ignored.
 """
 from __future__ import annotations
@@ -158,10 +158,6 @@ def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
                 prec = "nf4" if value in (True, "True", "true", 1, "1") else None
             else:
                 prec = _legacy_precision(value)
-            if prec == "fp8":
-                notes.append("[preset] QUANT_4BIT_MODE: fp8 isn't offered here (there is no fp8 path for this "
-                             "setup) - using Auto, which picks INT8 or 4-bit to fit your free VRAM")
-                prec = "auto"
             if prec and "FAMILY_PRECISION" not in preset:
                 out["FAMILY_PRECISION"] = P.PRECISION_LABELS[prec]
         elif key in LEGACY_IGNORED or key.startswith(LEGACY_IGNORED_PREFIXES):

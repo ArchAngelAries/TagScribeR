@@ -24,7 +24,7 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-PRECISIONS = ("bf16", "int8", "nf4")
+PRECISIONS = ("bf16", "fp8", "int8", "nf4")
 
 
 def _targets(dit, driver):
@@ -34,13 +34,30 @@ def _targets(dit, driver):
 
 @torch.no_grad()
 def quantize(dit, driver, precision, compute_device):
-    """Quantise the block map's Linears in place. Returns the number quantised (0 for bf16)."""
-    if precision == "bf16":
-        return 0
+    """Quantise the block map's Linears in place. Returns the number quantised (0 for bf16).
+
+    The checkpoint may itself be fp8 (training/modules/fp8.py keeps such weights fp8 at load): "fp8" then leaves it
+    exactly as stored, "int8" / "nf4" quantise the targets from the dequantised fp8 weights (Fizgig does the same:
+    the fp8 file is a valid source for every base), and "bf16" dequantises everything."""
+    from training.modules import fp8 as F8
     if precision not in PRECISIONS:
         raise ValueError(f"precision must be one of {PRECISIONS}, got {precision!r}")
+    if precision == "bf16":
+        n = F8.dequantize_model(dit)
+        if n:
+            logger.info(f"[precision] bf16 asked for an fp8 checkpoint: {n} Linears dequantised to bf16 (the file's "
+                        f"fp8 rounding stays; pick fp8 to keep it at one byte per weight)")
+        return 0
     compute_device = torch.device(compute_device)
     targets = _targets(dit, driver)
+    if precision == "fp8":
+        n = sum(1 for _, m in targets if F8.quantize_module(m, compute_device))
+        kept = len(targets) - n
+        gc.collect()
+        _empty()
+        logger.info(f"[precision] fp8: {n} block Linears quantised" + (f", {kept} already fp8 in the checkpoint"
+                                                                         if kept else ""))
+        return len(targets)
     if precision == "int8":
         from training.modules.int8_train import int8_train_forward
         from training.modules.nf4 import _dequantize_source_weight
@@ -48,6 +65,7 @@ def quantize(dit, driver, precision, compute_device):
             if getattr(m, "_prequantized", False):
                 continue                    # the family's own int8 storage (H3's ConvRot): already int8
             w = _dequantize_source_weight(m).to(compute_device).float()
+            F8.detach(m)                    # an fp8 source: its scale and patched forward go with the old weight
             scale = w.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / 127.0
             m.weight.requires_grad_(False)
             m.weight.data = (w / scale).round_().clamp_(-127, 127).to(torch.int8).contiguous()
@@ -63,6 +81,7 @@ def quantize(dit, driver, precision, compute_device):
         for _, m in targets:
             dense = getattr(m, "dense_weight", None)      # a pre-quantised module decodes itself to the true basis
             src = dense(compute_device) if callable(dense) else _dequantize_source_weight(m).to(compute_device)
+            F8.detach(m)
             packed, state = quantize_nf4(src.contiguous())
             m._nf4_packed, m._nf4_state, m._is_nf4 = packed, state, True
             m.weight.data = torch.empty(0, device=compute_device, dtype=torch.bfloat16)
@@ -70,9 +89,43 @@ def quantize(dit, driver, precision, compute_device):
             m.forward = nf4_linear_forward_patch.__get__(m, type(m))
         dit._nf4_quantized = True
     gc.collect()
-    torch.cuda.empty_cache()
-    logger.info(f"[precision] {precision}: {len(targets)} block Linears quantised; everything else stays bf16")
+    _empty()
+    logger.info(f"[precision] {precision}: {len(targets)} block Linears quantised; everything else stays as loaded")
     return len(targets)
+
+
+def _empty():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+_PROBES: dict = {}
+
+
+def available(precision: str, device=None) -> tuple:
+    """(usable, reason) for a base precision on this machine - probed with a real kernel, not a table (Fizgig
+    utils/capabilities.py): INT8 training needs torch._int_mm on the device, NF4 needs bitsandbytes. bf16 and fp8
+    (dequantised per matmul) need nothing special."""
+    if precision in ("bf16", "fp8"):
+        return True, ""
+    if precision == "nf4":
+        import importlib.util
+        ok = importlib.util.find_spec("bitsandbytes") is not None
+        return ok, "" if ok else "4-bit NF4 needs the bitsandbytes package (install.bat --with-bnb)"
+    if precision == "int8":
+        dev = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        key = ("int8", dev.type)
+        if key not in _PROBES:
+            try:
+                a = torch.ones(32, 16, dtype=torch.int8, device=dev)    # _int_mm wants more than a few rows
+                b = torch.ones(16, 8, dtype=torch.int8, device=dev)
+                torch._int_mm(a, b)
+                _PROBES[key] = (True, "")
+            except Exception as e:  # noqa: BLE001 - any failure means "not on this GPU / build"
+                _PROBES[key] = (False, f"INT8 matmul (torch._int_mm) is not available on this GPU build "
+                                       f"({type(e).__name__})")
+        return _PROBES[key]
+    return False, f"unknown precision {precision!r}"
 
 
 def move(dit, device):
@@ -98,12 +151,12 @@ def load_base(driver, path, device, precision="bf16", blocks_to_swap=0, supports
         elif swap > cap:
             logger.info(f"[block swap] {swap} requested, {cap} is the maximum")
             swap = cap
-    dit = driver.load_dit(path, "cpu" if (swap or precision != "bf16") else device)
+    dit = driver.load_dit(path, "cpu" if (swap or precision not in ("bf16", "fp8")) else device)
     quantize(dit, driver, precision, device)
     if swap:
         driver.enable_block_swap(dit, swap, device, supports_backward)
         logger.info(f"[block swap] {swap} blocks stream between CPU and GPU")
-    elif precision != "bf16":
+    elif precision not in ("bf16", "fp8"):
         move(dit, device)
     return dit, swap
 
@@ -135,12 +188,23 @@ def plan(desc, driver, precision="auto", blocks_to_swap=-1, free_gb=None, margin
         free_gb = free_vram_gb()
     mem = {p: (_peak(v, megapixels), v[1]) for p, v in (desc.train_memory or {}).items()}
     offered = [p for p in PRECISIONS if p in desc.precisions]
+    # a family may state its own Auto preference (Fizgig's Krea 2 order is INT8, then NF4, then fp8, and it swaps
+    # on fp8); precisions this machine cannot run are left out of Auto, with the reason logged
+    order = [p for p in (getattr(desc, "auto_order", ()) or offered) if p in offered]
+    swap_order = [p for p in (getattr(desc, "auto_swap_order", ()) or ("int8", "bf16")) if p in offered]
+    if precision == "auto":
+        for p in list(dict.fromkeys(order + swap_order)):
+            ok, why = available(p)
+            if not ok:
+                logger.info(f"[precision] Auto skips {p}: {why}")
+                order = [x for x in order if x != p]
+                swap_order = [x for x in swap_order if x != p]
     cap = driver.max_blocks_to_swap()
     budget = free_gb - margin_gb
 
     def swap_for(p):
         if p not in mem or p == "nf4":
-            return 0
+            return 0                        # NF4 cannot block-swap
         need, per_block = mem[p]
         if need <= budget or per_block <= 0 or cap <= 0:
             return 0
@@ -149,19 +213,30 @@ def plan(desc, driver, precision="auto", blocks_to_swap=-1, free_gb=None, margin
     if precision == "auto":
         if not mem:
             return offered[0], max(0, blocks_to_swap), "no memory figures in the description: first precision"
-        for p in offered:
+        for p in order:
             if p in mem and mem[p][0] <= budget:
                 return p, 0 if blocks_to_swap < 0 else blocks_to_swap, f"{p} fits {free_gb:.1f} GB free"
-        swappable = [p for p in ("int8", "bf16") if p in offered and p in mem]
+        swappable = [p for p in swap_order if p in mem]
         if swappable and cap > 0:
             p = swappable[0]
             n = swap_for(p)
             if mem[p][0] - n * mem[p][1] <= budget:
                 return p, n if blocks_to_swap < 0 else blocks_to_swap, f"{p} + {n} swapped blocks fit {free_gb:.1f} GB"
-        p = "nf4" if "nf4" in offered else offered[-1]
+        if swappable and cap > 0:           # even the maximum swap is short: still the best that can run
+            p = swappable[0]
+            return p, cap if blocks_to_swap < 0 else blocks_to_swap, (
+                f"{p} + the maximum {cap} swapped blocks: tight for {free_gb:.1f} GB free")
+        p = "nf4" if "nf4" in order else (order[-1] if order else offered[-1])
         return p, 0, f"nothing fits {free_gb:.1f} GB comfortably: {p}, the smallest base"
     if precision not in offered:
         raise ValueError(f"{desc.display_name} offers {offered}, not {precision!r}")
+    ok, why = available(precision)
+    if not ok:
+        if "fp8" in offered and precision != "fp8":
+            logger.warning(f"[precision] {precision} asked for, but {why} - using fp8 instead")
+            precision = "fp8"
+        else:
+            raise RuntimeError(f"{precision} base: {why}")
     if blocks_to_swap < 0:
         n = swap_for(precision)
         return precision, n, (f"{n} swapped blocks to fit {free_gb:.1f} GB" if n else f"fits {free_gb:.1f} GB")

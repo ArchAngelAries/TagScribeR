@@ -46,6 +46,9 @@ def nf4_linear_forward_patch(self: nn.Linear, x: torch.Tensor) -> torch.Tensor:
 def _dequantize_source_weight(module: nn.Linear) -> torch.Tensor:
     """Return the module's weight as bf16, dequantizing fp8 if needed."""
     w = module.weight.data
+    if w.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):      # TagScribeR: any fp8 layout (training/modules/fp8.py)
+        from training.modules.fp8 import dense_weight
+        return dense_weight(module, torch.bfloat16)
     if w.dtype == torch.float8_e4m3fn and getattr(module, "scale_weight", None) is not None:
         # fp8 base → bf16 (same math as fp8_linear_forward_patch's dequant)
         return (w.to(torch.float32) * module.scale_weight.to(torch.float32)).to(torch.bfloat16)

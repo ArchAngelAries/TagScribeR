@@ -5,7 +5,7 @@
 # a key-padding mask (Fizgig's flash / sageattn / xformers dispatch, split attention and the uniform-length trim are
 # not ported - the trim only saves compute, the mask keeps the maths identical); block swap uses training.modules.
 # offloading.ModelOffloader the way the Qwen DiT does; the Repair Studio activation cache (forward_cached) is not
-# ported; the loader reads bf16 only and REFUSES pre-quantised fp8 checkpoints.
+# ported; the loader reads bf16 and pre-quantised fp8 checkpoints (training/modules/fp8.py keeps fp8 weights fp8).
 # Fizgig's own header follows.
 #
 # Upstream: the backbone is ported from ai-toolkit (Ostris, LLC - MIT;
@@ -364,43 +364,23 @@ class SingleStreamDiT(nn.Module):
 
 
 # ---- weights ---------------------------------------------------------------------------------------------------
-_FP8_MARKERS = (".weight_scale", ".scale_weight", ".comfy_quant")
-
-
-def refuse_prequantized(path: str) -> None:
-    """Raise a clear error for a pre-quantised (fp8 / fp8-scaled) checkpoint. Fizgig loads those as fp8 with a
-    dequantising forward (krea2/utils.py: is_prequantized_fp8); TagScribeR has no fp8 matmul path (ROCm) and loading
-    one as bf16 would drop its per-layer scales (weights ~1000x off), so it is refused up front - reading only the
-    safetensors header."""
-    from safetensors import safe_open
-    with safe_open(path, framework="pt") as f:
-        keys = list(f.keys())
-        fp8 = next((k for k in keys if k.endswith(_FP8_MARKERS)), None)
-        if fp8 is None:
-            for k in keys:
-                if "F8" in str(f.get_slice(k).get_dtype()):
-                    fp8 = k
-                    break
-    if fp8 is not None:
-        raise ValueError(
-            f"{path} is a pre-quantised fp8 checkpoint (found {fp8!r}). Krea 2 training needs the bf16 RAW model "
-            f"(krea2_raw_bf16.safetensors from Comfy-Org/Krea-2, ~26 GB); TagScribeR quantises it itself (INT8 or "
-            f"4-bit) when you pick a smaller precision.")
 
 
 def load_krea2_dit(path, device="cuda", dtype=torch.bfloat16, config: SingleMMDiTConfig = KREA2_CONFIG):
-    """Build the DiT on meta and load a bf16 RAW checkpoint (assign=True, strict). A sharded checkpoint
-    (...-00001-of-0000N.safetensors) is read whole. Pre-quantised fp8 files are refused."""
+    """Build the DiT on meta and load a RAW checkpoint (assign=True, strict): bf16, or a pre-quantised fp8 /
+    fp8-scaled file, whose Linear weights stay fp8 with their scales and are dequantised per matmul (Fizgig
+    krea2/utils.py load_krea2_dit, pre-quantised branch). A sharded checkpoint (...-00001-of-0000N.safetensors) is
+    read whole. The base precision (fp8 / INT8 / NF4 / bf16) is applied afterwards by training/quant.py, which
+    accepts either kind of file as its source."""
     from training.families.qwen_image21.embedder import load_split_weights
+    from training.modules import fp8
     path = str(path)
-    refuse_prequantized(path)
     with torch.device("meta"):
         dit = SingleStreamDiT(config)
     sd = load_split_weights(path)
     if sd and all(k.startswith("diffusion_model.") for k in sd):
         sd = {k[len("diffusion_model."):]: v for k, v in sd.items()}
-    sd = {k: (v.to(dtype) if v.is_floating_point() else v) for k, v in sd.items()}
-    missing, unexpected = dit.load_state_dict(sd, strict=False, assign=True)
+    missing, unexpected, _n = fp8.load_state_dict(dit, sd, dtype)
     if missing or unexpected:
         raise ValueError(f"Krea 2 DiT keys mismatch: missing {missing[:8]} ({len(missing)}), unexpected "
                          f"{unexpected[:8]} ({len(unexpected)}) - is this the Krea 2 RAW checkpoint?")

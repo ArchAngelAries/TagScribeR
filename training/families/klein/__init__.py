@@ -7,8 +7,8 @@ and THIRD_PARTY_NOTICES.md.
 
 Not ported (Fizgig has them; this family does not):
   * accelerate (the loop is the generic one) and torch.compile
-  * the fp8 base and fp8 matmul (a pre-quantised fp8 DiT is refused with a clear error; INT8 / 4-bit bases are made
-    from the bf16 Base checkpoint by training/quant.py); the fp8 text encoder (bf16, or INT8 weights on small cards)
+  * the fp8 _scaled_mm fast path (NVIDIA Ada and newer). The fp8 base itself IS supported: the fp8 Base file
+    loads as fp8 and is dequantised per matmul (training/modules/fp8.py), and feeds the INT8 / 4-bit bases
   * TensorBoard / wandb logging, LoRA neuron / rank / module dropout, LoRA+ (Fizgig's GUI keeps it at 1), weight-norm
     scaling, regularisation images
   * the Distilled preview model (4 steps; a second ~9 GB model load): previews run on the resident Base model at 40

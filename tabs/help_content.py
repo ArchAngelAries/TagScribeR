@@ -461,8 +461,9 @@ family default.</li>
     "train_memory": ("Training memory & speed", "Train", """
 <h2>Memory &amp; speed</h2>
 <ul>
-<li><b>Base precision: Auto</b> chooses bf16, INT8 or 4-bit NF4 from your free VRAM and resolution. It picks the
-most precise base that fits, because quantising costs almost no speed.</li>
+<li><b>Base precision: Auto</b> chooses between bf16, fp8, INT8 and 4-bit NF4 from your free VRAM and resolution,
+in the order each family's recipe prefers, and skips ones your machine can't run (INT8 needs GPU support, 4-bit
+needs bitsandbytes). fp8 checkpoints are loaded as they are.</li>
 <li><b>Blocks to swap</b> streams parts of the model through system RAM to fit smaller cards (25–65% slower). Auto
 uses as few as fit.</li>
 <li><b>Target megapixels</b> sets the training resolution. Higher is sharper but slower and needs more memory.</li>
@@ -476,18 +477,21 @@ them in the Image Editor first.</li>
 </ul>
 <h3>Krea 2</h3>
 <ul>
-<li><b>Pick the RAW checkpoint</b> (<code>krea2_raw_bf16.safetensors</code>, about 26 GB) as the DiT, not the Turbo
-file. A pre-quantised fp8 file is refused; INT8 and 4-bit are made from the bf16 one when Auto (or you) choose them.</li>
+<li><b>Pick a RAW checkpoint</b> as the DiT, not the Turbo file. Either kind works: the bf16 file (about 26 GB) or
+an <b>fp8 / fp8-scaled RAW</b> file (about 13 GB). An fp8 file stays fp8 in memory.</li>
+<li><b>Base precision: Auto</b> follows Fizgig's order: INT8 if your GPU supports it and it fits, then 4-bit (needs
+bitsandbytes), then fp8, and finally fp8 with block swap. INT8 and 4-bit are made from whichever file you picked.
+Choose <b>fp8</b> yourself to train on the fp8 weights exactly as they ship.</li>
 <li>The <b>Turbo LoRA</b> is optional and only for previews: the RAW model plus the LoRA renders in 8 steps without a
 second model. Leave it empty to preview the RAW model at 28 steps.</li>
 <li>The text encoder file can be the fp8_scaled or the bf16 Qwen3-VL-4B. Each cached caption is about 30 MB, so
 leave room on the cache drive.</li>
-<li>bf16 holds 26 GB of weights alone (a 32 GB card, or block swap); on smaller cards Auto uses INT8 (about 16 GB at 0.25 MP) or 4-bit (about
-11 GB). Each extra image in the batch adds about 2.4 GB.</li>
+<li>Measured by Fizgig at 0.25 MP: INT8 about 16 GB, 4-bit about 11 GB, fp8 about 19 GB (each swapped block saves
+about 0.4 GB). bf16 holds 26 GB of weights alone. Each extra image in the batch adds about 2.4 GB.</li>
 </ul>
 <h3>FLUX.2 Klein Base 9B</h3>
 <ul>
-<li><b>Files:</b> the Base 9B checkpoint (not the fp8 one, which is refused), the FLUX.2 <code>ae.safetensors</code>
+<li><b>Files:</b> the Base 9B checkpoint (the fp8 file, as Fizgig uses, or the bf16 one), the FLUX.2 <code>ae.safetensors</code>
 autoencoder, and the Qwen3-8B text encoder. <i>Get</i> opens each download page; the Klein and autoencoder repos are
 gated, so accept their terms on Hugging Face first.</li>
 <li><b>Model area</b> chooses which blocks the LoRA trains: <i>Full Model</i>, <i>Identity</i> (a subject's

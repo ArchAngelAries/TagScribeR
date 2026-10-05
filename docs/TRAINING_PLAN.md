@@ -109,7 +109,10 @@ The options as originally presented:
   - *Generic-layer changes:* kohya key writing in `lora.py`, `diff_b` bias deltas for frozen adapters, a
     `quant_target_names` hook (only the 28 main blocks are quantised, the LoRA covers more), legacy-key migration in
     `presets.apply` (`KREA2_EMA`, `QUANT_4BIT_MODE`, blank noise boxes), and Turbo steps in `pipeline.train_kwargs`.
-  - *Not ported:* the fp8 base (a pre-quantised fp8 DiT is refused with a clear error), torch.compile, the
+  - *fp8 base (added 2026-10-05):* fp8 and fp8-scaled RAW files load as fp8 and are dequantised per matmul, a
+    bf16 file can be quantised to fp8, and either feeds INT8 / NF4 (`training/modules/fp8.py`). Auto follows
+    Fizgig's order: INT8, NF4, fp8, then fp8 with block swap, skipping what the machine cannot run.
+  - *Not ported:* the fp8 `_scaled_mm` fast path (NVIDIA Ada and newer), torch.compile, the
     rotating-block full fine-tune and regularisation images, the fp8-Turbo-checkpoint preview engine, Automagic v3's
     per-family groups (so it is not offered here), captioning with the encoder, reference images and RefMods.
   - *Unverified without weights:* the real checkpoints' key layout, the fp8_scaled text-encoder dequantisation, the

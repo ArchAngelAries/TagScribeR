@@ -56,7 +56,8 @@ def test_description_is_valid_and_registered_first(desc):
     assert registry.by_arch_id("krea2") is desc
     assert "_" not in desc.arch_id                       # cache filenames split on "_"
     assert (desc.latent_channels, desc.spatial_factor, desc.bucket_step) == (16, 8, 16)
-    assert desc.precisions == ("bf16", "int8", "nf4") and set(desc.train_memory) == {"int8", "nf4"}
+    assert desc.precisions == ("bf16", "fp8", "int8", "nf4") and set(desc.train_memory) == {"fp8", "int8", "nf4"}
+    assert desc.auto_order == ("int8", "nf4", "fp8") and desc.auto_swap_order == ("fp8",)     # Fizgig's ladder
     assert "automagic3" not in desc.optimizers and "adamw8bit" in desc.optimizers
     assert desc.network_types == ("lora", "lokr") and desc.ema_default == "0.98"
     assert {desc.pref_for(r) for r in ("dit", "vae", "text_encoder", "speed_lora")} == set(desc.pref_keys)
@@ -98,8 +99,7 @@ def test_legacy_precision_and_ema_keys_map(desc):
     assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["nf4"] and new["FAMILY_EMA"] == "Off"
     assert sorted(rep.ignored) == ["COMPILE_BLOCKS", "KREA2_FINETUNE_ROTATION"] and rep.refused == []
     new, rep = presets.apply({"QUANT_4BIT_MODE": "fp8"}, cur, desc)
-    assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["auto"]
-    assert any("fp8" in m for m in rep.messages())
+    assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["fp8"] and rep.refused == []
     for old, want in (("no_4bit", "int8"), ("Off", "int8"), ("On", "nf4"), ("Auto (recommended)", "auto"),
                       ("INT8 — 8-bit, fastest", "int8"), ("4-bit NF4 — smallest", "nf4")):
         new, _ = presets.apply({"QUANT_4BIT_MODE": old}, cur, desc)
@@ -342,7 +342,7 @@ def test_turbo_style_file_applies_and_restores_bias_deltas(desc, driver, tmp_pat
 
 
 # ---- loading ------------------------------------------------------------------------------------------------
-def test_loader_reads_bf16_and_refuses_prequantized_fp8(tmp_path):
+def test_loader_reads_bf16_and_rejects_wrong_keys(tmp_path):
     from safetensors.torch import save_file
 
     from training.families.krea2.model import load_krea2_dit
@@ -352,14 +352,6 @@ def test_loader_reads_bf16_and_refuses_prequantized_fp8(tmp_path):
     dit = load_krea2_dit(good, device="cpu", config=TINY)
     assert dit.first.weight.dtype == torch.bfloat16 and torch.equal(dit.first.weight.float(),
                                                                     sd["first.weight"].bfloat16().float())
-    bad_keys = str(tmp_path / "scaled.safetensors")
-    save_file({**sd, "blocks.0.attn.wq.weight_scale": torch.tensor(0.01)}, bad_keys)
-    with pytest.raises(ValueError, match="pre-quantised fp8"):
-        load_krea2_dit(bad_keys, device="cpu", config=TINY)
-    f8 = str(tmp_path / "fp8.safetensors")
-    save_file({**sd, "blocks.0.attn.wq.weight": sd["blocks.0.attn.wq.weight"].to(torch.float8_e4m3fn)}, f8)
-    with pytest.raises(ValueError, match="pre-quantised fp8"):
-        load_krea2_dit(f8, device="cpu", config=TINY)
     partial = str(tmp_path / "partial.safetensors")
     save_file({k: v for k, v in sd.items() if k != "first.weight"}, partial)
     with pytest.raises(ValueError, match="mismatch"):

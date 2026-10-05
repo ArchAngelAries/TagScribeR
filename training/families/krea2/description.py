@@ -46,8 +46,9 @@ KREA2 = FamilyDescription(
 
     model_files=(
         ModelFile("krea2_dit", "Krea 2 RAW DiT", True, _REPO, "diffusion_models/krea2_raw_bf16.safetensors", 26.0,
-                  "The undistilled 12.9B base - what training runs on (bf16, ~26 GB). Pick this one, not the Turbo "
-                  "checkpoint: a pre-quantised fp8 file is refused. INT8 / 4-bit are made from it on the fly.",
+                  "The undistilled 12.9B RAW base - what training runs on. Either the bf16 file (~26 GB) or an "
+                  "fp8 / fp8-scaled RAW file (~13 GB) works: an fp8 file stays fp8, and INT8 / 4-bit bases are made "
+                  "from whichever you pick. Not the Turbo checkpoint.",
                   role="dit"),
         ModelFile("krea2_vae", "Qwen-Image VAE", True, _REPO, "vae/qwen_image_vae.safetensors", 0.25,
                   "The Qwen-Image VAE (16 latent channels, 8x) used by Krea 2.", role="vae"),
@@ -95,10 +96,15 @@ KREA2 = FamilyDescription(
     modelspec_arch="Krea-2",
     ema_default="0.98",                                      # lora_trainer_gui.py:1004-1005 (Peter, 9 Sep 2026)
     implementation="https://github.com/krea-ai/krea-2",      # Fizgig training/metadata.py IMPL_KREA2
-    precisions=("bf16", "int8", "nf4"),
+    precisions=("bf16", "fp8", "int8", "nf4"),
+    # Fizgig's Auto ladder for Krea 2 (utils/capabilities.py recommend_krea2_strategy): INT8 with no swap, then NF4
+    # with no swap, then fp8 with no swap, then fp8 with as few swapped blocks as fit. INT8 and NF4 are skipped on a
+    # machine that cannot run them (no torch._int_mm / no bitsandbytes), which leaves fp8.
+    auto_order=("int8", "nf4", "fp8"),
+    auto_swap_order=("fp8",),
     # Measured by Fizgig (utils/capabilities.py: _INT8_PEAK_GB, _NF4_PEAK_GB, _RES_GB_PER_MP, _SWAP_GB_PER_BLOCK,
     # _MAX_SWAP_KREA2), 5090, 28 Jul 2026, gradient checkpointing, batch 1, rank 32, training-only peaks at 0.25 MP:
-    #   INT8 16.2 GB, NF4 11.4 GB (fp8 18.7 GB is not offered here). Resolution: +0.15 GB from 0.25 to 1.05 MP
+    #   INT8 16.2 GB, NF4 11.4 GB fp8 18.7 GB. Resolution: +0.15 GB from 0.25 to 1.05 MP
     #   measured, budgeted at 0.25 GB/MP -> (0.25, base), (1.0, base + 0.2). Batch: +2.4 GB per extra image (not
     #   modelled by the Auto plan: use batch 1 on a tight card). Rank: +0.015 GB per rank above 32.
     # Swap: 0.42 GB saved per swapped block, MEASURED WITH FP8 weights (18.7 - 0.42 * swap); INT8 stores the same one
@@ -106,7 +112,9 @@ KREA2 = FamilyDescription(
     #   2 stay resident). NF4 cannot swap.
     # bf16 has NO entry: Fizgig never measured it (12.9B x 2 bytes = ~26 GB of weights alone), so Auto never picks
     #   it; it stays selectable for cards with 32 GB or for a manual block swap (about 0.8 GB per block, unmeasured).
-    train_memory={"int8": (((0.25, 16.2), (1.0, 16.4)), 0.42), "nf4": (((0.25, 11.4), (1.0, 11.6)), 0.0)},
+    # fp8: 18.7 GB MEASURED (_FP8_PEAK_GB), 0.42 GB per swapped block MEASURED on fp8 (18.7 - 0.42 * swap).
+    train_memory={"fp8": (((0.25, 18.7), (1.0, 18.9)), 0.42), "int8": (((0.25, 16.2), (1.0, 16.4)), 0.42),
+                  "nf4": (((0.25, 11.4), (1.0, 11.6)), 0.0)},
     # Fizgig's Krea 2 list is its whole optimizer catalogue (optimizers.available_optimizers). Automagic v3 is left
     # out: its per-family parameter groups (family_param_groups) and sign window 16 are not ported, and a single
     # group is the compromise rate Fizgig's own comment warns against.

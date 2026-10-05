@@ -6,7 +6,7 @@
 # attends over the full sequence, no mask); block swap uses training.modules.offloading.ModelOffloader the way the
 # other DiTs here do (Fizgig's two-offloader double / single layout and its swap-count formula are kept); the Repair
 # Studio activation cache (forward_cached), activation CPU offloading and the fp8 monkey patch are not ported; the
-# loader reads bf16 only and REFUSES pre-quantised fp8 checkpoints (Fizgig keeps those fp8-resident).
+# loader reads bf16 and pre-quantised fp8 checkpoints (fp8 weights stay fp8: training/modules/fp8.py).
 # Fizgig's own header follows.
 #
 # Fizgig-native Klein DiT model
@@ -603,37 +603,14 @@ def apply_rope(xq: Tensor, xk: Tensor, freqs_cis: Tensor):
 
 
 # ---- weights ---------------------------------------------------------------------------------------------------
-_FP8_MARKERS = (".weight_scale", ".scale_weight", ".comfy_quant", ".input_scale")
-
-
-def refuse_prequantized(path: str) -> None:
-    """Raise a clear error for a pre-quantised fp8 checkpoint. Fizgig loads those fp8-resident with a dequantising
-    forward (klein/model_utils.py _file_is_prequantized_fp8, apply_fp8_monkey_patch); TagScribeR has no fp8 matmul
-    path (ROCm), and loading one as bf16 would drop its per-layer scales (weights wildly off), so it is refused up
-    front, reading only the safetensors header."""
-    from safetensors import safe_open
-    with safe_open(path, framework="pt") as f:
-        keys = list(f.keys())
-        fp8 = next((k for k in keys if k.endswith(_FP8_MARKERS)), None)
-        if fp8 is None:
-            for k in keys:
-                if "F8" in str(f.get_slice(k).get_dtype()):
-                    fp8 = k
-                    break
-    if fp8 is not None:
-        raise ValueError(
-            f"{path} is a pre-quantised fp8 checkpoint (found {fp8!r}). Klein training here needs the bf16 Base model "
-            f"(flux-2-klein-base-9b.safetensors from black-forest-labs/FLUX.2-klein-base-9B, ~17 GB); TagScribeR "
-            f"quantises it itself (INT8 or 4-bit) when you pick a smaller precision.")
-
-
 def load_klein_dit(path, device="cuda", dtype=torch.bfloat16, params: Flux2Params | None = None):
-    """Build the DiT on meta and load a bf16 Base checkpoint (assign=True, strict). A sharded checkpoint
-    (...-00001-of-0000N.safetensors) is read whole. Pre-quantised fp8 files are refused. Fizgig
-    klein/model_utils.py load_dit (bf16 path)."""
+    """Build the DiT on meta and load a Base checkpoint (assign=True, strict): bf16, or a pre-quantised fp8 file,
+    whose Linear weights stay fp8 (with their scales, when the file has them) and are dequantised per matmul
+    (Fizgig klein/model_utils.py load_dit). A sharded checkpoint (...-00001-of-0000N.safetensors) is read whole.
+    The base precision is applied afterwards by training/quant.py, from either kind of file."""
     from training.families.qwen_image21.embedder import load_split_weights
+    from training.modules import fp8
     path = str(path)
-    refuse_prequantized(path)
     with torch.device("meta"):
         model = KleinDiT(params or Klein9BParams())
     sd = load_split_weights(path)
@@ -641,8 +618,7 @@ def load_klein_dit(path, device="cuda", dtype=torch.bfloat16, params: Flux2Param
         if sd and all(k.startswith(prefix) for k in sd):
             sd = {k[len(prefix):]: v for k, v in sd.items()}
             break
-    sd = {k: (v.to(dtype) if v.is_floating_point() else v) for k, v in sd.items()}
-    missing, unexpected = model.load_state_dict(sd, strict=False, assign=True)
+    missing, unexpected, _n = fp8.load_state_dict(model, sd, dtype)
     if missing or unexpected:
         raise ValueError(f"Klein DiT keys mismatch: missing {missing[:8]} ({len(missing)}), unexpected "
                          f"{unexpected[:8]} ({len(unexpected)}) - is this the FLUX.2 Klein Base 9B checkpoint?")

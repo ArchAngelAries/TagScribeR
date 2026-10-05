@@ -51,7 +51,8 @@ def test_description_is_valid_and_registered(desc):
     assert (desc.key, desc.arch_id, desc.lora_name_suffix) == ("klein9b", "klein9b", "k9b")
     assert "_" not in desc.arch_id
     assert (desc.latent_channels, desc.spatial_factor, desc.bucket_step) == (128, 16, 16)
-    assert desc.precisions == ("bf16", "int8", "nf4") and set(desc.train_memory) == {"int8", "nf4"}
+    assert desc.precisions == ("bf16", "fp8", "int8", "nf4") and set(desc.train_memory) == {"fp8", "int8", "nf4"}
+    assert desc.auto_order == ("fp8", "nf4")                       # Fizgig: fp8 base, NF4 on small cards
     assert desc.network_types == ("lora",) and desc.ema_default == "" and "automagic3" not in desc.optimizers
     assert desc.speed_loras == () and desc.preview_speed() is None
     assert (desc.preview_steps, desc.preview_cfg, desc.preview_width) == (40, 4.5, 768)
@@ -420,7 +421,7 @@ def test_text_encoder_layout_on_a_tiny_qwen3():
     assert torch.allclose(out[0:1], want, atol=1e-5)
 
 
-def test_loader_roundtrip_and_fp8_refusal(tmp_path):
+def test_loader_roundtrip_and_wrong_keys(tmp_path):
     from safetensors.torch import save_file
     dit = _dit()
     path = tmp_path / "klein.safetensors"
@@ -431,12 +432,6 @@ def test_loader_roundtrip_and_fp8_refusal(tmp_path):
              ctx_ids=S.pack_txt(torch.zeros(1, 10, 24))[1])
     with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
         assert torch.equal(dit.eval()(**x), loaded(**x))
-    sd = {k: v.contiguous() for k, v in dit.state_dict().items()}
-    sd["double_blocks.0.img_attn.qkv.weight_scale"] = torch.ones(1)
-    fp8 = tmp_path / "fp8.safetensors"
-    save_file(sd, str(fp8))
-    with pytest.raises(ValueError, match="fp8"):
-        load_klein_dit(fp8, device="cpu", params=TINY)
     sd = {k: v for k, v in dit.state_dict().items() if "norm" not in k}
     bad = tmp_path / "bad.safetensors"
     save_file({k: v.contiguous() for k, v in sd.items()}, str(bad))

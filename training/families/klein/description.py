@@ -36,11 +36,11 @@ KLEIN_9B = FamilyDescription(
     experimental=True,          # until the owner's first real run confirms the port
 
     model_files=(
-        ModelFile("klein_dit", "Klein Base 9B DiT", True, "black-forest-labs/FLUX.2-klein-base-9B",
-                  "flux-2-klein-base-9b.safetensors", 17.0,
-                  "The undistilled Base model - what training runs on (bf16, ~17 GB; a gated repo: accept Black "
-                  "Forest Labs' licence on Hugging Face first). Pick this one, not the -fp8 file or the Distilled "
-                  "model: a pre-quantised fp8 file is refused. INT8 / 4-bit are made from it on the fly.",
+        ModelFile("klein_dit", "Klein Base 9B DiT", True, "black-forest-labs/FLUX.2-klein-base-9b-fp8",
+                  "flux-2-klein-base-9b-fp8.safetensors", 9.5,
+                  "The undistilled Base model - what training runs on. Fizgig trains on the fp8 file (~9.5 GB, "
+                  "fetch_models.py); the bf16 file (~17 GB) works too. Gated repos: accept Black Forest Labs' "
+                  "licence on Hugging Face first. Not the Distilled model.",
                   role="dit"),
         ModelFile("klein_vae", "FLUX.2 AE (ae.safetensors)", True, "black-forest-labs/FLUX.2-dev", "ae.safetensors",
                   0.32,
@@ -86,10 +86,14 @@ KLEIN_9B = FamilyDescription(
     modelspec_arch="Flux.2-klein-9b",                        # Fizgig training/metadata.py ARCH_KLEIN_9B
     ema_default="",                                          # Fizgig's Klein trainer has no EMA
     implementation="https://github.com/black-forest-labs/flux2",     # Fizgig training/metadata.py IMPL_KLEIN
-    precisions=("bf16", "int8", "nf4"),
+    precisions=("bf16", "fp8", "int8", "nf4"),
+    # Fizgig's Klein default is an fp8 base (FP8 + Scaled on, lora_trainer_gui.py PRESETS), with NF4 on small cards
+    # (_klein_small_card: under 15 GiB) and block swap on fp8.
+    auto_order=("fp8", "nf4"),
+    auto_swap_order=("fp8",),
     # Fizgig measured Klein on an fp8 base (docs/KLEIN.md "VRAM"): the fp8 base stays resident at ~9.6 GB and "a 9B LoRA
     # fits 16 GB (~14 GB observed)"; the NF4 base is ~5.6 GB and "a full LoRA trains in about 8.5 GB at 0.5 MP" (10-12 GB
-    # cards, no swap). fp8 is not offered here. Mapping:
+    # cards, no swap). Mapping:
     #   nf4  8.5 GB at 0.5 MP - MEASURED (Fizgig). Other resolutions are not measured: the figure is used as is.
     #   int8 14.0 GB at 0.5 MP - INFERRED, not measured: INT8 stores one byte per weight like the fp8 base, so the fp8
     #        measurement is used; the 0.5 MP point is Fizgig's NF4 one, the fp8 resolution is not stated.
@@ -98,7 +102,8 @@ KLEIN_9B = FamilyDescription(
     # Swap: GB saved per unit of "blocks to swap" is COMPUTED from the parameter counts (a double block is 436M weights,
     #   a single 218M; one unit at the maximum of 16 swaps 6 double + 18 single blocks = 6.5B weights / 16 = 0.41B
     #   weights = 0.41 GB at one byte per weight), never measured. NF4 cannot swap.
-    train_memory={"int8": (((0.5, 14.0),), 0.41), "nf4": (((0.5, 8.5),), 0.0)},
+    # fp8: ~14 GB observed (Fizgig docs/KLEIN.md, "a 9B LoRA fits 16 GB") - the measurement the int8 row borrows.
+    train_memory={"fp8": (((0.5, 14.0),), 0.41), "int8": (((0.5, 14.0),), 0.41), "nf4": (((0.5, 8.5),), 0.0)},
     # Klein's own list is adamw, adamw8bit and bitsandbytes AdEMAMix8bit / PagedAdEMAMix8bit (lora_trainer_gui.py:2236);
     # Automagic v3 is not offered for Klein (Fizgig: MiniMax H3 and Krea 2 only).
     optimizers=("adamw8bit", "adamw", "ademamix8bit", "pagedademamix8bit"),
@@ -140,7 +145,7 @@ KLEIN_9B = FamilyDescription(
                                      "vocab.json")),),
 
     notes=(
-        ("Train on the Base checkpoint in bf16 (a pre-quantised fp8 file is refused); INT8 and 4-bit bases are made "
+        ("Train on the Base checkpoint: the fp8 file as Fizgig does, or bf16; INT8 and 4-bit bases are made "
          "from it. The AE must be ae.safetensors from the root of the FLUX.2-dev repo.", f"{_FETCH}, docs/KLEIN.md"),
         ("Text conditioning is Qwen3-8B hidden states of layers 9, 18 and 27 (each through the final RMSNorm), "
          "concatenated: 512 tokens x 12288, no mask. A cached caption is about 12.6 MB.",

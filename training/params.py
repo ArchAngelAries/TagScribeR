@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 BOOL, INT, FLOAT, TEXT, CHOICE, PATH, DIR, MULTILINE = "bool", "int", "float", "text", "choice", "path", "dir", "multiline"
 
 PRECISION_LABELS = {"auto": "Auto (fits your free VRAM)", "bf16": "bf16 (full precision)",
+                    "fp8": "fp8 (8-bit float, as fp8 checkpoints ship)",
                     "int8": "INT8 (8-bit, fastest)", "nf4": "4-bit NF4 (smallest)"}
 NETWORK_LABELS = {"lora": "LoRA (standard)", "lokr": "LoKR (Kronecker)"}
 EMA_OPTIONS = ("Off", "0.98 (recommended)", "0.99 (stronger)", "0.995 (long runs only)")

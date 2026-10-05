@@ -133,6 +133,10 @@ class FamilyDescription:
     # block)}; the peak may instead be ((megapixels, GB), ...) points, interpolated for the run's resolution.
     # {} = Auto just takes the first precision
     train_memory: dict = field(default_factory=dict)
+    # the family's own Auto preference: precisions tried without block swap, in order (() = the generic order,
+    # most precise first), and the precisions Auto may block-swap (() = int8, then bf16)
+    auto_order: tuple = ()
+    auto_swap_order: tuple = ()
     optimizers: tuple = ("adamw8bit", "adamw")
     network_types: tuple = ("lora",)
     # parameter keys (training/params.py DRIVER_OPTIONS) of the optional family extensions this family offers; the

@@ -56,6 +56,44 @@ TagScribeR detects GPUs with its own `core/hardware.py`.
 The Krea 2, Qwen-Image VAE and Qwen3-VL-4B weights are not included; the publishers' licences apply when you download
 them.
 
+## FLUX.2 Klein (Black Forest Labs FLUX): Apache License 2.0
+
+Upstream: https://github.com/black-forest-labs/flux. Copyright Black Forest Labs.
+
+`training/families/klein/model.py` and `vae.py` are ported from Fizgig's Klein model code (`src/fizgig/klein/`), which
+is based on FLUX's reference model code. `driver.py`, `sampling.py` and `embedder.py` port Fizgig's Klein trainer
+recipe (`src/fizgig/training/trainer.py`, `src/fizgig/networks/lora_klein.py`).
+
+Model weights are not included and have their own licences (FLUX.2 Klein Base 9B and the FLUX.2 autoencoder are gated
+by Black Forest Labs).
+
+## SDXL family (diffusers, kohya-ss sd-scripts): Apache License 2.0
+
+`training/families/sdxl/` is original TagScribeR code with no Fizgig counterpart. The loop, the caching design and the
+timestep-window semantics around it are Fizgig's. It uses and references:
+
+- **diffusers** (Apache-2.0, https://github.com/huggingface/diffusers): the UNet, VAE and CLIP model classes and the
+  single-file checkpoint converters are called as a library, and the Euler and DDPM formulas follow its schedulers.
+  The vendored UNet, VAE and text-encoder configs come from `stabilityai/stable-diffusion-xl-base-1.0`.
+- **kohya-ss/sd-scripts** (Apache-2.0, https://github.com/kohya-ss/sd-scripts): the LoRA target lists, the kohya key
+  format, and the min-SNR and noise-offset formulas.
+- **ComfyUI** (GPL-3.0) was read only as a reference for LoRA key names. No ComfyUI code is included.
+- Zero-terminal-SNR follows Lin et al. 2023, "Common Diffusion Noise Schedules and Sample Steps are Flawed".
+
+## Anima (kohya-ss sd-scripts, NVIDIA Cosmos-Predict2): Apache License 2.0
+
+`training/families/anima/` is original TagScribeR code with no Fizgig counterpart. Its model is written to load the
+Anima checkpoint's own layout, and its facts come from:
+
+- **kohya-ss/sd-scripts** (Apache-2.0): the architecture, tokenisation, training objective and LoRA key facts. The
+  attention and adapter structure is re-implemented, not copied.
+- **NVIDIA Cosmos-Predict2** (Apache-2.0, Copyright 2025 NVIDIA): module and parameter names and the RoPE formula,
+  re-implemented.
+- **diffusion-pipe** and **ComfyUI** (GPL-3.0) were read for facts only. No code from either is included.
+
+The VAE is the Qwen-Image VAE already listed under Krea 2. Anima's weights are under the circlestone-labs
+non-commercial licence.
+
 ## Diffusers / Qwen-Image 2.1: Apache License 2.0
 
 Upstream: https://github.com/huggingface/diffusers. Copyright 2026 The Qwen Team, the Qwen-Image Team and The

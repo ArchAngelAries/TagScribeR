@@ -148,6 +148,8 @@ class FamilyDescription:
     preview_cfg: float = 1.0
     preview_width: int = 1024
     preview_height: int = 1024
+    preview_negative: str = ""        # the family's default preview negative prompt ("" = the app default); tag-
+    #                                   trained models want tag-style negatives
     preview_speed_lora: str = ""      # name of the SpeedLoRA previews use when its file is set in Settings
     preview_speed_steps: int = 0      # preview steps with it (0 = the SpeedLoRA's own)
     preview_speed_strength: Optional[float] = None   # preview strength for it (None = the SpeedLoRA's own; 0 = off

@@ -363,7 +363,7 @@ ones it learns.</p>
 <ol>
 <li><b>Open and caption your dataset</b> (Gallery / Auto Caption). Every image needs a caption file, so filter
 <code>missing:caption</code> to find gaps. Put your trigger word in the captions (Auto Caption → Subject).</li>
-<li><b>Pick a family</b> (e.g. Qwen Image 2.1) and set its <b>Model files</b> once. <i>Get</i> opens the download page;
+<li><b>Pick a family</b> (Krea 2, Qwen Image 2.1, FLUX.2 Klein, SDXL / Pony / Illustrious / NoobAI, Anima) and set its <b>Model files</b> once. <i>Get</i> opens the download page;
 the paths are remembered.</li>
 <li><b>Load a preset.</b> ✨ presets are measured recipes; the first one is applied on your first visit.</li>
 <li>The tab starts in a <b>simple view</b>: name, epochs, resolution and preview prompts, with the preset deciding
@@ -484,6 +484,42 @@ second model. Leave it empty to preview the RAW model at 28 steps.</li>
 leave room on the cache drive.</li>
 <li>bf16 holds 26 GB of weights alone (a 32 GB card, or block swap); on smaller cards Auto uses INT8 (about 16 GB at 0.25 MP) or 4-bit (about
 11 GB). Each extra image in the batch adds about 2.4 GB.</li>
+</ul>
+<h3>FLUX.2 Klein Base 9B</h3>
+<ul>
+<li><b>Files:</b> the Base 9B checkpoint (not the fp8 one, which is refused), the FLUX.2 <code>ae.safetensors</code>
+autoencoder, and the Qwen3-8B text encoder. <i>Get</i> opens each download page; the Klein and autoencoder repos are
+gated, so accept their terms on Hugging Face first.</li>
+<li><b>Model area</b> chooses which blocks the LoRA trains: <i>Full Model</i>, <i>Identity</i> (a subject's
+likeness), <i>Style</i> and <i>Style+Composition</i>, <i>Details</i>, or <i>Custom</i> (list the blocks yourself).
+The built-in presets set it for you.</li>
+<li><b>Timestep sampling</b> defaults to <code>flux2_shift</code>, which adapts to the image size. The other modes
+are for experiments.</li>
+<li>Previews render on the training model at 40 steps. The 4-step Distilled preview model isn't supported.</li>
+<li>On cards under about 16 GB, Auto picks the 4-bit base (about 8.5 GB at 0.5 MP).</li>
+</ul>
+<h3>SDXL, Pony, Illustrious, NoobAI</h3>
+<ul>
+<li><b>One file:</b> pick the model's <code>.safetensors</code> checkpoint. The VAE and text-encoder rows are
+optional: leave them empty to use the ones inside the checkpoint, or point the VAE row at a fixed VAE.</li>
+<li><b>Pick the right family for the checkpoint.</b> NoobAI comes as two kinds: <i>eps</i> and <i>v-pred</i>.
+Training a v-pred checkpoint as eps (or the reverse) gives noise.</li>
+<li>Captions are cut at <b>225 tokens</b>. Tag captions work well; consider <i>Shuffled tag variants</i> with
+<i>Keep first N tags</i> for your trigger word (Caption augmentation, off by default).</li>
+<li>Batch size above 1 works for these models. The loss watch needs batch size 1.</li>
+<li>Three optional extras, all off by default: <b>Min-SNR gamma</b>, <b>Noise offset</b>, and <b>Also train
+convolutions (LoCon)</b>.</li>
+<li>The first run downloads the small CLIP tokenizer files. To stay offline, put them in a
+<code>clip_tokenizer</code> folder next to the checkpoint.</li>
+<li>These presets are community starting points, not recipes measured by Fizgig. Expect to tune them.</li>
+</ul>
+<h3>Anima</h3>
+<ul>
+<li><b>Files:</b> the Anima DiT, the Qwen-Image VAE and the Qwen3-0.6B text encoder (all from the Anima repo).</li>
+<li>Anima is tag-trained: lowercase tags with spaces, artists as <code>@name</code>. The preview negative prompt is
+tag-style for the same reason.</li>
+<li>The model's author recommends a light touch: the presets use low learning rates and are community starting
+points, not recipes measured by Fizgig.</li>
 </ul>
 """),
     "settings": ("Settings", "Settings", """

@@ -411,6 +411,8 @@ class TrainTab(QWidget):
             base = {**P.defaults(), "SAMPLE_WIDTH": self.desc.preview_width,
                     "SAMPLE_HEIGHT": self.desc.preview_height, "SAMPLE_STEPS": self.desc.preview_steps,
                     "SAMPLE_CFG_SCALE": self.desc.preview_cfg}
+            if self.desc.preview_negative:
+                base["SAMPLE_NEGATIVE"] = self.desc.preview_negative
             if self.desc.ema_default:
                 base["FAMILY_EMA"] = next((o for o in P.EMA_OPTIONS if P.first_token(o) == self.desc.ema_default),
                                           base["FAMILY_EMA"])
@@ -426,7 +428,7 @@ class TrainTab(QWidget):
         self.model_edits = {}
         for f in self.desc.model_files:
             e = QLineEdit(self.cfg.get(pipeline.model_setting_key(f.pref_key), ""))
-            e.setPlaceholderText("required" if f.required else "optional")
+            e.setPlaceholderText("required" if f.required else ("empty = use the checkpoint's own" if f.default_to else "optional"))
             tip = f.note + (f"\nDownload: huggingface.co/{f.repo} - {f.path} ({f.size_gb:g} GB)" if f.repo else "")
             e.setToolTip(tip)
             e.textChanged.connect(lambda t, k=f.pref_key: self.cfg.set(pipeline.model_setting_key(k), t.strip()))

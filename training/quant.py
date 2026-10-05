@@ -1,7 +1,8 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/families/quant.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: import paths, env var prefix TAGSCRIBER_; the quantised Linears come from the driver's
-# quant_target_names (the LoRA targets unless a family narrows them); otherwise unchanged.
+# quant_target_names (the LoRA targets unless a family narrows them); a module flagged `_prequantized` (MiniMax H3's ConvRot
+# int8 Linear) is left alone for INT8 and read through its `dense_weight()` for NF4; otherwise unchanged.
 """Quantised frozen bases for described families: INT8 (W8A8) and 4-bit NF4, on the Linears of the driver's block map.
 
 Reuses Fizgig's existing quantisers (modules/int8_train.py, modules/nf4.py): each keeps the nn.Linear and patches its
@@ -44,6 +45,8 @@ def quantize(dit, driver, precision, compute_device):
         from training.modules.int8_train import int8_train_forward
         from training.modules.nf4 import _dequantize_source_weight
         for _, m in targets:
+            if getattr(m, "_prequantized", False):
+                continue                    # the family's own int8 storage (H3's ConvRot): already int8
             w = _dequantize_source_weight(m).to(compute_device).float()
             scale = w.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / 127.0
             m.weight.requires_grad_(False)
@@ -58,7 +61,9 @@ def quantize(dit, driver, precision, compute_device):
         from bitsandbytes.functional import quantize_nf4
         from training.modules.nf4 import _dequantize_source_weight, nf4_linear_forward_patch
         for _, m in targets:
-            packed, state = quantize_nf4(_dequantize_source_weight(m).to(compute_device).contiguous())
+            dense = getattr(m, "dense_weight", None)      # a pre-quantised module decodes itself to the true basis
+            src = dense(compute_device) if callable(dense) else _dequantize_source_weight(m).to(compute_device)
+            packed, state = quantize_nf4(src.contiguous())
             m._nf4_packed, m._nf4_state, m._is_nf4 = packed, state, True
             m.weight.data = torch.empty(0, device=compute_device, dtype=torch.bfloat16)
             m.weight.requires_grad_(False)

@@ -1072,10 +1072,15 @@ def shot_train_setup(c: Ctx) -> Scene:
     return Scene(c.window)
 
 
-EPOCH_LOSS = [0.2143, 0.1862, 0.1704, 0.1612, 0.1471, 0.1432, 0.1317, 0.1264]
-EPOCH_LR = [2.83e-4, 2.83e-4, 2.83e-4, 3.54e-4, 3.54e-4, 4.42e-4, 3.54e-4, 3.54e-4]
-ADAPTIVE = {3: "PROBE UP (loss steady, trying a higher rate)", 5: "PROBE UP (loss still falling)",
-            7: "REDUCE LR (probe was not better)"}
+# A run the real AdaptiveLR would produce for min 2e-4 / max 4e-4: start at the geometric middle, probe up x1.25
+# after two improving epochs (capped at max), halve after a two-epoch plateau. Lines use the trainer's own formats
+# (training/train.py, training/adaptive_lr.py).
+EPOCH_LOSS = [0.2143, 0.1862, 0.1704, 0.1612, 0.1471, 0.1489, 0.1493, 0.1398]
+EPOCH_LR = [2.83e-4, 2.83e-4, 2.83e-4, 3.54e-4, 3.54e-4, 4.00e-4, 4.00e-4, 2.00e-4]
+ADAPTIVE = {1: (None, "ARMED"), 2: ("+9%", "HOLD (loss improving, streak 1/2)"),
+            3: ("+8%", "PROBE UP (loss improving, streak 2)"), 4: ("+7%", "HOLD (loss improving, streak 1/2)"),
+            5: ("+6%", "PROBE UP (loss improving, streak 2)"), 6: ("+6%", "HOLD (loss plateau, streak 1/2)"),
+            7: ("+5%", "REDUCE (loss plateau, streak 2)"), 8: ("+3%", "HOLD (loss improving, streak 1/2)")}
 
 
 def feed(t, line: str) -> None:
@@ -1126,28 +1131,37 @@ def shot_train_running(c: Ctx) -> Scene:
     t.chart.clear()
     t.console.clear()
     t._set_state("running")
-    t._console(f"[check] 16 images, 14 captioned (2 without a caption will be skipped)")
+    t._console("[check] 16 captioned image(s).")
     t._console(f"=== {t.desc.display_name}: my_lora -> {NEUTRAL['runs']}\\my_lora")
-    t._console("--- Cache")
+    t._console("--- Caching latents")
     for n in (4, 8, 12, 16):
         feed(t, f"[cache] latents {n}/16")
-    for n in (4, 8, 12, 16):
+    t._console("--- Caching text")
+    for n in (8, 16):
         feed(t, f"[cache] text {n}/16")
     t._console("--- Training")
     steps_per_epoch = 20
     for epoch in range(1, 9):
         if epoch in (2, 4, 6, 8):
-            feed(t, f"[sample] rendering 2 preview(s) for epoch {epoch}")
-            feed(t, f"[sample] 2 preview(s) -> sample (epoch {epoch})")
+            pass
         step = epoch * steps_per_epoch
         feed(t, f"steps: {step * 100 // 600:3d}%|{'#' * (step // 24):<25}| {step}/600 [{step * 3 // 60:02d}:{step * 3 % 60:02d}"
                 f"<{(600 - step) * 3 // 60:02d}:{(600 - step) * 3 % 60:02d},  3.01s/it, avr_loss={EPOCH_LOSS[epoch - 1]:.4f}]")
-        feed(t, f"epoch {epoch}/30  avr_loss={EPOCH_LOSS[epoch - 1]:.4f}  step={step}  lr={EPOCH_LR[epoch - 1]:.3e}  "
-                f"epoch_time={steps_per_epoch * 3.0:.0f}s")
-        if epoch in ADAPTIVE:
-            nxt = EPOCH_LR[epoch] if epoch < 8 else EPOCH_LR[-1]
-            feed(t, f"[adaptive_lr] epoch {epoch}: loss={EPOCH_LOSS[epoch - 1]:.4f} lr={EPOCH_LR[epoch - 1]:.2e}->{nxt:.2e} | "
-                    f"{ADAPTIVE[epoch]}")
+        feed(t, f"epoch {epoch}/30  avr_loss={EPOCH_LOSS[epoch - 1]:.4f}  step={step}  3.01s/step  "
+                f"lr={EPOCH_LR[epoch - 1]:.3e}  peak VRAM 16.1 GB")
+        growth, action = ADAPTIVE[epoch]
+        cur = EPOCH_LR[epoch - 1]
+        nxt = EPOCH_LR[epoch] if epoch < 8 else cur
+        lr_str = f"{cur:.2e}" if abs(nxt - cur) < 1e-12 else f"{cur:.2e}->{nxt:.2e}"
+        if growth is None:
+            feed(t, f"[adaptive_lr] epoch 1: loss={EPOCH_LOSS[0]:.4f} lr={cur:.2e} clip=0% | ARMED")
+        else:
+            feed(t, f"[adaptive_lr] epoch {epoch}: loss={EPOCH_LOSS[epoch - 1]:.4f} lr={lr_str} clip=0% "
+                    f"wnorm_\u0394={growth} | {action}")
+        if epoch in (2, 4, 6, 8):
+            feed(t, f"[save] {NEUTRAL['runs']}\\my_lora\\my_lora-{epoch:06d}.safetensors")
+            feed(t, f"[sample] epoch {epoch}: rendering 2 preview(s)")
+            feed(t, f"[sample] epoch {epoch}: 2 preview(s) -> {NEUTRAL['runs']}\\my_lora\\sample")
     step = 8 * steps_per_epoch + 11
     feed(t, f"steps:  {step * 100 // 600}%|{'#' * (step // 24):<25}| {step}/600 [{step * 3 // 60:02d}:{step * 3 % 60:02d}"
             f"<{(600 - step) * 3 // 60:02d}:{(600 - step) * 3 % 60:02d},  3.02s/it, avr_loss=0.1259]")
@@ -1190,7 +1204,7 @@ def shot_train_samples(c: Ctx) -> Scene:
     t.run, t.stage_index = run, stage
     t._set_state("idle")
     t.console.clear()
-    t._console("[sample] 2 preview(s) -> sample (epoch 8)")
+    t._console("[sample] epoch 8: 2 preview(s) -> " + NEUTRAL["runs"] + "\\my_lora\\sample")
     t.samples.clear()
     t._refresh_samples()
     _show_run_tab(t, 1)

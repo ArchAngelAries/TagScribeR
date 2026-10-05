@@ -418,7 +418,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                         f"render ({sample_steps} steps)")
     if network_type == "lokr" and "lokr" not in desc.network_types:
         raise RuntimeError(f"{desc.display_name} does not offer LoKR")
-    net.add_trainable(network_dim, network_alpha, kind=network_type, factor=lokr_factor)
+    net.add_trainable(network_dim, network_alpha, blocks=driver.trainable_blocks(), kind=network_type,
+                      factor=lokr_factor)
     params = net.parameters()
     if not params:
         raise RuntimeError("the LoRA has no trainable parameters (no target modules matched)")

@@ -117,6 +117,25 @@ The options as originally presented:
     CPU tests cover the objective, masks, batching, timestep sampler, LoRA keys and round trips, the loader's refusals
     and the text encoder's hidden-state layout on tiny random models.
 
+- **T3 SDXL family: done (2026-10-05), awaiting a first real run.** `training/families/sdxl/` adds SDXL 1.0, Pony
+  Diffusion V6 XL, Illustrious-XL and NoobAI-XL (eps and v-pred). It is original code with no Fizgig counterpart; the
+  loop, caching and timestep-window behaviour are Fizgig's.
+  - One checkpoint file, loaded offline through diffusers. Dual-CLIP conditioning is cached at a fixed shape (three
+    75-token chunks plus the pooled vector), so batch size above 1 works.
+  - Epsilon and v-prediction objectives, with zero-terminal-SNR for v-pred. Euler previews with CFG.
+  - LoRA keys in the kohya / LDM naming A1111 and ComfyUI load, checked against ComfyUI's mapping for all 760 target
+    modules.
+  - Optional extensions, off by default: LoCon (convolutions), min-SNR gamma, noise offset.
+  - The presets are community starting points, not measured by Fizgig. Training memory is not measured.
+- **T4 FLUX.2 Klein Base 9B: done (2026-10-05), awaiting a first real run.** `training/families/klein/` moves
+  Fizgig's Klein recipe onto the family layer: all seven presets, Model Area block targeting, eight timestep modes
+  (default `flux2_shift`), kohya keys, INT8 / NF4 bases. Not ported: accelerate, fp8, torch.compile, the Distilled
+  preview model, LoRA dropout and LoRA+, logging back ends. One deviation: `shift` mode honours the shift box, where
+  Fizgig's GUI never passes it.
+- **T5 Anima: done (2026-10-05), experimental.** `training/families/anima/` is original code. Its architecture facts
+  were verified against two trainers and ComfyUI (table in `description.py`). Rectified flow, Qwen3-0.6B plus T5
+  token ids feeding the checkpoint's frozen LLM adapter, the Qwen-Image VAE, kohya keys. The presets are community
+  starting points.
 ## 6. Verification policy
 
 The owner runs all real training. Development verification uses:

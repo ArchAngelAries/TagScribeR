@@ -98,7 +98,12 @@ def driver_options(desc, values) -> dict:
         name, param = P.DRIVER_OPTIONS.get(key), P.BY_KEY.get(key)
         if name is None or param is None:
             continue
-        out[name] = bool(values.get(key, param.default)) if param.kind == P.BOOL else _num(values, key)
+        if param.kind == P.BOOL:
+            out[name] = bool(values.get(key, param.default))
+        elif param.kind in (P.CHOICE, P.TEXT):          # Klein: timestep sampling, model area, custom blocks
+            out[name] = str(values.get(key, param.default) or "")
+        else:
+            out[name] = _num(values, key)
     return out
 
 

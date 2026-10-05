@@ -63,8 +63,14 @@ def collect(values: dict) -> dict:
     return {k: values[k] for k in P.PRESET_KEYS if k in values}
 
 
-# Fizgig keys that have no counterpart here (Krea 2 torch.compile, the rotating fine-tune, Klein/Krea 2 "model area")
-LEGACY_IGNORED = ("COMPILE_BLOCKS", "TARGET_LAYERS")
+# Fizgig keys that have no counterpart here (Krea 2 torch.compile and the rotating fine-tune; Klein's fp8 base, attention
+# backend, LoRA dropout / LoRA+, fp8 text encoder, logging, LR decay, and the hidden loss-weighting boxes - the family's
+# docstring lists each as not ported). TARGET_LAYERS / TRAINING_BLOCKS are real parameters (Klein's Model Area).
+LEGACY_IGNORED = ("COMPILE_BLOCKS", "FP8", "SCALED", "ATTENTION_MECHANISM", "NETWORK_DROPOUT", "LORA_LR_RATIO",
+                  "FP8_TEXT_ENCODER", "IMG_IN_TXT_IN_OFFLOADING", "LOGGING_DIR", "LOG_WITH", "LOG_PREFIX",
+                  "LR_DECAY_STEPS", "GRADIENT_CHECKPOINTING", "WEIGHTING_SCHEME", "MODE_SCALE")
+LEGACY_AREAS = {"All Layers": "Full Model", "Identity Blocks": "Identity", "Style+Composition Blocks":
+                "Style+Composition", "Details Blocks": "Details"}      # Fizgig lora_trainer_gui.py:6717-6722
 LEGACY_IGNORED_PREFIXES = ("KREA2_FINETUNE",)
 
 
@@ -80,6 +86,61 @@ def _legacy_precision(value) -> str:
         if v.startswith(starts):
             return key
     return "auto"
+
+
+def _is_number(value) -> bool:
+    try:
+        float(str(value).strip())
+        return True
+    except ValueError:
+        return False
+
+
+# MiniMax H3 keys with no generic equivalent: they switch on machinery this port does not have (clip / video / voice
+# features, the adapter ramp, the movement limiter, distillation, the fine-tune) or that Fizgig leaves inert under the
+# preset optimiser (the high-noise LR % band multiplier: never applied under Automagic v3) - ignored, not refused
+_MINIMAX_IGNORED = ("MINIMAX_TREAD", "MINIMAX_CLIP_STILL", "MINIMAX_ADAPTER_RAMP", "MINIMAX_HIGHNOISE_LR_PCT",
+                    "MINIMAX_TRAIN_ADALN", "MINIMAX_SLOW_BLOCKS", "MINIMAX_SLOW_LR_SCALE", "MINIMAX_BLOCK_LIMIT",
+                    "MINIMAX_LR_WARMUP", "MINIMAX_LIKENESS_OPT")
+
+
+def _migrate_minimax(key, value, preset, out, notes, ignored) -> None:
+    """Fizgig's MINIMAX_* preset keys -> this app's parameters (EMA, caption dropout, the training adapter, base
+    precision); the H3 dials (low-noise %, training mode, blocks) are parameters of their own."""
+    if key == "MINIMAX_EMA":
+        if "FAMILY_EMA" not in preset:
+            out["FAMILY_EMA"] = value
+    elif key == "MINIMAX_CAPTION_DROPOUT":
+        tok = P.first_token(value)
+        if "CAPTION_DROPOUT" not in preset:
+            out["CAPTION_DROPOUT"] = float(tok) if _is_number(tok) else 0.0
+    elif key == "MINIMAX_ADAPTER":
+        v = str(value or "").strip().lower()
+        if v.startswith("ostris"):
+            notes.append("[preset] MINIMAX_ADAPTER: the Ostris adapter is for video-only sets and isn't offered - "
+                         "using the Circlestone image adapter")
+        if "FAMILY_TRAINING_ADAPTER" not in preset:
+            out["FAMILY_TRAINING_ADAPTER"] = not v.startswith("off")
+    elif key == "MINIMAX_BASE_QUANT":
+        v = str(value or "").split("·")[0].strip().lower()
+        prec = "int8" if v.startswith("int8") else ("nf4" if v.startswith(("4-bit", "nf4", "hqq")) else "auto")
+        if "hqq" in v:
+            notes.append("[preset] MINIMAX_BASE_QUANT: HQQ 4-bit isn't offered - using plain 4-bit NF4")
+        if "FAMILY_PRECISION" not in preset:
+            out["FAMILY_PRECISION"] = P.PRECISION_LABELS[prec]
+    elif key == "MINIMAX_TRAIN_REFINER":
+        if value in (True, "True", "true", 1, "1"):
+            notes.append("[preset] MINIMAX_TRAIN_REFINER: training the text refiner isn't offered - left off")
+        ignored.append(key)
+    elif key == "MINIMAX_DISTILL" or key.startswith(("MINIMAX_DISTILL_", "MINIMAX_FT_", "MINIMAX_REG_",
+                                                     "MINIMAX_MIXED_STOP_", "MINIMAX_REFMOD", "MINIMAX_CONCEPT",
+                                                     "MINIMAX_MULTICONCEPT", "MINIMAX_FINETUNE", "MINIMAX_TURBO",
+                                                     "MINIMAX_TRAIN_BASE", "MINIMAX_LOGNORM")):
+        if value not in (False, "False", "false", 0, "0", "", None):
+            notes.append(f"[preset] {key}: not available in the image-only MiniMax H3 trainer - ignored")
+        ignored.append(key)
+    else:
+        ignored.append(key)
 
 
 def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
@@ -105,8 +166,19 @@ def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
                 out["FAMILY_PRECISION"] = P.PRECISION_LABELS[prec]
         elif key in LEGACY_IGNORED or key.startswith(LEGACY_IGNORED_PREFIXES):
             ignored.append(key)
+        elif key.startswith("MINIMAX_") and key not in P.BY_KEY:
+            if key in _MINIMAX_IGNORED:
+                ignored.append(key)
+            else:
+                _migrate_minimax(key, value, preset, out, notes, ignored)
+        elif key == "TARGET_LAYERS":
+            out[key] = LEGACY_AREAS.get(value, value)
+        elif key == "TRAINING_BLOCKS" and isinstance(value, dict):
+            out[key] = ", ".join(k for k, on in value.items() if on)       # Fizgig stores {block: ticked}
         elif key in ("MIN_TIMESTEP", "MAX_TIMESTEP") and str(value).strip() == "":
             out[key] = P.BY_KEY[key].default      # Fizgig: an empty noise-range box means the full range
+        elif key in ("MIN_TIMESTEP", "MAX_TIMESTEP") and _is_number(value) and float(value) > 1.0:
+            out[key] = float(value) / 1000.0      # Klein's boxes are 0-1000 (Fizgig); the generic range is 0-1
         else:
             out[key] = value
     return out, notes, ignored

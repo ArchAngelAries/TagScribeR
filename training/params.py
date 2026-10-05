@@ -184,6 +184,53 @@ PARAMS: tuple[Param, ...] = (
       "ResNet blocks and the up / down samplers (kohya's conv_dim / LyCORIS LoCon), at the same rank. Bigger file, "
       "more capacity for style; the file still loads in A1111 and ComfyUI. Applies to SDXL-family models only.",
       advanced=True, family_only="option"),
+    # FLUX.2 Klein extensions: Fizgig's keys and defaults (lora_trainer_gui.py settings 2158-2165, PRESETS 1877-1898,
+    # ARCHITECTURES["Flux 2 Klein Base 9B"] timestep_sampling flux2_shift). Passed to the driver as driver_options.
+    P("TARGET_LAYERS", "Model area to train", CHOICE, "Full Model", "Training Parameters",
+      "Which part of the model the LoRA trains (Klein). Identity = single blocks 1-16, Style and Style+Composition = "
+      "all 8 double blocks + single 0-1, Details = single blocks 12-23, Custom = the blocks named below. Style also "
+      "pairs with late timesteps (0-0.4).",
+      options=("Full Model", "Identity", "Style", "Style+Composition", "Details", "Custom"), strict=True,
+      family_only="option"),
+    P("TRAINING_BLOCKS", "Custom blocks", TEXT, "", "Training Parameters",
+      "Model area Custom only: comma-separated blocks, e.g. double_blocks.0, double_blocks.1, single_blocks.5 (8 "
+      "double blocks 0-7, 24 single blocks 0-23). Empty trains the full model, as Fizgig does.", advanced=True,
+      family_only="option"),
+    P("TIMESTEP_SAMPLING", "Timestep sampling", CHOICE, "flux2_shift", "Timesteps",
+      "How noise levels are drawn each step. flux2_shift (default) is the resolution-shifted sigmoid Klein uses; "
+      "the others are Fizgig's alternatives: sigma, uniform, sigmoid, shift, flux_shift, logsnr, qinglong_flux.",
+      options=("sigma", "uniform", "sigmoid", "shift", "flux_shift", "flux2_shift", "logsnr", "qinglong_flux"),
+      strict=True, advanced=True, family_only="option"),
+    P("DISCRETE_FLOW_SHIFT", "Flow shift", FLOAT, 3.0, "Timesteps",
+      "Only for timestep sampling 'shift': the fixed shift t = t*s / (1 + (s-1)*t).", minimum=0.0, maximum=20.0,
+      advanced=True, family_only="option"),
+    P("SIGMOID_SCALE", "Sigmoid scale", FLOAT, 1.0, "Timesteps",
+      "Scales the random number before the sigmoid (sigmoid, shift, flux_shift, flux2_shift, qinglong_flux); "
+      "larger spreads the noise levels toward both ends.", minimum=0.0, maximum=20.0, advanced=True,
+      family_only="option"),
+    P("LOGIT_MEAN", "Logit mean", FLOAT, 0.0, "Timesteps", "logsnr and qinglong_flux sampling: the mean of the "
+      "log signal-to-noise draw.", minimum=-20.0, maximum=20.0, advanced=True, family_only="option"),
+    P("LOGIT_STD", "Logit std", FLOAT, 1.0, "Timesteps", "logsnr and qinglong_flux sampling: the spread of the "
+      "log signal-to-noise draw.", minimum=0.0, maximum=20.0, advanced=True, family_only="option"),
+    P("PRESERVE_DISTRIBUTION", "Preserve distribution shape", BOOL, False, "Timesteps",
+      "With a noise range set: keep drawing until the noise levels fall inside it (the natural curve, cut off) "
+      "instead of squeezing the whole curve into the range.", advanced=True, family_only="option"),
+    # MiniMax H3 extensions: Fizgig's keys and defaults (lora_trainer_gui.py settings 2113-2143, MINIMAX_* presets).
+    # Passed to the driver as driver_options.
+    P("MINIMAX_LOWNOISE_PCT", "Low-noise training %", FLOAT, 60.0, "Timesteps",
+      "MiniMax H3: the share of training steps drawn from the clean half of the noise range (below sigma 0.5), where "
+      "detail and identity are learned. 60 is the tuned default for stills; 50 is the plain uniform schedule; 8 is "
+      "the model's own video schedule (mostly composition and movement). Fizgig maps it to the schedule shift "
+      "(1 - P) / P.", minimum=1.0, maximum=99.0, family_only="option"),
+    P("MINIMAX_LIKENESS_MODE", "Training mode", CHOICE, "Default", "Training Parameters",
+      "MiniMax H3: which of the 50 blocks the LoRA trains. Default = blocks 20-49 (the identity blocks: quickest steps "
+      "and the measured best for characters and styles). More Blocks = 6-49 (slower, holds the dataset's global "
+      "traits out of the LoRA longer). Off = the blocks you type below.",
+      options=("Default", "More Blocks", "Off - hand-pick the blocks below"), family_only="option"),
+    P("MINIMAX_BLOCKS", "Blocks to train", TEXT, "all", "Training Parameters",
+      "MiniMax H3, training mode Off only: blocks as numbers and ranges, e.g. 6-49 or 3-12, 14-15, 22, 31-33 "
+      "(0-49; 'all' = every block). A typo stops the run instead of training a different set.", advanced=True,
+      family_only="option"),
     # ---- dataset ----------------------------------------------------------------------------------
     P("DATASET_MEGAPIXELS", "Target megapixels", CHOICE, "0.25", "Dataset",
       "Training resolution as an area. Images are bucketed by aspect ratio at about this many pixels (0.5 MP is "
@@ -266,6 +313,12 @@ BY_KEY: dict[str, Param] = {p.key: p for p in PARAMS}
 
 # family-extension parameters -> the keyword `driver.configure()` receives (see FamilyDescription.family_options)
 DRIVER_OPTIONS = {"SDXL_MIN_SNR_GAMMA": "min_snr_gamma", "SDXL_NOISE_OFFSET": "noise_offset", "SDXL_LOCON": "locon"}
+DRIVER_OPTIONS.update({"TARGET_LAYERS": "target_layers", "TRAINING_BLOCKS": "training_blocks",
+                       "TIMESTEP_SAMPLING": "timestep_sampling", "DISCRETE_FLOW_SHIFT": "discrete_flow_shift",
+                       "SIGMOID_SCALE": "sigmoid_scale", "LOGIT_MEAN": "logit_mean", "LOGIT_STD": "logit_std",
+                       "PRESERVE_DISTRIBUTION": "preserve_distribution"})
+DRIVER_OPTIONS.update({"MINIMAX_LOWNOISE_PCT": "lownoise_pct", "MINIMAX_LIKENESS_MODE": "likeness_mode",
+                       "MINIMAX_BLOCKS": "blocks"})
 PRESET_KEYS = tuple(p.key for p in PARAMS if p.preset)
 
 

@@ -42,7 +42,7 @@ KREA2 = FamilyDescription(
     gui_label="Krea 2",
     lora_name_suffix="krea2",
     aliases=("krea-2", "krea_2"),
-    experimental=False,
+    experimental=True,          # until the owner's first real run confirms the port
 
     model_files=(
         ModelFile("krea2_dit", "Krea 2 RAW DiT", True, _REPO, "diffusion_models/krea2_raw_bf16.safetensors", 26.0,

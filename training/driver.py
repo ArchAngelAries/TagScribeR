@@ -47,6 +47,11 @@ class FamilyDriver:
         """Family-specific run options (train_family's `driver_options`, e.g. SDXL's min-SNR gamma), applied once
         right after the driver is created. The default ignores them; a family that offers options overrides this."""
 
+    def trainable_blocks(self):
+        """Block ids (driver.block_map) the trainable adapter covers; None = every target. A family with block
+        targeting (Klein's Model Area) returns its configured selection."""
+        return None
+
     # ---- models ---------------------------------------------------------------------------------
     def load_dit(self, path: str, device):
         """The diffusion transformer in bf16, frozen, ready for LoRA wrapping (gradient checkpointing available).

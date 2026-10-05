@@ -216,10 +216,10 @@ Training runs as separate processes, so the app stays responsive and a crash can
 |---|---|
 | Krea 2 | Fizgig's presets and measured settings |
 | Qwen Image 2.1 (including edit LoRAs from before/after pairs) | Fizgig's presets and measured settings |
+| MiniMax H3 (still images only) | Fizgig's presets |
 | FLUX.2 Klein Base 9B | Fizgig's presets, with Model Area block targeting |
 | SDXL 1.0, Pony Diffusion V6 XL, Illustrious-XL, NoobAI-XL (eps and v-pred) | Community starting points |
 | Anima | Community starting points |
-| MiniMax H3 | Not included yet: on hold for a licence review (see [the plan](docs/TRAINING_PLAN.md)) |
 
 Training is new and every family is marked experimental until it has been proven on real runs. Fizgig has no code
 for the SDXL family or Anima, so their presets are community starting points, not measured recipes. Model weights

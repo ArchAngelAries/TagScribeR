@@ -57,6 +57,18 @@ TagScribeR detects GPUs with its own `core/hardware.py`.
 The Krea 2, Qwen-Image VAE and Qwen3-VL-4B weights are not included; the publishers' licences apply when you download
 them.
 
+## MiniMax H3 (Fizgig, with code that derives from ComfyUI)
+
+`training/families/minimax_h3/` ports Fizgig's MiniMax H3 trainer for still-image LoRA training
+(`src/fizgig/minimax/`). Its training recipe follows Ostris's ai-toolkit (MIT), which is listed below.
+
+Provenance to be aware of: Fizgig's own file headers describe its H3 model and VAE code as faithful ports of
+ComfyUI's `comfy/ldm/minimax/model.py` and `vae.py`, and the sampler's res_multistep step follows
+`comfy/k_diffusion`. ComfyUI (https://github.com/comfyanonymous/ComfyUI) is licensed under the GNU General Public
+License v3.0. `training/families/minimax_h3/model.py`, `vae.py` and `sampling.py` carry that provenance in their
+headers. This concerns the source code only. It is separate from the licence of the MiniMax H3 model weights, which
+are not included and whose terms the MiniMax team sets.
+
 ## FLUX.2 Klein (Black Forest Labs FLUX): Apache License 2.0
 
 Upstream: https://github.com/black-forest-labs/flux. Copyright Black Forest Labs.

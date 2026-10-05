@@ -37,6 +37,7 @@ inference/              all AI work; tabs talk to it only via specs / worker
 training/               native LoRA training: a port of Fizgig's standard family layer (no Qt; see below)
   description.py driver.py registry.py   family facts, the model-code interface, the family list
   families/krea2/                         Krea 2: description + presets, driver, DiT, Qwen-Image VAE, sampler, encode-only Qwen3-VL-4B
+  families/minimax_h3/                    MiniMax H3, still-image LoRAs: Fizgig's H3 recipe
   families/klein/                         FLUX.2 Klein Base 9B: Fizgig's Klein recipe (presets, Model Area, timestep modes)
   families/sdxl/                          SDXL, Pony, Illustrious, NoobAI eps / v-pred (diffusers UNet; original code)
   families/anima/                         Anima (Cosmos-Predict2-2B fine-tune; original code)

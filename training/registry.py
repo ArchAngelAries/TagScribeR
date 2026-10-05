@@ -9,12 +9,13 @@ from training.description import FamilyDescription
 from training.families.anima.description import ANIMA
 from training.families.klein.description import KLEIN_9B
 from training.families.krea2.description import KREA2
+from training.families.minimax_h3.description import MINIMAX_H3
 from training.families.qwen_image21.description import QWEN_IMAGE_21
 from training.families.sdxl.description import VARIANTS as SDXL_VARIANTS
 
 # Krea 2 first: the owner's primary model (the Train tab lists families in this order). Modern families, then the
 # SDXL-architecture ones, then Anima.
-FAMILIES = {d.key: d for d in (KREA2, QWEN_IMAGE_21, KLEIN_9B, *SDXL_VARIANTS, ANIMA)}
+FAMILIES = {d.key: d for d in (KREA2, QWEN_IMAGE_21, MINIMAX_H3, KLEIN_9B, *SDXL_VARIANTS, ANIMA)}
 
 
 def _check(d: FamilyDescription) -> None:

@@ -363,7 +363,7 @@ ones it learns.</p>
 <ol>
 <li><b>Open and caption your dataset</b> (Gallery / Auto Caption). Every image needs a caption file, so filter
 <code>missing:caption</code> to find gaps. Put your trigger word in the captions (Auto Caption → Subject).</li>
-<li><b>Pick a family</b> (Krea 2, Qwen Image 2.1, FLUX.2 Klein, SDXL / Pony / Illustrious / NoobAI, Anima) and set its <b>Model files</b> once. <i>Get</i> opens the download page;
+<li><b>Pick a family</b> (Krea 2, Qwen Image 2.1, MiniMax H3, FLUX.2 Klein, SDXL / Pony / Illustrious / NoobAI, Anima) and set its <b>Model files</b> once. <i>Get</i> opens the download page;
 the paths are remembered.</li>
 <li><b>Load a preset.</b> ✨ presets are measured recipes; the first one is applied on your first visit.</li>
 <li>The tab starts in a <b>simple view</b>: name, epochs, resolution and preview prompts, with the preset deciding
@@ -489,6 +489,20 @@ second model. Leave it empty to preview the RAW model at 28 steps.</li>
 leave room on the cache drive.</li>
 <li>Measured by Fizgig at 0.25 MP: INT8 about 16 GB, 4-bit about 11 GB, fp8 about 19 GB (each swapped block saves
 about 0.4 GB). bf16 holds 26 GB of weights alone. Each extra image in the batch adds about 2.4 GB.</li>
+</ul>
+<h3>MiniMax H3</h3>
+<ul>
+<li><b>Images only.</b> TagScribeR trains H3 LoRAs from still images. Clips, sound and voice items aren't
+supported here.</li>
+<li><b>Files:</b> the pruned INT8 DiT (about 21 GB), the Qwen3-VL-32B text encoder, the H3 video VAE, and the optional
+training adapter. <i>Get</i> opens each download page.</li>
+<li><b>Memory:</b> loading the DiT needs about 22 GB of free system RAM. Caching captions needs about 15 GB of free
+VRAM; with less, the text encoder streams from system RAM and is slower.</li>
+<li>The default mode trains blocks 20 to 49. <b>Low-noise %</b> and the training mode are under <i>Show all
+settings</i>.</li>
+<li>The presets use the Automagic v3 optimizer, which sets its own learning rate, so Adaptive LR is off for them.</li>
+<li>Previews run at 20 steps on the training model. Fizgig's Turbo-LoRA previews, HQQ 4-bit and the high-noise
+LR dial aren't available yet.</li>
 </ul>
 <h3>FLUX.2 Klein Base 9B</h3>
 <ul>

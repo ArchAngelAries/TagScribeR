@@ -139,13 +139,16 @@ The options as originally presented:
   were verified against two trainers and ComfyUI (table in `description.py`). Rectified flow, Qwen3-0.6B plus T5
   token ids feeding the checkpoint's frozen LLM adapter, the Qwen-Image VAE, kohya keys. The presets are community
   starting points.
-- **MiniMax H3: on hold for a licence decision (2026-10-05).** A still-image port was written and tested on CPU,
-  but it is not in the repository. Fizgig's own headers describe its MiniMax DiT and VAE as faithful ports of
-  ComfyUI's `comfy/ldm/minimax` code, and ComfyUI is GPL-3.0. Including that code would bring GPL terms with it.
-  The options are: leave H3 out; re-implement the model from a permissively licensed reference; or ship those
-  files under GPL-3.0 and accept what that means for distributing the app. The parameter definitions and the
-  preset-key migration for H3 (`MINIMAX_*` in `training/params.py` and `training/presets.py`) are TagScribeR's own
-  code and stay in, unused until a family lists them.
+- **MiniMax H3: done for still images (2026-10-05), awaiting a first real run.** `training/families/minimax_h3/`
+  ports Fizgig's H3 trainer for image LoRAs: the flow-matching objective (target x0 minus noise), the low-noise %
+  dial, the 20-49 block window and training modes, the frozen training adapter, caption dropout 0.05, EMA,
+  Automagic v3, kohya keys, the three presets, and INT8 (the checkpoint's own ConvRot storage) or NF4 bases.
+  - *Not ported yet:* clips, audio and voice items, RefMods, multi-concept, distillation, the rotation fine-tune,
+    Turbo-LoRA previews, HQQ 4-bit, the high-noise LR dial, the adapter ramp and the movement limiter.
+  - *Code provenance:* Fizgig's headers describe its H3 model and VAE as ports of ComfyUI's code (GPL-3.0). The
+    owner decided to include it (2026-10-05); `THIRD_PARTY_NOTICES.md` records the provenance. This is separate
+    from the model weights' licence.
+
 ## 6. Verification policy
 
 The owner runs all real training. Development verification uses:

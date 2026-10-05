@@ -38,6 +38,7 @@ class Krea2Driver(FamilyDriver):
 
     compile_blocks = "auto"        # Compile Blocks: auto | on | off | outside (the Train tab's COMPILE_BLOCKS)
     _compile_requested = False
+    warmup_note = True             # Fizgig krea2/trainer.py: the [warm-up] console note in epochs 1 and 2
 
     def configure(self, **options):
         if "compile_blocks" in options:

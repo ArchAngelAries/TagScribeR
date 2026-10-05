@@ -126,6 +126,7 @@ class FamilyDriver:
     # True when every caption's conditioning has the same shape (e.g. SDXL's 77-token CLIP chunks), so items of one
     # bucket can be stacked into a batch. False (the Fizgig default) = batch size 1, which the loss watch needs anyway.
     supports_batching = False
+    warmup_note = False               # say every 30 s of the first two epochs that slow early steps are normal
 
     def training_loss(self, dit, latents, cond: dict, generator, *, min_t: float = 0.0, max_t: float = 1.0,
                       refs=None):

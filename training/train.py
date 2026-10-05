@@ -571,6 +571,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     gen = torch.Generator().manual_seed(seed + start_epoch)
     pause_flag = os.path.join(output_dir, PAUSE_FILE)
     recorder = LossRecorder()
+    warmup_note_last = 0.0
     progress = tqdm(total=steps_per_epoch * max_train_epochs, initial=global_step, desc="steps", smoothing=0,
                     mininterval=1.0 if sys.stderr.isatty() else 2.0)
     dit.train()
@@ -596,6 +597,10 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         optimizer.zero_grad(set_to_none=True)
         pending = 0
         for i in range(steps_per_epoch):
+            if epoch < 2 and getattr(driver, "warmup_note", False) and time.time() - warmup_note_last > 30.0:
+                warmup_note_last = time.time()
+                logger.info("[warm-up] Warm-up phase - the first two epochs start slowly while the GPU plans kernels "
+                            "and fills its caches. Nothing is stuck; full speed arrives from epoch 3.")
             batch = dataset.get_batch(i, data_rng)
             if watch.excluded(batch):          # two failed AI recaptions and still stuck: no forward, no loss
                 recorder.drop(step=i)

@@ -80,3 +80,31 @@ def test_real_child_processes_pause_and_resume(app, tmp_path, monkeypatch):
     assert (rd / "qp.safetensors").exists(), tab.console.toPlainText()[-2000:]
     assert "Done" in tab.lbl_status.text()
     assert (rd / "run.log").read_text(encoding="utf-8").count("=== ") >= 3
+
+
+def test_console_step_bar_updates_in_place(app):
+    """The trainer's step bar is one console line that each update replaces (not a stale `0/1200` for the whole run)."""
+    from tabs.train import TrainTab
+
+    class _Proc:
+        def __init__(self):
+            self.chunks = []
+
+        def readAllStandardOutput(self):
+            return self.chunks.pop(0)
+
+    tab = TrainTab()
+    tab.proc = _Proc()
+    tab.tracker.reset(20)
+    tab.console.clear()
+    for chunk in (b"[ema] ON\nsteps:   0%|          | 0/1200 [00:00<?, ?it/s]",
+                  b"\rsteps:   0%|          | 1/1200 [00:04<1:21:54,  4.10s/it, avr_loss=0.1011]",
+                  b"\rsteps:   0%|          | 2/1200 [00:07<1:11:20,  3.57s/it, avr_loss=0.1009]\n",
+                  b"epoch 1/20  avr_loss=0.1009  step=60  3.50s/step  lr=2.828e-04  peak VRAM 16.1 GB\n"):
+        tab.proc.chunks.append(chunk)
+        tab._read()
+    lines = tab.console.toPlainText().splitlines()
+    assert lines[0] == "[ema] ON" and lines[1].startswith("steps:") and "2/1200" in lines[1]
+    assert sum(l.startswith("steps:") for l in lines) == 1 and lines[2].startswith("epoch 1/20")
+    assert "step 2/1200" in tab.lbl_status.text()
+    tab.proc = None

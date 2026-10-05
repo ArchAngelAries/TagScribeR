@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import QProcess, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
+from PySide6.QtGui import QDesktopServices, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox,
@@ -26,6 +27,10 @@ from training import params as P
 from training import pipeline, presets
 from training.progress import TrainingProgressTracker
 from training.registry import training_families
+
+# the trainer's tqdm step bar, including its first `0/1200 [00:00<?, ?it/s]` line (no rate yet, so the progress
+# tracker does not parse it)
+_STEP_BAR_RE = re.compile(r"^\s*steps:\s+\d+%\|")
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +65,8 @@ class TrainTab(QWidget):
         self.queue: list = presets.load_queue()
         self._buf = ""
         self._log_file = None
+        self._progress_line = ""       # the trainer's step bar, shown as ONE console line that updates in place
+        self._stopped = False          # Stop was pressed: the kill's exit code is not a failure
         self._loading = False
 
         root = QHBoxLayout(self)
@@ -645,8 +652,26 @@ class TrainTab(QWidget):
         lay.addWidget(split, 1)
         return w
 
+    def _console_progress(self, text):
+        """The trainer's `steps: N/total` bar: one console line, replaced by each update (printing it once and never
+        again left a stale `0/1200` on screen for the whole run). run.log gets the last one only."""
+        if not self._progress_line:
+            self.console.appendPlainText(text)
+        else:
+            cur = self.console.textCursor()
+            cur.movePosition(QTextCursor.End)
+            cur.movePosition(QTextCursor.StartOfBlock, QTextCursor.KeepAnchor)
+            cur.insertText(text)
+        self._progress_line = text
+
     def _console(self, text):
+        if self._progress_line:
+            last, self._progress_line = self._progress_line, ""
+            self._log(last)
         self.console.appendPlainText(text)
+        self._log(text)
+
+    def _log(self, text):
         if self._log_file:
             try:
                 self._log_file.write(text + "\n")
@@ -728,6 +753,7 @@ class TrainTab(QWidget):
         if not resume:
             self.chart.clear()
         self.tracker.reset(self.run.total_epochs)
+        self._progress_line, self._stopped = "", False
         for c in checks:
             if c.level == "info":
                 self._console(f"[check] {c.message}")
@@ -770,7 +796,9 @@ class TrainTab(QWidget):
             if not line.strip():
                 continue
             u = self.tracker.consume(line)
-            if u is None or u["kind"] != "training":
+            if (u is not None and u["kind"] == "training") or _STEP_BAR_RE.match(line):
+                self._console_progress(line.strip())
+            else:
                 self._console(line)
             self._on_update(u)
 
@@ -798,13 +826,21 @@ class TrainTab(QWidget):
 
     def _finished(self, code, _status):
         if self._buf.strip():
-            self._console(self._buf)
-            self._on_update(self.tracker.consume(self._buf))
+            u = self.tracker.consume(self._buf)
+            if (u is not None and u["kind"] == "training") or _STEP_BAR_RE.match(self._buf):
+                self._console_progress(self._buf.strip())
+            else:
+                self._console(self._buf)
+            self._on_update(u)
         self._buf = ""
         label = self.stage_label()
         final = self.run.run_dir / f"{self.run.output_name}.safetensors"
         finished = final.exists() and final.stat().st_mtime >= self._stage_started
         paused = label == "Training" and code == 0 and pipeline.pause_requested(self.run.run_dir) and not finished
+        if self._stopped:
+            self._stopped = False
+            self._end(f"Stopped during {label.lower()}. Epochs already saved are kept.")
+            return
         if code != 0:
             self._console(f"[{label}] stopped with exit code {code}")
             self._end(f"{label} failed (exit code {code}) - see the console. Epochs already saved are kept.")
@@ -862,6 +898,7 @@ class TrainTab(QWidget):
         if not confirm(self, "Stop training", "Stop the run now? The current epoch is lost; saved epochs stay. "
                                               "(Pause stops cleanly at the end of the epoch.)", destructive=True):
             return
+        self._stopped = True
         pipeline.kill_tree(int(self.proc.processId()))
         self._console("[stop] process tree stopped")
 

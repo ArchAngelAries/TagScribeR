@@ -1023,13 +1023,13 @@ a big card.
 ### 6.9 Latent and text-encoder caching
 
 - **Cache directory per dataset folder**: `<prefs.cache_dir>/<sanitised folder name>-<sha1(lowercased
-  path)[:8]>` (`_cache_dir_for`, `lora_trainer_gui.py:31778-31791`). For example `cache/T800-efe6f48d/`.
+  path)[:8]>` (`_cache_dir_for`, `lora_trainer_gui.py:31778-31791`). For example `cache/demo_dataset-1a2b3c4d/`.
   The dataset layer refuses a shared `cache_directory`.
 - **Filenames** (`dataset/image_dataset.py:907-916`):
   - latents: `<image basename>_<WWWW>x<HHHH>_<arch>.safetensors`, where W×H is the **original** image
     size, zero-padded to 4 digits;
   - text: `<image basename>_<arch>_te.safetensors`;
-  - examples: `T800_Endo (1)_0800x0800_krea2.safetensors` and `T800_Endo (1)_krea2_te.safetensors`.
+  - examples: `image (1)_0800x0800_krea2.safetensors` and `image (1)_krea2_te.safetensors`.
 - **Contents:**
   - latents: `latent_{h}x{w}` (the **bucket** latent size), optional `latent_control_{i}_{h}x{w}`
     (edit/paired), metadata `architecture, width, height, dtype, format_version`;

@@ -4,7 +4,8 @@
 # Changes for TagScribeR: Fizgig has no FamilyDriver for Krea 2 - this class puts its Krea 2 code behind the family
 # interface (loading, quantisation and the LoRA come from the generic layer; the objective, conditioning and sampler
 # are Fizgig's). Brought level with Fizgig 7.0.1 krea2/driver.py (commit 1c8ec88): the loss in the original's bf16
-# dtype order under autocast, one caption per forward when caching, bf16 INT8 scales, other trainers' LoRA names.
+# dtype order under autocast, one caption per forward when caching, bf16 INT8 scales, other trainers' LoRA names;
+# compile decided by the shared loop on the empty card (compile_plan, Krea 2's own rule) and applied after the LoRA.
 """Krea 2 driver for the training family layer (training/driver.py).
 
 * conditioning: Qwen3-VL-4B, 12 hidden-state layers -> {"hidden_states": (512, 12, 2560), "attention_mask": (512,)}
@@ -38,13 +39,28 @@ _TXT_BLOCKS = {"layerwise": "txtfusion.layerwise_blocks", "refiner": "txtfusion.
 
 class Krea2Driver(FamilyDriver):
 
-    compile_blocks = "auto"        # Compile Blocks: auto | on | off | outside (the Train tab's COMPILE_BLOCKS)
-    _compile_requested = False
+    _compile_requested = False      # set by compile_plan: the cuDNN switch in after_epoch stands down
     warmup_note = True             # Fizgig krea2/trainer.py: the [warm-up] console note in epochs 1 and 2
 
-    def configure(self, **options):
-        if "compile_blocks" in options:
-            self.compile_blocks = str(options["compile_blocks"] or "auto")
+    def compile_targets(self, dit):
+        return dit.blocks
+
+    def compile_plan(self, mode, total_steps, precision, blocks_to_swap, mp=0.25, batch=1):
+        """Krea 2's own measured rule (training/compile.py should_compile / compile_boundary, Fizgig
+        utils/capabilities.py): its compiled-memory figures place the checkpoint inside the graph where it fits and
+        outside where it does not."""
+        from training import compile as C
+        if mode == "auto":
+            do, why = C.should_compile(total_steps, precision, blocks_to_swap, mp=mp, batch=batch)
+            do = "inside" if do is True else do
+        elif mode == "outside":
+            do, why = "outside", ""
+        else:
+            do = C.compile_boundary(precision, mp=mp, batch=batch)
+            why = ("on: inside-the-graph won't fit at this token load - compiling with the checkpoint OUTSIDE the "
+                   "region instead." if do == "outside" else "")
+        self._compile_requested = bool(do)
+        return do, why
 
     def optimizer_params(self, net, optimizer_type, lr, optimizer_args):
         """Automagic v3 keeps one rate per parameter GROUP, so the LoRA is split by module family (txtfusion / attn / mlp /
@@ -66,16 +82,6 @@ class Krea2Driver(FamilyDriver):
                         "Krea 2's per-step gradient noise as overshoot). Set polarity_history in Optimizer Args to "
                         "override.")
         return (groups or net.parameters()), optimizer_args, counts
-
-    def prepare_training(self, dit, net, *, precision, blocks_to_swap, total_steps, megapixels, batch_size):
-        """torch.compile of the blocks, AFTER the LoRA wrapped their forwards (Fizgig load_dit_for_training, last step)."""
-        from training.families.krea2 import compile as C
-        do = C.resolve(self.compile_blocks, precision=precision, blocks_to_swap=blocks_to_swap,
-                       total_steps=total_steps, mp=megapixels or 0.25, batch=batch_size)
-        self._compile_requested = bool(do)
-        if do:
-            C.compile_blocks(dit, blocks_to_swap, fp8_scaled=precision == "fp8",
-                             boundary="outside" if do == "outside" else "inside")
 
     def after_epoch(self, epoch, steps_remaining):
         """Attention backend: cuDNN's kernel is ~6% faster per step but costs ~1.3 s per distinct sequence shape to plan,

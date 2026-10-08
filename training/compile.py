@@ -6,7 +6,11 @@
 # quant_4bit / quant_int8 / fp8_scaled flags; ROCm is read from torch.version.hip and free VRAM from training.quant
 # (Fizgig's detect()); init_compile and the SDPA backend settle come from training/modules. Rules, thresholds, messages
 # and the fp8 / triton / compiler guards are Fizgig's.
-"""torch.compile of Krea 2's blocks, as Fizgig does it.
+# Brought level with Fizgig 7.0.1 families/compile.py and utils/capabilities.py compile_blocker (commit 1c8ec88): one
+# module for every family with compiles=True (it lived in training/families/krea2/), any block signature
+# (CheckpointedBlock(*args)), the block list from driver.compile_targets, fullgraph from the description,
+# compile_blocker for the generic Auto rule, and the two expected inductor notices silenced.
+"""torch.compile of a family's transformer blocks, as Fizgig does it (Krea 2's rules measured first).
 
 Compile Blocks is Auto / On / Off (and "outside", a hand-set power value). Auto is a judgement, off wherever it is not
 known to win: on ROCm (recompiles per bucket shape on HIP), with block swap, without triton / a matching triton / a C
@@ -216,11 +220,10 @@ class CheckpointedBlock(torch.nn.Module):
         self.block = block
         self.checkpointing = checkpointing
 
-    def forward(self, x, vec, freqs, attn_params=None):
+    def forward(self, *args):
         if self.checkpointing and self.training and torch.is_grad_enabled():
-            return torch.utils.checkpoint.checkpoint(
-                self.block, x, vec, freqs, attn_params, use_reentrant=False)
-        return self.block(x, vec, freqs, attn_params)
+            return torch.utils.checkpoint.checkpoint(self.block, *args, use_reentrant=False)
+        return self.block(*args)
 
 
 def find_host_compiler() -> bool:
@@ -287,8 +290,11 @@ def find_host_compiler() -> bool:
     return False
 
 
-def compile_blocks(dit, blocks_to_swap: int, fp8_scaled: bool = False, boundary: str = "inside") -> int:
-    """Compile each transformer block (Fizgig _compile_blocks). Returns the number compiled (0 = refused / unavailable).
+def compile_blocks(dit, blocks_to_swap: int, fp8_scaled: bool = False, boundary: str = "inside", blocks=None,
+                   fullgraph: bool = True) -> int:
+    """Compile each transformer block of `blocks` (the driver's ModuleList, replaced in place; default dit.blocks).
+    The DiT's forward must call a block that has `_handles_checkpointing` directly, without checkpointing it again.
+    Returns the number compiled (0 = refused / unavailable).
 
     The win is real on the quantised path (inductor fuses the per-matmul quantise/dequantise elementwise work that bounds
     INT8), and small on dense bf16. It costs compile time on the first step, and a recompile for every new latent shape
@@ -351,26 +357,54 @@ def compile_blocks(dit, blocks_to_swap: int, fp8_scaled: bool = False, boundary:
     _sdpa.prime()
     # A compile failure must cost speed, not the run.
     torch._dynamo.config.suppress_errors = True
+    # Two inductor notices that are expected here, not problems: TF32 stays off on purpose (the LoRA's fp32 maths
+    # would change), and a complex-number op (Qwen's RoPE) runs uncompiled inside the compiled block.
+    import warnings
+    warnings.filterwarnings("ignore", category=UserWarning,
+                            message=r"TensorFloat32 tensor cores for float32 matrix multiplication available")
+    warnings.filterwarnings("ignore", category=UserWarning,
+                            message=r"Torchinductor does not support code generation for complex operators")
+    blocks = dit.blocks if blocks is None else blocks
 
     # fullgraph=True refuses to compile around a graph break instead of quietly degrading. Each block is wrapped so
     # the GRADIENT CHECKPOINT sits INSIDE the compiled region (1.19x on a real block: 8.817 -> 7.428 ms/block-step).
     checkpointing = bool(getattr(dit, "gradient_checkpointing", False))
     n = 0
     if boundary == "outside":
-        for i, block in enumerate(dit.blocks):
-            dit.blocks[i] = CheckpointedBlock(torch.compile(block, fullgraph=True), checkpointing)
+        for i, block in enumerate(blocks):
+            blocks[i] = CheckpointedBlock(torch.compile(block, fullgraph=fullgraph), checkpointing)
             n += 1
-        logger.info("[compile] %d blocks compiled (fullgraph, checkpoint OUTSIDE the "
+        logger.info("[compile] %d blocks compiled (checkpoint OUTSIDE the "
                     "compiled region - recompute reruns the compiled graph, so activation "
                     "stashes stay at eager level; the high-resolution fit) - the first "
                     "step of each new shape pauses to compile", n)
         return n
-    for i, block in enumerate(dit.blocks):
-        dit.blocks[i] = torch.compile(CheckpointedBlock(block, checkpointing), fullgraph=True)
+    for i, block in enumerate(blocks):
+        blocks[i] = torch.compile(CheckpointedBlock(block, checkpointing), fullgraph=fullgraph)
         n += 1
-    logger.info("[compile] %d blocks compiled (fullgraph, checkpoint inside the graph, "
+    logger.info("[compile] %d blocks compiled (checkpoint inside the graph, "
                 "cache_size_limit=8192) - the first step of each new shape pauses to compile", n)
     return n
+
+
+def compile_blocker(blocks_to_swap: int) -> Optional[str]:
+    """Why Auto must not compile on this machine / run (ROCm, block swap, no or mismatched triton, no host C
+    compiler), or None (Fizgig utils/capabilities.py). The generic family rule's guard."""
+    if is_rocm():
+        return ("ROCm/HIP PyTorch build - Auto leaves torch.compile off "
+                "(recompiles per bucket shape on HIP; set Compile Blocks to On to override)")
+    if blocks_to_swap:
+        return "block swap is active - swapping moves weights between devices every step, " \
+               "which compiled graphs cannot tolerate"
+    if not _triton_importable():
+        return "triton is not installed (pip install triton-windows on Windows)"
+    _ok, _why = triton_matches_torch()
+    if not _ok:
+        return _why
+    if not has_host_c_compiler():
+        return ("no C compiler on this system - inductor/triton build host-side stubs "
+                "with one at runtime (on Debian/Ubuntu: apt install gcc); running uncompiled")
+    return None
 
 
 def resolve(setting, *, precision: str, blocks_to_swap: int, total_steps: int, mp: float, batch: int):

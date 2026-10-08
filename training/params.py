@@ -114,6 +114,10 @@ PARAMS: tuple[Param, ...] = (
     P("FAMILY_EDIT", "Edit LoRA (before/after pairs)", BOOL, False, "Training Parameters",
       "Train an edit (e.g. a colour grade) from pairs: the dataset folder holds the edited images, the originals "
       "folder holds the matching originals with the same file names.", family_only="edit"),
+    P("FAMILY_FAST_ID", "Fast Identity Mode", BOOL, False, "Training Parameters",
+      "Train only the blocks measured to carry a character's identity (Qwen Image 2.1: blocks 10-14). About 1.5x "
+      "faster per step, with likeness very close to a full-model LoRA. For characters and faces, not styles. Not "
+      "used for an Edit LoRA.", family_only="fast_id"),
     P("FAMILY_EDIT_DIR", "Originals folder", DIR, "", "Training Parameters",
       "Edit LoRA: the folder of original ('before') images, each named like its edited version.",
       family_only="edit"),
@@ -158,12 +162,13 @@ PARAMS: tuple[Param, ...] = (
       "few as fit. Not with 4-bit NF4.", options=(SWAP_AUTO, "0", "4", "8", "12", "16", "20", "24", "30")),
     # Krea 2 (Fizgig lora_trainer_gui.py:5853-5880, krea2/trainer.py): torch.compile of the DiT blocks. A driver option.
     P("COMPILE_BLOCKS", "Compile blocks (torch.compile)", CHOICE, "Auto", "Memory & Precision",
-      "Krea 2 only. Auto turns torch.compile on only when this run is long enough to repay it. It fuses the per-matmul "
-      "quantise / dequantise work that bounds the INT8 and 4-bit paths (about 2x per step on INT8, 1.28x on 4-bit, on "
-      "NVIDIA) but costs a compile pause of about 90 s first, so a short run is slower overall; break-even is about 600 "
-      "steps on INT8, 1200 on 4-bit. It mainly benefits NVIDIA cards: on AMD ROCm Auto leaves it OFF (it recompiles "
-      "for every bucket shape on HIP; On overrides that). Needs Triton and, on Windows, the C++ Build Tools. Never "
-      "used with Blocks to swap, and Auto only compiles INT8 and 4-bit bases. Outside = On with the gradient "
+      "Auto turns torch.compile on only when this run is long enough to repay it. It fuses the per-matmul quantise / "
+      "dequantise work that bounds the quantised paths but costs a compile pause first, so a short run is slower "
+      "overall. Krea 2 (measured by Fizgig on NVIDIA): about 2x per step on INT8, 1.28x on 4-bit, break-even about "
+      "600 steps on INT8, 1200 on 4-bit. Qwen Image 2.1: 1.43x on INT8, 1.15x on bf16, no extra memory; Auto compiles "
+      "runs of 300+ steps on INT8 and 800+ on bf16, never 4-bit (On still does). It mainly benefits NVIDIA cards: "
+      "on AMD ROCm Auto leaves it OFF (it recompiles for every bucket shape on HIP; On overrides that). Needs Triton "
+      "and, on Windows, the C++ Build Tools. Never used with Blocks to swap. Outside = On with the gradient "
       "checkpoint kept outside the compiled region (the high-resolution fit, chosen automatically when needed).",
       options=("Auto", "On", "Off", "Outside"), advanced=True, family_only="option"),
     P("SAVE_STATE", "Save state at each checkpoint", BOOL, True, "Memory & Precision",
@@ -407,6 +412,8 @@ def family_shows(param: Param, desc) -> bool:
         return "lokr" in desc.network_types
     if f == "edit":
         return bool(desc.edit_training)
+    if f == "fast_id":
+        return bool(desc.identity_blocks)
     if f == "speed":
         return bool(desc.preview_speed())
     if f == "option":

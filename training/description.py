@@ -140,6 +140,21 @@ class FamilyDescription:
     # Adaptive LR also treats a grad-clip ratio over 50% of an epoch's steps as a stability signal (Klein's rule,
     # training/adaptive_lr.AdaptiveLR clip_signal)
     adaptive_lr_clip_signal: bool = False
+    # Fast Identity Mode: the block ids (driver.block_map) that carry a character's identity, measured. With
+    # FAMILY_FAST_ID the LoRA trains these only (Qwen: blocks 10-14). () = no Fast Identity Mode
+    identity_blocks: tuple = ()
+    # the driver can torch.compile its blocks (FamilyDriver.compile_blocks); the Train tab's Compile Blocks control
+    # shows (family_options COMPILE_BLOCKS). The generic Auto rule (FamilyDriver.compile_plan) for a family whose
+    # driver does not bring its own: compile_payback_steps {precision: steps} - Auto compiles a run at least that long
+    # (a precision not listed is not compiled by Auto; On still compiles). compile_boundary: where the gradient
+    # checkpoint sits ("inside" the compiled graph - faster, more memory - or "outside" - eager-level memory);
+    # compile_fullgraph: refuse graph breaks; compile_memory {precision: {boundary: ((mp, GB), ...)}}: measured
+    # compiled peaks, checked against free VRAM ({} = not measured: the boundary is kept)
+    compiles: bool = False
+    compile_payback_steps: dict = field(default_factory=dict)
+    compile_boundary: str = "inside"
+    compile_fullgraph: bool = True
+    compile_memory: dict = field(default_factory=dict)
     # optimizer settings a family's own trainer applied (only when Optimizer Args doesn't set them): an Adam-family
     # weight decay, and the 8-bit Adam eps floor of 1e-6 (training/optimizers.create_optimizer eps_floor_8bit)
     optimizer_weight_decay: Optional[float] = None

@@ -121,6 +121,7 @@ KREA2 = FamilyDescription(
     # vote their own rate, sign window 16, the LR box is only its start rate, and Adaptive LR, the LR scheduler, the
     # per-image LR and the look warm-up stand down (Krea2Driver.optimizer_params, training/train.py).
     optimizers=("adamw8bit", "adamw", "pagedadamw8bit", "ademamix8bit", "pagedademamix8bit", "lion8bit", "automagic3"),
+    compiles=True,                                           # Krea 2's own rule: Krea2Driver.compile_plan
     family_options=("COMPILE_BLOCKS",),                      # torch.compile of the blocks (Auto / On / Off / Outside)
     network_types=("lora", "lokr"),                          # _GUI: Network Type wired for krea2_train
 

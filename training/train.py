@@ -312,7 +312,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                  gradient_checkpointing=True, blocks_to_swap=0, network_type="lora", lokr_factor=8,
                  gradient_accumulation=1,
                  log_per_image_loss=False, per_image_lr=False, auto_recaption=False, warmup_look_outliers=False,
-                 trigger_word=None, trigger_position="start", captioner=None, device=None, driver_options=None):
+                 trigger_word=None, trigger_position="start", captioner=None, device=None, driver_options=None,
+                 train_blocks=None):
     desc = get_family(family)
     if desc is None or not desc.training_ready:
         raise RuntimeError(f"unknown or untrainable family {family!r}")
@@ -379,6 +380,23 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             precision, blocks_to_swap, why = quant.plan(desc, driver, precision, blocks_to_swap, megapixels=mp)
         why += f" at {mp:.2f} MP"
         logger.info(f"[precision] Auto plan: {precision}, block swap {blocks_to_swap} ({why}); asked {req}")
+
+    # ---- torch.compile, decided here on the empty card (the free VRAM its checks read would be the loaded model's
+    # leftovers later) and applied after every LoRA has patched the forwards. Auto weighs the warm-up against this
+    # run's length; On places the checkpoint where it fits at the largest bucket.
+    do_compile = False
+    res_max = max((w * h for w, h in dataset.buckets), default=0) / 1e6
+    cb = str((driver_options or {}).get("compile_blocks") or "off").strip().lower().split(" ")[0]
+    cb = {"1": "on", "true": "on", "yes": "on"}.get(cb, cb)
+    if desc.compiles and cb != "off":
+        do_compile, why = driver.compile_plan(cb, dataset.num_items * max_train_epochs, precision,
+                                              max(0, blocks_to_swap) if precision != "nf4" else 0,
+                                              mp=res_max or 0.25, batch=dataset.batch_size)
+        if cb == "auto":
+            logger.info("[compile] auto: %s - %s", "ENABLED (checkpoint outside)" if do_compile == "outside"
+                        else ("ENABLED" if do_compile else "off"), why)
+        elif why:
+            logger.info("[compile] %s", why)
 
     # ---- previews: encode prompts once, keep the VAE ---------------------------------------------
     encoded = neg = vae = ref_imgs = ref_latents = None
@@ -448,8 +466,15 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                         f"render ({sample_steps} steps)")
     if network_type == "lokr" and "lokr" not in desc.network_types:
         raise RuntimeError(f"{desc.display_name} does not offer LoKR")
-    net.add_trainable(network_dim, network_alpha, blocks=driver.trainable_blocks(), kind=network_type,
-                      factor=lokr_factor)
+    blocks = driver.trainable_blocks()
+    if train_blocks:                    # a subset of blocks (Fast Identity Mode)
+        known = {b.id for g in driver.block_map(dit) for b in g.blocks}
+        unknown = sorted(set(train_blocks) - known)
+        if unknown:
+            raise RuntimeError(f"train_blocks: {', '.join(unknown)} are not {desc.display_name} blocks")
+        blocks = set(train_blocks)
+        logger.info(f"[blocks] the LoRA trains {len(blocks)} of {len(known)} blocks only: {', '.join(train_blocks)}")
+    net.add_trainable(network_dim, network_alpha, blocks=blocks, kind=network_type, factor=lokr_factor)
     params = net.parameters()
     if not params:
         raise RuntimeError("the LoRA has no trainable parameters (no target modules matched)")
@@ -458,10 +483,11 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 f": {len(net.trainable_modules())} modules, {sum(p.numel() for p in params) / 1e6:.2f}M trainable "
                 f"params")
 
-    res_max = max((w * h for w, h in dataset.buckets), default=0) / 1e6
     driver.prepare_training(dit, net, precision=precision, blocks_to_swap=int(swapped or 0),
                             total_steps=dataset.num_items * max_train_epochs, megapixels=res_max,
                             batch_size=dataset.batch_size)
+    if do_compile:                      # decided before the load, applied last
+        driver.compile_blocks(dit, "outside" if do_compile == "outside" else "inside", int(swapped or 0), precision)
 
     from training.optimizers import create_optimizer, group_rates, owns_its_rate
     # the family may structure the optimizer's parameters (Krea 2: Automagic v3 per-family groups, Fizgig krea2/trainer.py)
@@ -545,6 +571,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                    "ss_architecture": arch, "ss_epoch": str(epoch),
                    "ss_optimizer": opt_label, "ss_learning_rate": f"{learning_rate:g}",
                    "ss_training_adapter": os.path.basename(training_adapter) if training_adapter else "none"})
+        if train_blocks:
+            md["ss_train_blocks"] = ",".join(train_blocks)
         md.update(driver.run_metadata())
         if context_lora_path:
             md.update({"ss_context_lora": os.path.basename(context_lora_path),

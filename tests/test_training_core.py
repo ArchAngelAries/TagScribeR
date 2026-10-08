@@ -139,7 +139,7 @@ def test_params_cover_every_qwen_preset_key(qwen):
 def test_first_builtin_is_default(qwen):
     tp = presets.TrainingPresets(qwen)
     assert tp.default_name.startswith("✨ Qwen 2.1 Fast")
-    assert tp.names()[:5] == [n for n, _ in qwen.presets]
+    assert tp.names()[:len(qwen.presets)] == [n for n, _ in qwen.presets]
 
 
 def test_apply_matches_first_token_and_refuses_strict(qwen):

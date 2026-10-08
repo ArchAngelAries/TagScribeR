@@ -526,6 +526,17 @@ are ignored with it.</li>
 it off on AMD, with block swap, on fp8 and bf16 bases, and on short runs. On Windows it needs Triton and the C++ Build
 Tools; without them the run trains normally and says so.</li>
 </ul>
+<h3>Qwen Image 2.1</h3>
+<ul>
+<li>Keep the <b>training adapter</b> on: it is frozen during training, off in previews and never in your saved
+file. Without it Qwen 2.1 LoRAs tend to collapse or wobble.</li>
+<li><b>Fast Identity Mode</b> (the "Fast Identity Mode" preset, or the checkbox under Training Parameters) trains only
+blocks 10-14, where Fizgig measured a character's identity to sit. About 1.5x faster per step, with likeness very close
+to a full-model LoRA. Use it for characters and faces, not styles. It is not used for Edit LoRAs.</li>
+<li><b>Compile blocks</b> works on Qwen too: Fizgig measured 1.43x per step on INT8 and 1.15x on bf16 with no extra
+memory, on NVIDIA. Auto compiles runs of 300+ steps on INT8 and 800+ on bf16, and leaves it off on AMD and with block
+swap. This has not been run on real hardware in TagScribeR yet.</li>
+</ul>
 <h3>MiniMax H3</h3>
 <ul>
 <li><b>Images only.</b> TagScribeR trains H3 LoRAs from still images. Clips, sound and voice items aren't

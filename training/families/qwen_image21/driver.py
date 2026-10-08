@@ -1,6 +1,6 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/qwen_image21/driver.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: import paths; otherwise unchanged.
+# Changes for TagScribeR: import paths; otherwise unchanged. Fizgig 7.0.1's compile_targets added.
 """Qwen Image 2.1 driver for the training family layer (training/driver.py).
 
 Everything Qwen-specific the generic cache/train/preview code needs, behind the FamilyDriver interface:
@@ -63,6 +63,9 @@ class QwenImage21Driver(FamilyDriver):
 
     def unload_text_encoder(self, te):
         te.unload()
+
+    def compile_targets(self, dit):
+        return dit.transformer_blocks
 
     def enable_gradient_checkpointing(self, dit, on=True):
         dit.enable_gradient_checkpointing(on)

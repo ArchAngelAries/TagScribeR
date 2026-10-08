@@ -4,10 +4,11 @@
 # paths, SDXL), `supports_batching` (batch size > 1 for fixed-length conditioning, e.g. SDXL), Conv2d LoRA
 # targets (lora_target_names may name Conv2d modules; training/lora.py wraps both) and `quant_target_names` (a family
 # whose LoRA covers more Linears than it quantises, e.g. Krea 2) `optimizer_params` (Krea 2's Automagic v3 groups) and
-# `prepare_training` / `after_epoch` (Krea 2's torch.compile and attention-backend switch).
+# `prepare_training` / `after_epoch` (a last model transform before the first step; Krea 2's attention-backend switch).
 # Brought level with Fizgig 7.0.1 (commit 1c8ec88), defaults unchanged in behaviour: `options` / `set_options`,
 # `batch_cond`, `step_policy`, `after_optimizer_step`, `run_metadata`, `frozen_file_added`, `park_for` / `unpark`,
 # `save_preview`, `plan_run`, `load_planned` (+ `loads_quantized`, `int8_fp32_scales`), `alias_flat`,
+# `compile_targets` / `compile_blocks` / `compile_plan` (shared torch.compile, decided on the empty card),
 # `convert_lora_state_dict`. Not yet (they arrive with their features): sliders, fine-tune, clips, preview
 # checkpoints, legacy state order, `cache_stage`.
 """FamilyDriver: the one interface a new model family implements.
@@ -70,8 +71,8 @@ class FamilyDriver:
     def prepare_training(self, dit, net, *, precision: str, blocks_to_swap: int, total_steps: int, megapixels: float,
                          batch_size: int) -> None:
         """Called once the model, every frozen adapter and the trainable adapter are in place, before the first step: the
-        family's last chance to transform the model (Krea 2 compiles its blocks here, after the LoRA wrapped their
-        forwards). total_steps = items x epochs; megapixels = the largest bucket in use. The default does nothing."""
+        family's last chance to transform the model (torch.compile, if asked for, runs right after it). total_steps
+        = items x epochs; megapixels = the largest bucket in use. The default does nothing."""
 
     def after_epoch(self, epoch: int, steps_remaining: int) -> None:
         """Called at every epoch boundary (Krea 2: the cuDNN attention switch). The default does nothing."""
@@ -111,6 +112,71 @@ class FamilyDriver:
         """Write one decoded preview at `path` and return the files written. Default: the PNG."""
         result.save(path)
         return [path]
+
+    # ---- torch.compile (descriptions with compiles=True) ------------------------------------------------
+    def compile_targets(self, dit):
+        """The ModuleList of transformer blocks torch.compile replaces in place. The model's forward must call a
+        block that has `_handles_checkpointing` directly, without its own checkpoint."""
+        raise NotImplementedError
+
+    def compile_blocks(self, dit, boundary: str = "inside", blocks_to_swap: int = 0, precision: str = "") -> int:
+        """torch.compile the transformer blocks, in place, after every adapter has patched the forwards. `boundary`
+        places the gradient checkpoint inside or outside the compiled region. Refuses (logs, runs eager) what it
+        cannot compile: block swap, no triton, no host C compiler, fp8 on a GPU without fp8 kernels."""
+        from training.compile import compile_blocks
+        return compile_blocks(dit, blocks_to_swap, fp8_scaled=precision == "fp8", boundary=boundary,
+                              blocks=self.compile_targets(dit), fullgraph=self.description.compile_fullgraph)
+
+    def compile_plan(self, mode: str, total_steps: int, precision: str, blocks_to_swap: int, mp: float = 0.25,
+                     batch: int = 1) -> tuple:
+        """(False | "inside" | "outside", why) for Compile Blocks `mode` ("auto" / "on" / "outside"), decided on the
+        empty card. On always compiles, at the description's boundary; Auto compiles once the run is longer than the
+        description's measured payback for this base precision, and never where the machine cannot."""
+        d = self.description
+        if mode == "outside":
+            return "outside", ""
+        if mode != "auto":
+            b, why = self._compile_fit(precision, mp, d.compile_boundary)
+            if not b:                       # On still compiles: the leanest boundary, with a warning
+                return "outside", ("on: " + why.replace(" - running uncompiled", "") +
+                                   " - compiling with the checkpoint outside the graph anyway (it may run out of "
+                                   "memory; Off or Auto avoid that)")
+            return b, (why if b != d.compile_boundary else "")
+        from training.compile import compile_blocker
+        blocked = compile_blocker(blocks_to_swap)
+        if blocked:
+            return False, blocked
+        pay = (d.compile_payback_steps or {}).get(precision)
+        if not pay:
+            return False, (f"not measured for the {precision.upper()} base on {d.display_name}; Compile Blocks On "
+                           "still compiles")
+        if total_steps < pay:
+            return False, (f"{total_steps} steps on the {precision.upper()} path - compile pays back after ~{pay}, "
+                           "so this run is quicker uncompiled")
+        b, fit = self._compile_fit(precision, mp, d.compile_boundary)
+        if not b:
+            return False, fit
+        return b, (f"{total_steps} steps on the {precision.upper()} path - compile pays back within ~{pay} steps and "
+                   f"this run is longer" + (f"; {fit}" if fit else ""))
+
+    def _compile_fit(self, precision, mp, preferred):
+        """(boundary, why) by the description's measured compiled peaks (compile_memory) against free VRAM: the
+        preferred boundary if it fits, else the checkpoint outside the graph, else (False, why). A family without
+        compiled figures keeps its boundary."""
+        mem = (self.description.compile_memory or {}).get(precision)
+        if not mem:
+            return preferred, ""
+        from training.quant import _peak, free_vram_gb
+        budget = free_vram_gb() - 1.5
+        order = [preferred] + [b for b in ("inside", "outside") if b != preferred]
+        for b in order:
+            if b in mem and _peak((mem[b], 0.0), mp) <= budget:
+                return b, ("" if b == preferred else
+                           f"the checkpoint goes {b} the compiled region ({_peak((mem[b], 0.0), mp):.1f} GB at "
+                           f"{mp:.2f} MP, measured)")
+        need = min(_peak((v, 0.0), mp) for v in mem.values())
+        return False, (f"compiled it needs ~{need:.1f} GB at {mp:.2f} MP and {budget + 1.5:.1f} GB is free - running "
+                       f"uncompiled")
 
     # ---- the base model's plan and load (optional) ---------------------------------------------------
     int8_fp32_scales = True           # False: INT8 scales computed in bf16 (Krea 2's original trainer)

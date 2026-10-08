@@ -375,6 +375,8 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
         "vae_path": m("vae") or None, "te_path": m("text_encoder") or None,
         "resume_state_dir": resume or None,
     }
+    if desc.identity_blocks and values.get("FAMILY_FAST_ID") and not (values.get("FAMILY_EDIT") and desc.edit_training):
+        kw["train_blocks"] = list(desc.identity_blocks)          # Fast Identity Mode (Fizgig --train_blocks)
     opts = driver_options(desc, values)
     if opts:
         kw["driver_options"] = opts

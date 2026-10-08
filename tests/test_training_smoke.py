@@ -319,3 +319,85 @@ def test_driver_hooks_reach_the_loop(setup, monkeypatch):
     from safetensors import safe_open
     with safe_open(str(run.run_dir / "tiny_lora.safetensors"), framework="pt") as f:
         assert f.metadata()["ss_family_option"] == "x"
+
+
+def _tiny_qwen():
+    from training.families.qwen_image21.driver import QwenImage21Driver
+    from training.families.qwen_image21.model import QwenImage21DiT
+    from training.registry import get
+    torch.manual_seed(0)
+    dit = QwenImage21DiT(patch_size=1, in_channels=64, out_channels=64, num_layers=2, attention_head_dim=16,
+                         num_attention_heads=2, context_in_dim=32, mlp_ratio=3, axes_dims_rope=(4, 6, 6),
+                         eps=1e-6, causal_condition=True).to(torch.bfloat16).requires_grad_(False)
+    drv = QwenImage21Driver()
+    drv.description = get("qwen_image21")
+    return dit, drv
+
+
+def test_qwen_compiled_block_equals_the_eager_block():
+    """Fizgig 7.0.1's Qwen compile hook: the DiT calls a CheckpointedBlock directly; the traced graph (dynamo's eager
+    backend, Qwen's fullgraph=False, the checkpoint outside) gives the eager loss and gradients."""
+    from training.compile import CheckpointedBlock
+    from training.lora import FamilyLoRA
+    dit, drv = _tiny_qwen()
+    dit.enable_gradient_checkpointing(True)
+    net = FamilyLoRA(dit, drv)
+    net.add_trainable(4, 4)
+    for p in net.parameters():
+        p.data.normal_(0, 0.05)
+    lat, cond = torch.randn(1, 64, 4, 4), {"hidden_states": torch.randn(1, 5, 32)}
+
+    def run():
+        dit.train()
+        for p in net.parameters():
+            p.grad = None
+        loss, _ = drv.training_loss(dit, lat, cond, torch.Generator().manual_seed(0))
+        loss.backward()
+        return loss.item(), [p.grad.clone() for p in net.parameters()]
+    eager_loss, eager_grads = run()
+    blocks = drv.compile_targets(dit)
+    for i, b in enumerate(list(blocks)):
+        blocks[i] = CheckpointedBlock(torch.compile(b, fullgraph=False, backend="eager"), True)
+    loss, grads = run()
+    assert loss == pytest.approx(eager_loss, rel=1e-5)
+    assert all(torch.allclose(a, b, atol=1e-4) for a, b in zip(grads, eager_grads))
+
+
+def test_qwen_fast_identity_mode_trains_the_identity_blocks_only(tmp_path):
+    """Fizgig 7.0.1: FAMILY_FAST_ID sends the description's identity_blocks (Qwen 10-14) as train_blocks; never for an
+    Edit LoRA. The built-in preset is Fast at 0.25 MP."""
+    from training import presets
+    from training.registry import get
+    qwen = get("qwen_image21")
+    assert qwen.identity_blocks == tuple(f"block_{i}" for i in range(10, 15))
+    assert P.family_shows(P.BY_KEY["FAMILY_FAST_ID"], qwen) and not P.family_shows(P.BY_KEY["FAMILY_FAST_ID"],
+                                                                                   get("krea2"))
+    name, fast_id = qwen.presets[1]
+    assert "Fast Identity" in name and fast_id["FAMILY_FAST_ID"] and fast_id["DATASET_MEGAPIXELS"] == "0.25"
+    vals, rep = presets.apply(fast_id, P.defaults(), qwen)
+    assert not rep.refused and not rep.blocked
+    kw, _ = pipeline.train_kwargs(qwen, vals, tmp_path / "run", {})
+    assert kw["train_blocks"] == list(qwen.identity_blocks)
+    kw, _ = pipeline.train_kwargs(qwen, {**vals, "FAMILY_EDIT": True}, tmp_path / "run", {})
+    assert "train_blocks" not in kw
+    from training.lora import FamilyLoRA
+    dit, drv = _tiny_qwen()                               # two blocks: only block_1 trains
+    net = FamilyLoRA(dit, drv)
+    net.add_trainable(4, 4, blocks={"block_1"})
+    assert len(net.trainable_modules()) == 7 and all(drv.block_of(f) == "block_1" for f, w in net.wrapped.items()
+                                                      if "lora" in w.adapters)
+
+
+def test_train_blocks_reach_the_loop_and_the_metadata(setup):
+    desc, data, models, tmp = setup
+    vals = _values(tmp, MAX_TRAIN_EPOCHS=1, ADAPTIVE_LR=False, KREA2_LOSS_WATCH=False, SAMPLE_ENABLED=False)
+    run = pipeline.build_run(desc, vals, data, models, trigger="tok")
+    cfg_path = run.run_dir / "train_config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["train"]["train_blocks"] = ["block_1"]
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    _run_stages(run)
+    from safetensors import safe_open
+    with safe_open(str(run.run_dir / "tiny_lora.safetensors"), framework="pt") as f:
+        assert f.metadata()["ss_train_blocks"] == "block_1"
+        assert all(".blocks.1." in k for k in f.keys())

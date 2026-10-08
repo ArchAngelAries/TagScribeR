@@ -1,6 +1,8 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/families/qwen_image.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: import paths and driver path; the facts, measurements and presets are unchanged.
+# Brought level with Fizgig 7.0.1 (commit 1c8ec88): the identity block note, Fast Identity Mode (identity_blocks,
+# FAMILY_FAST_ID and its preset) and torch.compile. The Slider preset waits for slider training (port plan stage 5).
 """Qwen Image 2.1: the first family described through FamilyDescription.
 
 Facts from the phase-0 research (26 Sep 2026; full notes in the Desktop fizgig_family_descriptions
@@ -32,6 +34,7 @@ def _preset(rank, lr=1e-4, adaptive=None, epochs=30, edit=False):
         "FAMILY_EMA": "0.98 (recommended)",
         "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": False, "KREA2_AUTO_RECAPTION": False,
         "KREA2_WARMUP_LOOK": False,
+        "FAMILY_FAST_ID": False,
     }
 
 
@@ -78,7 +81,9 @@ QWEN_IMAGE_21 = FamilyDescription(
     n_blocks=32,                      # transformer/config.json num_layers 32, identical single-stream blocks
     block_prefix="transformer_blocks",
     block_note="Modulation is shared across all blocks (one global Linear), so per-block sliders act "
-               "on attention and MLP only. No block map (style / identity) exists yet.",
+               "on attention and MLP only. Identity sits in blocks 10-14 (measured 2 Oct 2026 with the "
+               "Profiler on two character LoRAs: those five alone give 67-89% of the likeness, leaving them "
+               "out removes 82-84%, block 12 the strongest); the rest shape the picture.",
 
     lora=LoRAFormat(
         key_template="transformer.transformer_blocks.{block}.{module}.{ab}.weight",
@@ -97,6 +102,14 @@ QWEN_IMAGE_21 = FamilyDescription(
 
     driver="training.families.qwen_image21.driver:QwenImage21Driver",
     modelspec_arch="Qwen-Image-2.1",
+    # torch.compile (2 Oct 2026, 5090, 40 photos, 0.25 MP, rank 8, checkpoint outside the compiled blocks - no extra
+    # memory): INT8 2.00 -> 2.86 it/s (+43%, settled by epoch 2), bf16 2.04 -> 2.33 (+14%, still rising at epoch 3);
+    # epoch 1 ~0.7 it/s while the blocks compile. Payback ~200 / ~400 steps measured, rounded up.
+    compiles=True,
+    compile_boundary="outside",
+    compile_fullgraph=False,
+    compile_payback_steps={"int8": 300, "bf16": 800},
+    family_options=("COMPILE_BLOCKS",),
     training_adapter="qwen21_training_adapter",
     ema_default="0.98",               # same default as Krea 2 and MiniMax H3 (measured there, 9 Sep 2026)
     training_adapter_note=("Keeps Qwen 2.1 LoRA training stable: frozen at 1.0 for every training step, off for "
@@ -115,6 +128,10 @@ QWEN_IMAGE_21 = FamilyDescription(
     optimizers=("adamw", "adamw8bit"),
     network_types=("lora", "lokr"),
     edit_training=True,             # one checkpoint for text-to-image and edits (up to 10 references)
+    # Fast Identity Mode (2 Oct 2026, Sydney, 119 photos, 0.25 MP, 30 epochs, ArcFace vs her photos): blocks 10-14
+    # alone 2.90 it/s vs 1.84 for every block (+58%), likeness .507/.587/.620 at epochs 10/20/30 vs .490/.596/.556.
+    # One seed per run; Lara (0.5 MP, 15 epochs) matched at epoch 10 and trailed at 15.
+    identity_blocks=tuple(f"block_{i}" for i in range(10, 15)),
     # measured 28 Sep 2026: 40-48 pairs learned a grade on held-out photos in 6-8 epochs at 0.5 MP
     edit_note=("About 40 pairs (20 at least; more if your photos vary a lot). Each photo 1 MP or larger, e.g. "
                "1200x800; bigger is fine, Fizgig resizes them. An original and its edited version must have the "
@@ -184,6 +201,10 @@ QWEN_IMAGE_21 = FamilyDescription(
         # the best-held skin detail at 0.5 MP. Automagic (lower likeness, softer late) and flat 1e-4 (too slow)
         # both lost to it.
         ("✨ Qwen 2.1 Fast (rank 8, adaptive LR)", _preset(8, adaptive=("2e-4", "4e-4"))),
+        # Fast Identity Mode: Fast's recipe on the identity blocks only, at the 0.25 MP it was measured at (Sydney,
+        # see identity_blocks): about 1.5x faster, very close to full-model likeness.
+        ("✨ Qwen 2.1 Fast Identity Mode (rank 8) - very close to full-model likeness, ~1.5x faster",
+         {**_preset(8, adaptive=("2e-4", "4e-4")), "DATASET_MEGAPIXELS": "0.25", "FAMILY_FAST_ID": True}),
         # Standard: rank 16 for bigger or mixed datasets. Fast's range at rank 16 overcooked from ~epoch 15 (skin
         # detail 6.4 -> 4.7 by epoch 30), so the range is halved; Peter has run this at rank 16.
         ("✨ Qwen 2.1 Standard (rank 16, adaptive LR)", _preset(16, adaptive=("1e-4", "2e-4"))),

@@ -1,6 +1,7 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/qwen_image21/model.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: import paths (training.modules.offloading); otherwise unchanged.
+# Changes for TagScribeR: import paths (training.modules.offloading); otherwise unchanged. Fizgig 7.0.1's compile hook
+# (a block with `_handles_checkpointing` is called directly) added.
 # Ported from diffusers `models/transformers/transformer_qwenimage21.py` (main, commit 6256aa7666, 2026-09-18).
 # Copyright 2026 Qwen-Image Team, The HuggingFace Team. Licensed under the Apache License, Version 2.0.
 # Changes for Fizgig: plain torch modules (no diffusers mixins), attention through torch SDPA using the exact
@@ -420,7 +421,9 @@ class QwenImage21DiT(nn.Module):
         for index, block in enumerate(self.transformer_blocks):
             if self.blocks_to_swap:
                 self.offloader.wait_for_block(index)
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if getattr(block, "_handles_checkpointing", False):    # compiled: the wrapper checkpoints itself
+                joint = block(joint, modulation, rotary, mod_mask, segments, key_valid)
+            elif torch.is_grad_enabled() and self.gradient_checkpointing:
                 joint = checkpoint(block, joint, modulation, rotary, mod_mask, segments, key_valid,
                                    use_reentrant=False)
             else:

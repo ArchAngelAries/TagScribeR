@@ -9,7 +9,7 @@ torch = pytest.importorskip("torch")
 from training import params as P  # noqa: E402
 from training import presets, registry  # noqa: E402
 from training.families.krea2 import attention as A  # noqa: E402
-from training.families.krea2 import compile as C  # noqa: E402
+from training import compile as C  # noqa: E402
 from training.families.krea2 import sampling as S  # noqa: E402
 from training.families.krea2.driver import Krea2Driver  # noqa: E402
 from training.families.krea2.model import SingleMMDiTConfig, SingleStreamDiT  # noqa: E402
@@ -445,20 +445,18 @@ def test_compile_blocks_degrades_like_fizgig(monkeypatch, caplog):
     assert list(dit.blocks) == blocks                      # nothing was wrapped on any refusal
 
 
-def test_prepare_training_off_and_on_a_machine_without_triton(driver, monkeypatch):
+def test_compile_on_degrades_on_a_machine_without_triton(driver, monkeypatch):
+    """Compile Blocks On: decided by the driver's plan (Krea 2's own rule), applied after the LoRA; without triton
+    it runs eager. Off never reaches the plan (training/train.py)."""
     dit = _dit()
     net = FamilyLoRA(dit, driver)
     net.add_trainable(4, 4)
     blocks = list(dit.blocks)
-    driver.configure(compile_blocks="Off")
-    driver.prepare_training(dit, net, precision="int8", blocks_to_swap=0, total_steps=10 ** 5, megapixels=0.25,
-                            batch_size=1)
-    assert list(dit.blocks) == blocks and driver._compile_requested is False
+    do, _ = driver.compile_plan("on", 10 ** 5, "int8", 0, mp=0.25)
+    assert do in ("inside", "outside") and driver._compile_requested is True
     monkeypatch.setattr(C, "_triton_importable", lambda: False)
-    driver.configure(compile_blocks="On")
-    driver.prepare_training(dit, net, precision="int8", blocks_to_swap=0, total_steps=10 ** 5, megapixels=0.25,
-                            batch_size=1)
-    assert list(dit.blocks) == blocks and driver._compile_requested is True       # asked for, degraded to eager
+    assert driver.compile_blocks(dit, do, 0, "int8") == 0
+    assert list(dit.blocks) == blocks                                             # asked for, degraded to eager
     loss, _ = driver.training_loss(dit, torch.randn(1, 16, 8, 8), _cond(1), torch.Generator().manual_seed(1))
     assert torch.isfinite(loss)
 
@@ -511,7 +509,8 @@ def test_compile_blocks_param_and_presets(driver):
     p = P.BY_KEY["COMPILE_BLOCKS"]
     assert p.default == "Auto" and p.options[:3] == ("Auto", "On", "Off") and p.family_only == "option"
     assert "AMD" in p.tip and "NVIDIA" in p.tip and "OFF" in p.tip
-    assert P.family_shows(p, desc) and not P.family_shows(p, registry.get("qwen_image21"))
+    assert P.family_shows(p, desc) and P.family_shows(p, registry.get("qwen_image21"))      # Fizgig 7.0.1
+    assert not P.family_shows(p, registry.get("klein9b"))
     new, rep = presets.apply(dict(desc.presets[0][1]), P.defaults(), desc)
     assert new["COMPILE_BLOCKS"] == "Auto" and "COMPILE_BLOCKS" not in rep.ignored and rep.refused == []
     for old, want in (("auto", "Auto"), ("on", "On"), ("OFF", "Off"), ("outside", "Outside"), ("Auto", "Auto"),
@@ -519,9 +518,21 @@ def test_compile_blocks_param_and_presets(driver):
         assert presets.apply({"COMPILE_BLOCKS": old}, P.defaults(), desc)[0]["COMPILE_BLOCKS"] == want
     from training import pipeline
     assert pipeline.driver_options(desc, {**P.defaults(), "COMPILE_BLOCKS": "On"}) == {"compile_blocks": "On"}
-    d = Krea2Driver()
-    d.configure(compile_blocks="Outside")
-    assert d.compile_blocks == "Outside"
+
+
+def test_qwen_compile_follows_the_generic_rule(monkeypatch):
+    """Fizgig 7.0.1 families/driver.py compile_plan with Qwen's measured payback (300 steps INT8, 800 bf16, NF4 not
+    measured), its boundary (outside) and the machine guard; the model calls a compiled block directly."""
+    qwen = registry.get("qwen_image21")
+    d = qwen.load_driver()
+    assert qwen.compiles and qwen.compile_boundary == "outside" and not qwen.compile_fullgraph
+    monkeypatch.setattr(C, "compile_blocker", lambda swap: "block swap is active" if swap else None)
+    assert d.compile_plan("auto", 299, "int8", 0)[0] is False
+    assert d.compile_plan("auto", 300, "int8", 0)[0] == "outside"
+    assert d.compile_plan("auto", 700, "bf16", 0)[0] is False and d.compile_plan("auto", 800, "bf16", 0)[0]
+    assert d.compile_plan("auto", 10 ** 5, "nf4", 0)[0] is False                 # not measured: On still compiles
+    assert d.compile_plan("auto", 10 ** 5, "int8", 4) == (False, "block swap is active")
+    assert d.compile_plan("on", 10, "nf4", 0) == ("outside", "")
 
 
 def test_requirements_carry_fizgigs_triton_line():

@@ -238,7 +238,7 @@ def test_model_rows_default_to_the_checkpoint_and_options_reach_train_kwargs(tmp
     kw, _ = pipeline.train_kwargs(PONY, vals, tmp_path / "run", {**models, "pony_vae": "vae.safetensors"})
     assert kw["vae_path"] == "vae.safetensors" and kw["te_path"] == "pony.safetensors"
     kw, _ = pipeline.train_kwargs(registry.get("qwen_image21"), P.defaults(), tmp_path / "run", {})
-    assert "driver_options" not in kw
+    assert kw["driver_options"] == {"compile_blocks": "Auto"}                 # Qwen's only option (Fizgig 7.0.1)
 
 
 # ---- names -----------------------------------------------------------------------------------------------------

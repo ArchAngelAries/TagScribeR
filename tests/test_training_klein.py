@@ -53,7 +53,8 @@ def test_description_is_valid_and_registered(desc):
     assert (desc.latent_channels, desc.spatial_factor, desc.bucket_step) == (128, 16, 16)
     assert desc.precisions == ("bf16", "fp8", "int8", "nf4") and set(desc.train_memory) == {"fp8", "int8", "nf4"}
     assert desc.auto_precisions == ("fp8", "nf4")                       # Fizgig: fp8 base, NF4 on small cards
-    assert desc.network_types == ("lora",) and desc.ema_default == "" and "automagic3" not in desc.optimizers
+    assert desc.network_types == ("lora", "lokr") and desc.ema_default == "Off"        # Fizgig 7.0.1
+    assert "automagic3" in desc.optimizers and "lion8bit" in desc.optimizers
     assert desc.speed_loras == () and desc.preview_speed() is None
     assert (desc.preview_steps, desc.preview_cfg, desc.preview_width) == (40, 4.5, 768)
     assert {desc.pref_for(r) for r in ("dit", "vae", "text_encoder")} == set(desc.pref_keys)
@@ -65,12 +66,12 @@ def test_seven_presets_in_fizgig_order_with_exact_values(desc):
     names = [n for n, _ in desc.presets]
     assert names == ["✨ Old Reliable (rank 16, full model, single subject)",
                      "✨ Old Reliable - Flavour 8 (rank 8, full model, single subject)",
-                     "✨ Identity (rank 4, single subject)", "✨ Identity (rank 8, harder dataset)",
+                     "✨ Identity (rank 8, single subject)", "✨ Identity (rank 8, harder dataset)",
                      "✨ Multi-Character (rank 16, multi character or concept)", "✨ Style (late timesteps)",
                      "✨ Style+Composition (all timesteps)"]
-    # (rank, lr, epochs, adaptive min, adaptive max, area, min ts, max ts) - lora_trainer_gui.py:857-907
+    # (rank, lr, epochs, adaptive min, adaptive max, area, min ts, max ts) - Fizgig 7.0.1 families/klein.py:192-202
     want = [(16, 1e-4, 55, "1e-4", "4e-4", "Full Model", "", ""), (8, 1e-4, 55, "1e-4", "4e-4", "Full Model", "", ""),
-            (4, 4e-4, 15, "2e-4", "4e-4", "Identity", "", ""), (8, 4e-4, 20, "2e-4", "4e-4", "Identity", "", ""),
+            (8, 4e-4, 15, "2e-4", "4e-4", "Identity", "", ""), (8, 4e-4, 20, "2e-4", "4e-4", "Identity", "", ""),
             (16, 2e-4, 50, "1e-4", "4e-4", "Identity", "", ""), (4, 4e-4, 15, "1e-5", "4e-4", "Style", "0", "400"),
             (4, 4e-4, 15, "1e-5", "4e-4", "Style+Composition", "", "")]
     for (name, v), w in zip(desc.presets, want):
@@ -78,6 +79,8 @@ def test_seven_presets_in_fizgig_order_with_exact_values(desc):
                 v["ADAPTIVE_LR_MAX"], v["TARGET_LAYERS"], v["MIN_TIMESTEP"], v["MAX_TIMESTEP"]) == w, name
         assert v["NETWORK_ALPHA"] == v["NETWORK_DIM"] and v["ADAPTIVE_LR"] is True
         assert (v["SAVE_EVERY_N_EPOCHS"], v["SEED"], v["OPTIMIZER_TYPE"]) == (1, 42, "adamw8bit")
+        assert (v["NETWORK_TYPE"], v["FAMILY_EMA"], v["FAMILY_PRECISION"]) == ("LoRA (standard)", "Off",
+                                                                             "Auto (fits your free VRAM)")
 
 
 def test_every_preset_key_resolves_without_refusals(desc):

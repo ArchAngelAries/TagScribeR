@@ -6,6 +6,9 @@
 # Changes for TagScribeR: Fizgig has no FamilyDescription for Klein (it predates the family layer), so this one is
 # assembled from those sources - every value cites its file; the presets keep Fizgig's names, keys and values verbatim
 # (legacy keys such as the 0-1000 noise-range boxes are mapped onto this app's parameters by training/presets.py).
+# Brought level with Fizgig 7.0.1 families/klein.py (commit 1c8ec88): the Identity preset at rank 8 under its new name,
+# NETWORK_TYPE / FAMILY_PRECISION / BLOCKS_SWAP / FAMILY_EMA in every preset, LoKR, the EMA control (Off by default),
+# the whole optimizer catalog.
 """FLUX.2 Klein Base 9B: the 9B double / single-stream DiT, trained on the Base (undistilled) checkpoint."""
 from training.description import FamilyDescription, LoRAFormat, ModelFile, SamplingSettings
 
@@ -22,7 +25,9 @@ def _preset(rank, lr, epochs, lo, hi, area, min_t="", max_t=""):
         "MAX_TRAIN_EPOCHS": epochs, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
         "ADAPTIVE_LR": True, "ADAPTIVE_LR_MIN": lo, "ADAPTIVE_LR_MAX": hi,
         "TARGET_LAYERS": area, "MIN_TIMESTEP": min_t, "MAX_TIMESTEP": max_t,
-        "OPTIMIZER_TYPE": "adamw8bit",
+        "OPTIMIZER_TYPE": "adamw8bit", "NETWORK_TYPE": "LoRA (standard)",
+        "FAMILY_PRECISION": "Auto (fits your free VRAM)", "BLOCKS_SWAP": "Auto (detect from GPU)",
+        "FAMILY_EMA": "Off",
     }
 
 
@@ -84,7 +89,7 @@ KLEIN_9B = FamilyDescription(
 
     driver="training.families.klein.driver:KleinDriver",
     modelspec_arch="Flux.2-klein-9b",                        # Fizgig training/metadata.py ARCH_KLEIN_9B
-    ema_default="",                                          # Fizgig's Klein trainer has no EMA
+    ema_default="Off",                                       # Fizgig families/klein.py: available, off until an A/B
     implementation="https://github.com/black-forest-labs/flux2",     # Fizgig training/metadata.py IMPL_KLEIN
     precisions=("bf16", "fp8", "int8", "nf4"),
     # Fizgig's Klein default is an fp8 base (FP8 + Scaled on, lora_trainer_gui.py PRESETS), with NF4 on small cards
@@ -105,10 +110,10 @@ KLEIN_9B = FamilyDescription(
     #   weights = 0.41 GB at one byte per weight), never measured. NF4 cannot swap.
     # fp8: ~14 GB observed (Fizgig docs/KLEIN.md, "a 9B LoRA fits 16 GB") - the measurement the int8 row borrows.
     train_memory={"fp8": (((0.5, 14.0),), 0.41), "int8": (((0.5, 14.0),), 0.41), "nf4": (((0.5, 8.5),), 0.0)},
-    # Klein's own list is adamw, adamw8bit and bitsandbytes AdEMAMix8bit / PagedAdEMAMix8bit (lora_trainer_gui.py:2236);
-    # Automagic v3 is not offered for Klein (Fizgig: MiniMax H3 and Krea 2 only).
-    optimizers=("adamw8bit", "adamw", "ademamix8bit", "pagedademamix8bit"),
-    network_types=("lora",),                                 # Fizgig: LoKR is wired for Krea 2 / H3 / Qwen only
+    # Fizgig 7.0.1's Train tab offers its whole optimizer catalog for every family (optimizers.available_optimizers);
+    # Automagic v3 runs Klein's LoRA as one group (Klein declares no optimizer_families)
+    optimizers=("adamw8bit", "adamw", "pagedadamw8bit", "ademamix8bit", "pagedademamix8bit", "lion8bit", "automagic3"),
+    network_types=("lora", "lokr"),                          # Fizgig families/klein.py
     # the Train tab shows these only for this family; they reach KleinDriver.configure (params.DRIVER_OPTIONS)
     family_options=("TARGET_LAYERS", "TRAINING_BLOCKS", "TIMESTEP_SAMPLING", "DISCRETE_FLOW_SHIFT", "SIGMOID_SCALE",
                     "LOGIT_MEAN", "LOGIT_STD", "PRESERVE_DISTRIBUTION", "ATTENTION_MECHANISM"),
@@ -133,7 +138,7 @@ KLEIN_9B = FamilyDescription(
         ("✨ Old Reliable (rank 16, full model, single subject)", _preset(16, 1e-4, 55, "1e-4", "4e-4", "Full Model")),
         ("✨ Old Reliable - Flavour 8 (rank 8, full model, single subject)",
          _preset(8, 1e-4, 55, "1e-4", "4e-4", "Full Model")),
-        ("✨ Identity (rank 4, single subject)", _preset(4, 4e-4, 15, "2e-4", "4e-4", "Identity")),
+        ("✨ Identity (rank 8, single subject)", _preset(8, 4e-4, 15, "2e-4", "4e-4", "Identity")),   # Fizgig 6.8.2
         ("✨ Identity (rank 8, harder dataset)", _preset(8, 4e-4, 20, "2e-4", "4e-4", "Identity")),
         ("✨ Multi-Character (rank 16, multi character or concept)",
          _preset(16, 2e-4, 50, "1e-4", "4e-4", "Identity")),
@@ -161,8 +166,8 @@ KLEIN_9B = FamilyDescription(
          "Fizgig's attention dispatcher has no flash3 branch, so choosing it stops the first step with 'Unsupported "
          "attention mode: flash3' (here too).", f"{_GUI} 10781, Fizgig training/trainer.py 1962, modules/attention.py "
          "dispatch"),
-        ("Not part of this port: accelerate, the fp8 base, TensorBoard / wandb, LoRA dropout and LoRA+, "
-         "regularisation, the Distilled preview model, edit / reference images, the SD3 loss weightings.",
-         "docs/TRAINING_PLAN.md"),
+        ("Not part of this port yet: sliders, the full fine-tune, the workbench tools. Not in current Fizgig either: "
+         "accelerate, TensorBoard / wandb, LoRA dropout and LoRA+, the SD3 loss weightings.",
+         "docs/dev/PORT_PLAN.md"),
     ),
 )

@@ -144,12 +144,12 @@ def test_first_builtin_is_default(qwen):
 
 def test_apply_matches_first_token_and_refuses_strict(qwen):
     cur = P.defaults()
-    new, rep = presets.apply({"ADAPTIVE_LR_MIN": "2e-4", "OPTIMIZER_TYPE": "lion8bit", "NETWORK_DIM": "16",
+    new, rep = presets.apply({"ADAPTIVE_LR_MIN": "2e-4", "OPTIMIZER_TYPE": "sgd", "NETWORK_DIM": "16",
                               "SOME_FUTURE_KEY": 1, "FAMILY_PRECISION": "INT8"}, cur, qwen)
     assert new["ADAPTIVE_LR_MIN"] == "2e-4 - rank 4/8 only"
     assert new["NETWORK_DIM"] == 16
     assert new["FAMILY_PRECISION"] == "INT8 (8-bit, fastest)"
-    assert new["OPTIMIZER_TYPE"] == cur["OPTIMIZER_TYPE"]           # Qwen offers adamw / adamw8bit only
+    assert new["OPTIMIZER_TYPE"] == cur["OPTIMIZER_TYPE"]           # not in the catalog Qwen offers
     assert [r[0] for r in rep.refused] == ["OPTIMIZER_TYPE"]
     assert rep.ignored == ["SOME_FUTURE_KEY"]
     assert rep.messages()[0].startswith("[preset] OPTIMIZER_TYPE")
@@ -200,7 +200,8 @@ def test_last_run_snapshot_records_family():
 
 
 def test_family_options(qwen):
-    assert P.options_for(P.BY_KEY["OPTIMIZER_TYPE"], qwen) == ("adamw", "adamw8bit")
+    assert P.options_for(P.BY_KEY["OPTIMIZER_TYPE"], qwen)[:2] == ("adamw8bit", "adamw")      # Fizgig: the catalog
+    assert "automagic3" in P.options_for(P.BY_KEY["OPTIMIZER_TYPE"], qwen)
     assert P.options_for(P.BY_KEY["FAMILY_PRECISION"], qwen)[0].startswith("Auto")
     assert len(P.options_for(P.BY_KEY["FAMILY_PRECISION"], qwen)) == 4
 

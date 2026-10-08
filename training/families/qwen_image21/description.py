@@ -125,7 +125,8 @@ QWEN_IMAGE_21 = FamilyDescription(
     # peak GB) points - the rank-16 peak at 0.25 MP - and GB saved per swapped block (weights, resolution-free).
     train_memory={"bf16": (((0.25, 14.9), (1.0, 19.0)), 0.44), "int8": (((0.25, 8.6), (1.0, 11.9)), 0.19),
                   "nf4": (((0.25, 6.0), (1.0, 9.5)), 0.0)},
-    optimizers=("adamw", "adamw8bit"),
+    # Fizgig 7.0.1's Train tab offers its whole optimizer catalog for every family (optimizers.available_optimizers)
+    optimizers=("adamw8bit", "adamw", "pagedadamw8bit", "ademamix8bit", "pagedademamix8bit", "lion8bit", "automagic3"),
     network_types=("lora", "lokr"),
     edit_training=True,             # one checkpoint for text-to-image and edits (up to 10 references)
     # Fast Identity Mode (2 Oct 2026, Sydney, 119 photos, 0.25 MP, 30 epochs, ArcFace vs her photos): blocks 10-14

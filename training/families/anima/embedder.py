@@ -2,7 +2,9 @@
 # models/cosmos_predict2.py (the Qwen3-0.6B + T5-tokenizer conditioning recipe), cross-checked against ComfyUI's
 # comfy/text_encoders/anima.py (GPL: facts only - the pad token id and the right-padded / unmasked inference
 # convention). The vendored config is Qwen/Qwen3-0.6B's config.json (Apache-2.0). Code is TagScribeR's own.
-# See THIRD_PARTY_NOTICES.md.
+# See THIRD_PARTY_NOTICES.md. Merged with Fizgig 7.0.1 anima/driver.py (commit 1c8ec88; owner's decision 4): the
+# Qwen3-0.6B runs in fp32 ("in bf16 the first token - Qwen's very large activation - is 16% off and the rest ~1%"), and
+# the T5 vocabulary comes from the Anima repo's own t5_tokenizer/tokenizer.json.
 """Anima text conditioning: Qwen3-0.6B (base) hidden states + T5 token ids.
 
 The prompt is tokenised TWICE: Qwen3 tokens go through the Qwen3 model (its last hidden state after the final norm,
@@ -21,7 +23,11 @@ MAX_LENGTH = 512                               # sd-scripts --qwen3_max_token_le
 QWEN3_REPO = "Qwen/Qwen3-0.6B"                 # the base model shares the instruct model's tokenizer
 T5_REPO = "google/t5-v1_1-xxl"                 # sd-scripts docs: "vocabulary from google/t5-v1_1-xxl", files only
 QWEN3_TOKENIZER_FILES = ("tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt")
-T5_TOKENIZER_FILES = ("spiece.model", "tokenizer_config.json", "special_tokens_map.json")
+T5_TOKENIZER_FILES = ("tokenizer.json",)
+# the Anima repo's tokenizers (Fizgig 7.0.1 anima/driver.py HELPER): its T5 vocabulary as one tokenizer.json, whose
+# post-processor appends </s>
+ANIMA_HELPER = "circlestone-labs/Anima-Base-v1.0-Diffusers"
+T5_FALLBACK_REPO = T5_REPO                   # the earlier route (sentencepiece), used only when the above is unreachable
 
 # Qwen/Qwen3-0.6B config.json (the Anima text encoder is Qwen3-0.6B-Base: same architecture)
 QWEN3_06B_CONFIG = {
@@ -41,6 +47,28 @@ def tokenizer_source(model_path: str, folder: str, repo: str, marker: str) -> st
     return local if os.path.isfile(os.path.join(local, marker)) else repo
 
 
+def load_t5_tokenizer(model_path):
+    """The T5 token vocabulary: a t5_tokenizer/ folder next to the text-encoder file (tokenizer.json, or the older
+    spiece files), else the Anima repo's t5_tokenizer/tokenizer.json (Hugging Face cache first), else google/t5-v1_1-xxl."""
+    from transformers import AutoTokenizer, PreTrainedTokenizerFast
+
+    def fast(path):
+        return PreTrainedTokenizerFast(tokenizer_file=path, eos_token="</s>", pad_token="<pad>", unk_token="<unk>")
+    local = os.path.join(os.path.dirname(os.path.abspath(model_path)), "t5_tokenizer")
+    if os.path.isfile(os.path.join(local, "tokenizer.json")):
+        return fast(os.path.join(local, "tokenizer.json"))
+    if os.path.isfile(os.path.join(local, "tokenizer_config.json")):
+        return AutoTokenizer.from_pretrained(local)
+    from huggingface_hub import hf_hub_download
+    for offline in (True, False):
+        try:
+            return fast(hf_hub_download(ANIMA_HELPER, "t5_tokenizer/tokenizer.json", local_files_only=offline))
+        except Exception:
+            continue
+    from training.hf_cache import from_pretrained_cache_first
+    return from_pretrained_cache_first(AutoTokenizer, T5_FALLBACK_REPO)
+
+
 def _tokenize(tokenizer, captions, max_length):
     enc = tokenizer(list(captions), return_tensors="pt", truncation=True, padding="max_length",
                     max_length=max_length)
@@ -57,7 +85,8 @@ class AnimaTextEncoder:
         self.device, self.dtype, self.max_length = torch.device(device), dtype, max_length
         if model is None:
             model, qwen_tokenizer, t5_tokenizer = self._load(model_path, dtype)
-        self.model = model.to(self.device).eval().requires_grad_(False)
+        # fp32, as ComfyUI and Fizgig run it; the states are stored in `dtype`
+        self.model = model.to(self.device, torch.float32).eval().requires_grad_(False)
         self.qwen_tokenizer, self.t5_tokenizer = qwen_tokenizer, t5_tokenizer
         # RIGHT padding: the real tokens sit at positions 0..n-1 exactly as in unpadded inference (ComfyUI feeds no
         # padding at all). A left-padding tokenizer default would shift every position.
@@ -72,17 +101,17 @@ class AnimaTextEncoder:
 
         from training.families.qwen_image21.embedder import load_split_weights
         from training.hf_cache import from_pretrained_cache_first
-        sources = {"qwen": tokenizer_source(model_path, "qwen3_tokenizer", QWEN3_REPO, "tokenizer_config.json"),
-                   "t5": tokenizer_source(model_path, "t5_tokenizer", T5_REPO, "tokenizer_config.json")}
+        src = tokenizer_source(model_path, "qwen3_tokenizer", QWEN3_REPO, "tokenizer_config.json")
         toks = {}
-        for name, src in sources.items():
+        for name in ("qwen", "t5"):
             try:
-                toks[name] = from_pretrained_cache_first(AutoTokenizer, src)    # offline once cached (Fizgig #174)
+                toks[name] = (from_pretrained_cache_first(AutoTokenizer, src) if name == "qwen"   # offline once cached
+                              else load_t5_tokenizer(model_path))
             except Exception as e:
                 repo, files, folder = ((QWEN3_REPO, QWEN3_TOKENIZER_FILES, "qwen3_tokenizer") if name == "qwen"
-                                       else (T5_REPO, T5_TOKENIZER_FILES, "t5_tokenizer"))
+                                       else (f"{ANIMA_HELPER} (t5_tokenizer/)", T5_TOKENIZER_FILES, "t5_tokenizer"))
                 raise RuntimeError(
-                    f"Couldn't load the {'Qwen3' if name == 'qwen' else 'T5'} tokenizer from {src} "
+                    f"Couldn't load the {'Qwen3' if name == 'qwen' else 'T5'} tokenizer "
                     f"({type(e).__name__}: {e}). Offline: download {', '.join(files)} from "
                     f"https://huggingface.co/{repo} into a {folder}/ folder next to {model_path}. (Only the "
                     f"tokenizer files are needed, not the model weights.)") from e
@@ -93,7 +122,7 @@ class AnimaTextEncoder:
         for k, v in load_split_weights(str(model_path)).items():
             k = k[len("model."):] if k.startswith("model.") else k
             if not k.startswith("lm_head."):
-                sd[k] = v.to(dtype) if v.is_floating_point() else v
+                sd[k] = v.to(torch.float32) if v.is_floating_point() else v       # run in fp32 (Fizgig 7.0.1)
         info = model.load_state_dict(sd, strict=False, assign=True)
         if info.missing_keys or info.unexpected_keys:
             raise RuntimeError(f"Qwen3-0.6B checkpoint mismatch: missing={info.missing_keys[:8]}, "

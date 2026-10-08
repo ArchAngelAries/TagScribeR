@@ -620,8 +620,20 @@ variants keep their own sampler.</li>
 <li><b>Files:</b> the Anima DiT, the Qwen-Image VAE and the Qwen3-0.6B text encoder (all from the Anima repo).</li>
 <li>Anima is tag-trained: lowercase tags with spaces, artists as <code>@name</code>. The preview negative prompt is
 tag-style for the same reason.</li>
-<li>The model's author recommends a light touch: the presets use low learning rates and are community starting
-points, not recipes measured by Fizgig.</li>
+<li>The model's author recommends a light touch. <b>Presets:</b> <i>Character</i> (rank 16, 1e-4, 50 epochs),
+<i>Style</i> (rank 16, 5e-5) and <i>Official</i> (the model card's rank 32 at 2e-5) are Fizgig's; <i>Fast</i>,
+<i>Standard</i> and <i>Style (gentle LR)</i> are TagScribeR's earlier ones. All are community starting points, not
+measured recipes.</li>
+<li>The <b>Qwen3 text encoder runs in full precision</b> (float32) while captions are cached, as Fizgig does: in bf16
+its output drifts noticeably. It is small, so this costs little. Captions cached by an older version are re-cached
+once.</li>
+<li>The T5 tokenizer comes from the Anima repo (one small file, downloaded once). To stay offline, put
+<code>tokenizer.json</code> in a <code>t5_tokenizer</code> folder next to the text-encoder file.</li>
+<li><b>Base precision:</b> bf16, INT8 or 4-bit. Fizgig measured about 8.9 GB peak on bf16, 7.3 GB on INT8 and 6.6 GB
+on 4-bit.</li>
+<li><b>LoKR</b> works too. LoRAs made with AI-Toolkit load as frozen adapters.</li>
+<li><b>Previews:</b> 20 steps at CFG 4.5 with the model card's negative prompt. Set the optional <b>Anima Turbo
+LoRA</b> file and raise its strength to preview in 10 steps at CFG 1 (strength 0, off, by default).</li>
 </ul>
 """),
     "settings": ("Settings", "Settings", """

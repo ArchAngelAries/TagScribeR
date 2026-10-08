@@ -99,6 +99,21 @@ class AnimaDriver(FamilyDriver):
                                width=width, height=height, steps=steps, cfg_scale=cfg, seed=seed, shift=shift,
                                noise=noise, on_step=on_step)
 
+    # ---- LoRA ---------------------------------------------------------------------------------------
+    def alias_flat(self, flat):
+        """diffusers naming (AI-Toolkit's Anima files before its ComfyUI rename): transformer_blocks_N_attn1_to_q ->
+        blocks_N_self_attn_q_proj (Fizgig 7.0.1 anima/driver.py)."""
+        import re
+        m = re.match(r"^transformer_blocks_(\d+)_(attn1|attn2|ff)_(.+)$", flat)
+        if not m:
+            return None
+        blk, part, leaf = m.groups()
+        if part == "ff":
+            leaf = {"net_0_proj": "layer1", "net_2": "layer2"}.get(leaf)
+            return f"blocks_{blk}_mlp_{leaf}" if leaf else None
+        leaf = {"to_q": "q_proj", "to_k": "k_proj", "to_v": "v_proj", "to_out_0": "output_proj"}.get(leaf)
+        return f"blocks_{blk}_{'self_attn' if part == 'attn1' else 'cross_attn'}_{leaf}" if leaf else None
+
     @torch.no_grad()
     def decode(self, vae, latents, width, height):
         from PIL import Image

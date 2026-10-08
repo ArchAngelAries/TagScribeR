@@ -49,6 +49,16 @@ called verified.
 
 The owner does not train Klein, so its real-hardware check waits on other users; it stays marked experimental.
 
+## Stage 3 status (2026-10-08)
+
+Done on `port/stage1-bt67en`, unit-tested only. SDXL: Fizgig's Strong / Standard presets first (TagScribeR's kept),
+INT8 / NF4 with Fizgig's memory table, LoKR with kohya stems, the whole optimizer catalog, DPM++ 2M SDE Karras previews
+for SDXL 1.0 (diffusers' scheduler); every variant, v-pred, LoCon and the 225-token captions kept. Anima: the Qwen3
+text encoder in float32 (text-cache revision "1", so old caches re-cache once), the Anima repo's T5 tokenizer
+(offline first, google/t5-v1_1-xxl as the last fallback), Fizgig's three presets first with TagScribeR's three kept,
+INT8 / NF4, LoKR, AI-Toolkit LoRA names, 20-step CFG 4.5 previews and the optional Turbo LoRA (strength 0 by default).
+Needs real SDXL and Anima runs before either is called verified.
+
 ## Decisions the owner has made
 
 1. **Keep what works.** When Fizgig removed something that still works in TagScribeR, keep it (fp8 as a selectable

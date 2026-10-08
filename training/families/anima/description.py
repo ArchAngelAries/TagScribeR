@@ -1,7 +1,10 @@
 # Anima (circlestone-labs/Anima): a 2B Cosmos-Predict2 fine-tune for anime / illustration.
 #
-# Fizgig has NO Anima code, so the architecture facts below were established for this port from primary sources
-# (checked 5 Oct 2026). Training BEHAVIOUR (loop, Adaptive LR, EMA, loss watch, cached conditioning, previews, preset
+# Written before Fizgig had Anima; merged with Fizgig 7.0.1 families/anima.py and anima/driver.py (commit 1c8ec88;
+# owner's decision 4): Fizgig's presets and preview settings, the text encoder in fp32, the Anima repo's T5 tokenizer,
+# INT8 / NF4 bases with Fizgig's measured memory, LoKR, the Turbo LoRA for previews, AI-Toolkit LoRA names. TagScribeR's
+# model code, batching, timestep window and fp8 refusal are kept. The architecture facts below were established for
+# this port from primary sources (checked 5 Oct 2026). Training BEHAVIOUR (loop, Adaptive LR, EMA, loss watch, cached conditioning, previews, preset
 # shapes) is Fizgig's, through the generic layer. Two independent trainers agree on every training-critical fact.
 #
 # VERIFIED FACTS (confidence: H = two independent trainers/loaders agree, M = one source or inferred)
@@ -52,11 +55,28 @@
 #  * recommended preview shift (3.0 here vs 5.0 in sd-scripts' script); training t has no shift in either trainer.
 """Anima: the 2B Cosmos-Predict2 anime / illustration model, trained on the base checkpoint."""
 from training.description import (
-    FamilyDescription, LoRAFormat, ModelFile, SamplingSettings,
+    FamilyDescription, LoRAFormat, ModelFile, SamplingSettings, SpeedLoRA,
 )
 
 _REPO = "circlestone-labs/Anima"
 _CARD = "https://huggingface.co/circlestone-labs/Anima"
+_LORAS = "circlestone-labs/Anima-Official-LoRAs"
+_SHIFT = (("shift", 3.0),)
+
+
+def _fizgig_preset(rank, lr, epochs=30, mp="1.0"):
+    # Fizgig 7.0.1 families/anima.py _preset: alpha = rank, flat LR, fused AdamW, per-image LR off, 1 MP. Its comment:
+    # "community values (Oct 2026), higher than the card's light-touch 2e-5 ... Not yet measured in Fizgig"
+    return {
+        "NETWORK_DIM": rank, "NETWORK_ALPHA": rank, "NETWORK_TYPE": "LoRA (standard)", "LEARNING_RATE": lr,
+        "MAX_TRAIN_EPOCHS": epochs, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42, "ADAPTIVE_LR": False,
+        "MIN_TIMESTEP": "", "MAX_TIMESTEP": "",
+        "OPTIMIZER_TYPE": "adamw", "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0,
+        "DATASET_MEGAPIXELS": mp, "BLOCKS_SWAP": "Auto (detect from GPU)",
+        "FAMILY_PRECISION": "Auto (fits your free VRAM)", "FAMILY_EMA": "0.98 (recommended)",
+        "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": False, "KREA2_AUTO_RECAPTION": False,
+        "KREA2_WARMUP_LOOK": False,
+    }
 
 
 def _preset(rank, epochs, adaptive, lo, hi, lr, mp):
@@ -102,6 +122,10 @@ ANIMA = FamilyDescription(
                   "from the Hugging Face cache, or qwen3_tokenizer/ and t5_tokenizer/ folders next to this file "
                   "(tokenizer files only: the T5 one is just the token vocabulary, no T5 model is loaded).",
                   role="text_encoder"),
+        ModelFile("anima_turbo_lora", "Anima Turbo LoRA (previews)", False, _LORAS,
+                  "anima-turbo-lora-v0.2.safetensors", 0.15,
+                  "Optional: fast previews (about 10 steps, no CFG). Previews still start on the plain model "
+                  "(Turbo strength 0); raise Turbo strength under Samples to use it.", role="speed_lora"),
     ),
     text_encoder_label="Qwen3-0.6B",
     vae_label="Qwen-Image VAE",
@@ -134,17 +158,24 @@ ANIMA = FamilyDescription(
     ),
 
     driver="training.families.anima.driver:AnimaDriver",
-    modelspec_arch="Anima",
+    modelspec_arch="anima",                                  # Fizgig 7.0.1 (lower case)
     ema_default="0.98",                                      # Fizgig's Krea 2 default; Fizgig never measured it on Anima
     implementation="https://huggingface.co/circlestone-labs/Anima",
-    precisions=("bf16",),                                    # 2B (4.2 GB): no quantisation or block swap needed
-    train_memory={},                                         # not measured: Auto takes bf16
-    optimizers=("adamw8bit", "adamw", "pagedadamw8bit", "ademamix8bit", "pagedademamix8bit", "lion8bit"),
-    network_types=("lora",),
+    # Fizgig 7.0.1: bf16, INT8 and NF4 (2.1B DiT, 4.2 GB in bf16). Measured 5 Oct 2026 on a 5090 (rank 16, adamw8bit,
+    # gradient checkpointing, 1024 previews), peak GB including the preview, which sets it (training alone: bf16 5.1 /
+    # 5.7, INT8 3.4 / 4.0, NF4 2.9 / 3.5 at 0.5 / 1 MP). No block swap. fp8 files stay refused.
+    precisions=("bf16", "int8", "nf4"),
+    train_memory={"bf16": (((0.5, 8.9), (1.0, 8.9)), 0.0), "int8": (((0.5, 7.3), (1.0, 7.3)), 0.0),
+                  "nf4": (((0.5, 6.6), (1.0, 6.6)), 0.0)},
+    # the text encoder runs in fp32 and the T5 vocabulary is the Anima repo's (Fizgig 7.0.1): caches written before
+    # are re-encoded once
+    text_cache_rev="1",
+    optimizers=("adamw8bit", "adamw", "pagedadamw8bit", "ademamix8bit", "pagedademamix8bit", "lion8bit", "automagic3"),
+    network_types=("lora", "lokr"),
 
     sampling=(
-        SamplingSettings("Anima base", steps=30, cfg=4.0, sampler="euler", scheduler="simple",
-                         options=(("shift", 3.0),), negative_prompt=True,
+        SamplingSettings("Anima base", steps=30, cfg=4.5, sampler="euler", scheduler="simple",
+                         options=_SHIFT, negative_prompt=True,
                          note="Euler on the flow schedule shifted by 3 (ComfyUI's Anima setting). The model card "
                               "suggests 30-50 steps, CFG 4-5 and the er_sde / euler_a / dpmpp_2m_sde samplers; Turbo "
                               "checkpoints want CFG 1 and 8-12 steps. Anima negatives are TAGS (worst quality, low "
@@ -152,15 +183,41 @@ ANIMA = FamilyDescription(
                          source=f"{_CARD} (README generation settings); ComfyUI supported_models.Anima "
                                 f"sampling_settings"),
     ),
-    preview_steps=30,
-    preview_cfg=4.0,
-    preview_negative="worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, watermark, "
-                     "signature, text",
+    speed_loras=(
+        SpeedLoRA(
+            name="Anima Turbo LoRA v0.2",
+            repo=_LORAS, file="anima-turbo-lora-v0.2.safetensors",
+            pairs_with="Anima Base v1.0",
+            strength=1.0,
+            settings=SamplingSettings("Turbo", steps=10, cfg=1.0, sampler="euler", scheduler="simple", options=_SHIFT,
+                                      note="CFG 1, 8-12 steps (the official card).",
+                                      source=f"https://huggingface.co/{_LORAS}"),
+            load_unmerged=True,
+            pref_key="anima_turbo_lora",
+            caveats=("Shortens limbs a little (community).",),
+            source=f"https://huggingface.co/{_LORAS} (Fizgig 7.0.1 families/anima.py)",
+        ),
+    ),
+    preview_speed_lora="Anima Turbo LoRA v0.2",
+    # Fizgig 7.0.1: with the Turbo LoRA file set, previews still default to the plain model (strength 0), so its steps
+    # are the plain model's 20
+    preview_speed_steps=20,
+    preview_speed_strength=0.0,
+    preview_steps=20,                                        # Fizgig 7.0.1 (the community's 16-20; CFG 4.5)
+    preview_cfg=4.5,
+    preview_negative=("worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, "
+                      "chromatic aberration"),               # the model card's, as Fizgig
     preview_width=1024,
     preview_height=1024,
 
     presets=(
-        # NOT measured by Fizgig; community starting points. The model author's own guidance: "a light touch" - rank 32
+        # Fizgig 7.0.1's (community values, not measured in Fizgig either): characters at rank 16 and 1e-4 for 50 epochs
+        # (the guides aim for ~1,000-1,500 steps on 20-30 images), styles at 5e-5, the card's rank 32 at 2e-5. The
+        # first is a first visit's preset. Slider and Fine-tune presets wait for those modes (port plan stage 5)
+        ("✨ Anima Character (rank 16, 1e-4)", _fizgig_preset(16, 1e-4, epochs=50)),
+        ("✨ Anima Style (rank 16, 5e-5)", _fizgig_preset(16, 5e-5)),
+        ("✨ Anima Official (rank 32, 2e-5)", _fizgig_preset(32, 2e-5)),
+        # TagScribeR's earlier presets: community starting points. The model author's own guidance: "a light touch" - rank 32
         # starts at LR 2e-5 (model card); sd-scripts' documented example is rank 8, LR 1e-4 at alpha 1 (a 1/8 scale -
         # these presets use alpha = rank, scale 1, so they start lower).
         # THE DEFAULT: rank 8, adaptive LR between 1e-5 and 2e-4 (starts at ~4.5e-5), 24 epochs, 0.5 MP.
@@ -173,7 +230,7 @@ ANIMA = FamilyDescription(
 
     # tokenizer files only (no model weights): fetched with the helper models so first use works offline
     helper_files=(("Qwen/Qwen3-0.6B", ("tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt")),
-                  ("google/t5-v1_1-xxl", ("spiece.model", "tokenizer_config.json", "special_tokens_map.json"))),
+                  ("circlestone-labs/Anima-Base-v1.0-Diffusers", ("t5_tokenizer/tokenizer.json",))),
 
     notes=(
         ("EXPERIMENTAL: the architecture, conditioning and objective were verified from two independent trainers "
@@ -193,7 +250,9 @@ ANIMA = FamilyDescription(
         ("Previews sample the training model with plain Euler; the card prefers er_sde / euler_a, so a ComfyUI render "
          "will look slightly different. Previews use the Train tab's negative prompt - Anima wants a tag negative.",
          "model card"),
-        ("Not part of this port: fp8 / quantised bases, block swap, torch.compile, training the LLM adapter, LoKR, "
-         "Automagic per-family groups.", "docs/TRAINING_PLAN.md"),
+        ("Text encoder: Qwen3-0.6B in fp32, as ComfyUI and Fizgig run it (in bf16 the first token is 16% off); the T5 "
+         "token vocabulary is the Anima repo's own tokenizer.json.", "Fizgig 7.0.1 anima/driver.py"),
+        ("Not part of this port: fp8 bases (refused), block swap, torch.compile, training the LLM adapter, sliders "
+         "and full fine-tune (port plan stage 5).", "docs/dev/PORT_PLAN.md"),
     ),
 )

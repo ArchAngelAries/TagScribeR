@@ -61,9 +61,12 @@ def test_description_is_valid(desc):
     assert desc.validate() == []
     assert registry.by_arch_id("anima") is desc and "_" not in desc.arch_id
     assert (desc.latent_channels, desc.spatial_factor, desc.bucket_step, desc.n_blocks) == (16, 8, 16, 28)
-    assert desc.precisions == ("bf16",) and desc.train_memory == {} and desc.network_types == ("lora",)
+    assert desc.precisions == ("bf16", "int8", "nf4") and desc.network_types == ("lora", "lokr")   # Fizgig 7.0.1
+    assert desc.train_memory["nf4"][0] == ((0.5, 6.6), (1.0, 6.6)) and desc.modelspec_arch == "anima"
+    assert (desc.preview_steps, desc.preview_cfg, desc.text_cache_rev) == (20, 4.5, "1")
+    assert desc.preview_speed().pref_key == "anima_turbo_lora" and desc.preview_speed_defaults() == (20, 0.0)
     assert desc.lora.kohya and desc.lora.file_prefix == "lora_unet_" and len(desc.lora.block_modules) == 10
-    assert {desc.pref_for(r) for r in ("dit", "vae", "text_encoder")} == set(desc.pref_keys)
+    assert {desc.pref_for(r) for r in ("dit", "vae", "text_encoder", "speed_lora")} == set(desc.pref_keys)
     assert desc.default_sampling().options == (("shift", 3.0),) and desc.experimental
     assert any("CAPTION_SHUFFLE_VARIANTS" in n for n, _ in desc.notes)
 
@@ -76,8 +79,9 @@ def test_preset_keys_resolve_without_refusals(desc):
         assert rep.refused == [], (name, rep.refused)
     tp = presets.TrainingPresets(desc)
     new, rep = presets.apply(tp.load(tp.default_name), P.defaults(), desc)
-    assert tp.default_name == "✨ Anima Fast (rank 8, adaptive LR)"
-    assert (new["NETWORK_DIM"], new["NETWORK_ALPHA"], new["ADAPTIVE_LR"]) == (8, 8, True)
+    assert tp.default_name == "✨ Anima Character (rank 16, 1e-4)"                      # Fizgig 7.0.1's first
+    assert "✨ Anima Fast (rank 8, adaptive LR)" in tp.names()                            # TagScribeR's kept
+    assert (new["NETWORK_DIM"], new["NETWORK_ALPHA"], new["ADAPTIVE_LR"]) == (16, 16, False)
     assert new["CAPTION_SHUFFLE_VARIANTS"] == 0                        # shuffling stays off
     std = dict(desc.presets)["✨ Anima Standard (rank 32, LR 2e-5)"]
     assert (std["NETWORK_DIM"], std["LEARNING_RATE"], std["ADAPTIVE_LR"]) == (32, 2e-5, False)
@@ -90,9 +94,9 @@ def test_train_kwargs_mapping(desc, tmp_path):
     models = {"anima_dit": "dit.safetensors", "anima_vae": "vae.safetensors", "anima_text_encoder": "te.safetensors"}
     kw, prompts = pipeline.train_kwargs(desc, vals, tmp_path / "run", models)
     assert kw["family"] == "anima" and kw["dit_path"] == "dit.safetensors" and kw["te_path"] == "te.safetensors"
-    assert kw["vae_path"] == "vae.safetensors" and kw["precision"] == "bf16" and kw["network_type"] == "lora"
-    assert (kw["network_dim"], kw["adaptive_lr"], kw["ema_decay"]) == (8, True, 0.98)
-    assert kw["sample_steps"] == 30 and kw["sample_cfg_scale"] == 4.0 and "speed_lora" not in kw
+    assert kw["vae_path"] == "vae.safetensors" and kw["precision"] == "auto" and kw["network_type"] == "lora"
+    assert kw["network_dim"] == 16 and "adaptive_lr" not in kw and kw["ema_decay"] == 0.98
+    assert kw["sample_steps"] == 20 and kw["sample_cfg_scale"] == 4.5 and "speed_lora" not in kw
     assert pipeline._driver_supports_batching(desc) is True
 
 
@@ -279,3 +283,36 @@ def test_text_encoder_layout_and_empty_caption():
     conds = d.encode_text(te, ["a girl", "x"])
     assert conds[0]["prompt_embeds"].shape == (16, 24) and conds[0]["t5_ids"].dtype == torch.int32
     assert conds[0]["attn_mask"].dtype == torch.bool and conds[1]["t5_mask"].dtype == torch.bool
+
+
+
+def test_ai_toolkit_names_and_fp32_text_encoder():
+    """Fizgig 7.0.1: AI-Toolkit's diffusers-named Anima LoRAs map onto the blocks; the Qwen3 encoder runs in fp32 and
+    the states are stored in bf16."""
+    drv = registry.get("anima").load_driver()
+    assert drv.alias_flat("transformer_blocks_3_attn1_to_q") == "blocks_3_self_attn_q_proj"
+    assert drv.alias_flat("transformer_blocks_3_attn2_to_out_0") == "blocks_3_cross_attn_output_proj"
+    assert drv.alias_flat("transformer_blocks_0_ff_net_2") == "blocks_0_mlp_layer2"
+    assert drv.alias_flat("blocks_0_mlp_layer2") is None
+    from training.families.anima.embedder import AnimaTextEncoder
+
+    class _Tok:
+        pad_token, eos_token, pad_token_id, padding_side = "<p>", "<p>", 0, "left"
+
+        def __call__(self, caps, **kw):
+            n = len(caps)
+            return {"input_ids": torch.ones(n, 4, dtype=torch.long), "attention_mask": torch.ones(n, 4, dtype=torch.long)}
+
+    class _LM(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w = torch.nn.Linear(2, 2)
+
+        def forward(self, input_ids, attention_mask):
+            from types import SimpleNamespace
+            return SimpleNamespace(last_hidden_state=torch.ones(*input_ids.shape, 3, dtype=self.w.weight.dtype))
+    te = AnimaTextEncoder(device="cpu", model=_LM().to(torch.bfloat16), qwen_tokenizer=_Tok(), t5_tokenizer=_Tok(),
+                          max_length=4)
+    assert te.model.w.weight.dtype == torch.float32
+    emb = te.encode(["a cat"])[0]
+    assert emb.dtype == torch.bfloat16

@@ -556,7 +556,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     if speed_lora and encoded is not None:
         _ss = speed_desc.strength if speed_lora_strength is None else speed_lora_strength
         n = net.add_file(speed_lora, SPEED, _ss)
-        driver.frozen_file_added(dit, speed_lora, _ss, "speed")
+        if n:
+            driver.frozen_file_added(dit, speed_lora, _ss, "speed")
         if n == 0:
             net.remove(SPEED)
             logger.warning(f"[sample] {os.path.basename(speed_lora)} matched no {desc.display_name} layers "

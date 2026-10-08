@@ -75,6 +75,14 @@ License v3.0. `training/families/minimax_h3/model.py`, `vae.py` and `sampling.py
 headers. This concerns the source code only. It is separate from the licence of the MiniMax H3 model weights, which
 are not included and whose terms the MiniMax team sets.
 
+- **larryvrh's ComfyUI-MiniMax-H3-Turbo node, Apache License 2.0**: `training/families/minimax_h3/turbo.py` ports
+  Fizgig's run-time AdaLN injection for the Turbo LoRA and other frozen files (`src/fizgig/minimax/common.py`:
+  `_load_h3_egrid`, `_turbo_adaln_forward`, `turbo_adaln_patch`, `turbo_adaln_unpatch`; `minimax/driver.py`:
+  `_adaln_pairs`), which Fizgig's source attributes to that node.
+  `training/families/minimax_h3/assets/h3_silu_temb_grid.safetensors` (5.5 MB: the full model's silu(t_emb) rows on a
+  1025-point grid) is the data file Fizgig bundles from the same node (`src/fizgig/assets/`, byte-identical). The
+  Turbo LoRA itself (`larryvrh/MiniMax-H3-Turbo-Lora`) is not included.
+
 ## FLUX.2 Klein (Black Forest Labs FLUX): Apache License 2.0
 
 Upstream: https://github.com/black-forest-labs/flux. Copyright Black Forest Labs.

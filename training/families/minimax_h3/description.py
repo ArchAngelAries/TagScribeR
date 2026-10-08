@@ -3,11 +3,12 @@
 # loader.py, sampling.py, embedder.py) and training/metadata.py (ARCH_MINIMAX).
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: still images only, so the clip, voice, audio-VAE, distillation, multi-concept, fine-tune and
-# Slider parts are left out (port plan stages 5-6); Fizgig's family options are this app's H3_* parameters
+# Slider parts are left out (port plan stages 5-6); the Turbo preview sampler is res_multistep like the base previews
+# (Fizgig's settings text says euler, but its sampler runs res_multistep, minimax/sampling.py); Fizgig's family options are this app's H3_* parameters
 # (training/params.py, same keys and labels); the HQQ base, the H2D block rings and the 66 GB bf16 DiT are not ported
 # (int8 and NF4 only); the LoRA file keeps this app's "minimaxh3" name suffix (Fizgig: "mmh3").
 """MiniMax H3 (image LoRA training only): the 33B omni DiT trained on single still images."""
-from training.description import FamilyDescription, LoRAFormat, ModelFile, SamplingSettings
+from training.description import FamilyDescription, LoRAFormat, ModelFile, SamplingSettings, SpeedLoRA
 from training.params import H3_ADAPTERS, H3_STRUCTURES
 
 _REPO = "Comfy-Org/MiniMax-H3"
@@ -61,6 +62,12 @@ MINIMAX_H3 = FamilyDescription(
                   "Used for caching and preview prompts only, then unloaded: needs about 15 GB of free VRAM (less "
                   "streams its layers from the CPU, slower, ~19 GB of RAM). The tokenizer files come from the "
                   "Hugging Face cache, or a qwen3vl_tokenizer/ folder next to this file.", role="text_encoder"),
+        ModelFile("minimax_turbo_lora", "Turbo LoRA (previews)", False, "larryvrh/MiniMax-H3-Turbo-Lora",
+                  "minimax_h3_turbo_v4_step600.safetensors", 0.78,
+                  "Optional: fast in-training previews. With it set, previews render in 6 steps with the community "
+                  "Turbo LoRA at 75% on top of your LoRA, the pairing fast ComfyUI renders use. Previews only: it is "
+                  "switched in for the render and out again, and your saved LoRA never contains it. Steps and "
+                  "strength are on the Samples settings.", role="speed_lora"),
         ModelFile("minimax_circlestone_adapter", "Training adapter (Circlestone)", False,
                   "circlestone-labs/MiniMax-H3-Image-Training-Adapter",
                   "minimax_h3_image_training_adapter.safetensors", 0.62,
@@ -134,6 +141,28 @@ MINIMAX_H3 = FamilyDescription(
                               "was mostly trained on: it answers 'is the LoRA learning?', not final quality.",
                          source="Fizgig minimax/sampling.py sample_schedule / _sample_image_impl"),
     ),
+    speed_loras=(
+        SpeedLoRA(
+            name="H3 Turbo LoRA (6-step)",
+            repo="larryvrh/MiniMax-H3-Turbo-Lora",
+            file="minimax_h3_turbo_v4_step600.safetensors",
+            pairs_with="MiniMax H3 fl2va",
+            strength=0.75,
+            settings=SamplingSettings("Turbo 6-step", steps=6, cfg=1.0, sampler="res_multistep", scheduler="simple",
+                                      note="CFG-free on the same sampler and schedule; the old previews' 6 steps at "
+                                           "0.75.",
+                                      source="Fizgig families/minimax.py speed_loras (the original H3 trainer's "
+                                             "load_preview_turbo)"),
+            load_unmerged=True,
+            pref_key="minimax_turbo_lora",
+            caveats=("Its AdaLN rows are 2688 wide (the full model's silu(t_emb) space): on the pruned base they are "
+                     "injected at run time from the bundled grid (training/families/minimax_h3/turbo.py), as Fizgig "
+                     "and larryvrh's ComfyUI node do.",),
+            source="https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora",
+        ),
+    ),
+    preview_speed_lora="H3 Turbo LoRA (6-step)",
+    samples_turbo_pace=True,                                 # Fizgig: "N steps at M%" (FAMILY_TURBO_STEPS / _PACE)
     preview_steps=20,
     preview_cfg=1.0,
     preview_width=768,                                       # Fizgig 7.0.1 (the old Samples default)

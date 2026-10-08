@@ -117,6 +117,17 @@ def training_adapter_key(desc, values) -> str:
     return desc.training_adapter if values.get("FAMILY_TRAINING_ADAPTER", True) else ""
 
 
+def turbo_strength(desc, values) -> float:
+    """The preview speed LoRA's strength (0 = previews without it): the Samples tab's Turbo strength (-1 = the family
+    default), or for a family with the "N steps at M%" row (samples_turbo_pace) its percentage."""
+    default = desc.preview_speed_defaults()[1] if desc.preview_speed() else 0.0
+    if desc.samples_turbo_pace:
+        raw = values.get("FAMILY_TURBO_PACE")
+        return default if raw in (None, "") else float(raw) / 100.0
+    ts = _num(values, "FAMILY_TURBO_STRENGTH")
+    return default if ts < 0 else ts
+
+
 def driver_options(desc, values) -> dict:
     """The family-extension settings (P.DRIVER_OPTIONS) this family offers, as driver.configure() keywords."""
     out = {}
@@ -254,8 +265,7 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
                 (f" ({f.repo})" if f.repo else ""))
             continue
         used = f.role in ("vae", "text_encoder") or f.pref_key in (adapter_key, base_key) or \
-            (f.role == "speed_lora" and values.get("SAMPLE_ENABLED") and float(values.get("FAMILY_TURBO_STRENGTH",
-                                                                                         -1) or 0) != 0) or \
+            (f.role == "speed_lora" and values.get("SAMPLE_ENABLED") and turbo_strength(desc, values) != 0) or \
             (f.role == "preview_dit" and values.get("SAMPLE_ENABLED") and values.get("SAMPLE_USE_DISTILLED", True))
         if f.required and not os.path.isfile(path):
             err(f"Model file missing: {f.label} - set it under Model files" + (f" ({f.repo})" if f.repo else ""))
@@ -464,16 +474,18 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
             speed_path = (models.get(sp.pref_key) or "").strip() if sp and sp.pref_key else ""
             if speed_path and os.path.isfile(speed_path):
                 default = desc.preview_speed_defaults()[1]
-                ts = _num(values, "FAMILY_TURBO_STRENGTH")
-                ts = default if ts < 0 else ts
+                ts = turbo_strength(desc, values)
                 if ts > 0:
                     kw["speed_lora"] = speed_path
                     if abs(ts - default) > 1e-9:
                         kw["speed_lora_strength"] = max(0.0, min(2.0, ts))
+                    if desc.samples_turbo_pace:             # H3: the Turbo row's own steps (Fizgig 7.0.1)
+                        kw["sample_steps"] = _num(values, "FAMILY_TURBO_STEPS", int) or \
+                            desc.preview_speed_defaults()[0]
                     # The Train tab fills Steps with the family's plain-model default; with the speed LoRA on, the
                     # untouched default means "the LoRA's own steps" (Krea 2: 28 -> 8; unchanged for Qwen, whose
                     # two are equal)
-                    if kw.get("sample_steps") == desc.preview_steps:
+                    elif kw.get("sample_steps") == desc.preview_steps:
                         kw["sample_steps"] = desc.preview_speed_defaults()[0]
             ck = desc.preview_checkpoint()
             if desc.train_preview_checkpoint and ck and values.get("SAMPLE_USE_DISTILLED", True):

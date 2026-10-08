@@ -569,8 +569,11 @@ Off with every block). The first two do nothing with Automagic v3, which sets it
 <li>The presets are Fizgig's: Automagic v3 (it sets its own learning rate, so Adaptive LR is off), caption dropout
 0.05 and EMA 0.98. EMA also offers <b>Short run</b>, which averages about the last quarter of a short run. Other
 optimizers get Fizgig's H3 weight decay of 1e-4. The LoRA trains in bf16, as in Fizgig.</li>
-<li>Previews run at 20 steps on the training model, 768 x 768. HQQ 4-bit, the 66 GB bf16 DiT, clips, sound,
-distillation and sliders aren't available yet.</li>
+<li>Previews run at 20 steps on the training model, 768 x 768. Set the optional <b>Turbo LoRA</b> under Model files
+and they render in 6 steps with it at 75% (Samples: <i>Turbo steps</i> and <i>Turbo strength</i>; 0% turns it off).
+It is on only while previews render and is never saved into your LoRA. Its time-modulation rows, and those of an older
+H3 LoRA used as a Context LoRA, are applied at run time, as Fizgig does.</li>
+<li>Not available yet: HQQ 4-bit, the 66 GB bf16 DiT, clips, sound, distillation and sliders.</li>
 </ul>
 <h3>FLUX.2 Klein Base 9B</h3>
 <ul>

@@ -455,3 +455,134 @@ def test_pipeline_driver_options_and_train_kwargs(desc, tmp_path):
     assert "training_adapter" not in kw and kw["ema_decay"] == "short"
     cfg = pipeline.dataset_config(desc, vals, str(tmp_path), None)
     assert cfg["caption_dropout"] == 0.05 if "caption_dropout" in cfg else True
+
+
+# ---- Turbo-LoRA previews and frozen AdaLN rows (Fizgig 7.0.1 frozen_file_added / turbo_adaln_patch) ---------------
+E_WIDE = 12          # the tiny stand-in for the full model's 2688-wide silu(t_emb) space
+
+
+def _turbo_file(path, dit, rank=2, dotted=False):
+    """A tiny 'Turbo' LoRA: block Linears the base can host, plus AdaLN rows in the full model's (E_WIDE) space."""
+    from safetensors.torch import save_file
+    g = torch.Generator().manual_seed(7)
+    sd = {}
+
+    def put(mod, n_in, n_out):
+        stem = f"diffusion_model.{mod}" if dotted else "lora_unet_" + mod.replace(".", "_")
+        a, b = (".lora_A.weight", ".lora_B.weight") if dotted else (".lora_down.weight", ".lora_up.weight")
+        sd[stem + a] = torch.randn(rank, n_in, generator=g) * 0.3
+        sd[stem + b] = torch.randn(n_out, rank, generator=g) * 0.3
+        if not dotted:
+            sd[stem + ".alpha"] = torch.tensor(float(rank))
+    for i in range(len(dit.blocks)):
+        lin = dit.blocks[i].attn.qkv_proj
+        put(f"blocks.{i}.attn.qkv_proj", lin.in_features, lin.out_features)
+        put(f"blocks.{i}.adaln_proj.linear", E_WIDE, dit.blocks[i].adaln_proj.linear.out_features)
+    put("final_layer.adaln_proj.linear", E_WIDE, dit.final_layer.adaln_proj.linear.out_features)
+    save_file(sd, str(path))
+    return sd
+
+
+def test_turbo_grid_asset_is_the_full_models_table():
+    from training.families.minimax_h3 import turbo
+    grid = turbo.load_h3_egrid()
+    assert tuple(grid.shape) == (1025, 2688) and torch.isfinite(grid.float()).all()
+
+
+@pytest.mark.parametrize("dotted", [False, True])
+def test_turbo_adaln_rows_are_injected_and_removed(tmp_path, dotted):
+    from training.families.minimax_h3 import turbo
+    dit = _dit(pruned=True)
+    f = tmp_path / "turbo.safetensors"
+    sd = _turbo_file(f, dit, dotted=dotted)
+    pairs = turbo.read_adaln_pairs(dit, str(f), 0.75)
+    assert len(pairs) == len(dit.blocks) + 1                     # every AdaLN projection, none of the block Linears
+    assert torch.equal(turbo.read_adaln_pairs(dit, str(f), 1.5)[0][2], 2 * pairs[0][2])   # read once, rescaled
+    egrid = torch.randn(9, E_WIDE, generator=torch.Generator().manual_seed(3))
+    ap = dit.blocks[1].adaln_proj
+    stem = "diffusion_model.blocks.1.adaln_proj.linear" if dotted else "lora_unet_blocks_1_adaln_proj_linear"
+    A = sd[stem + (".lora_A.weight" if dotted else ".lora_down.weight")]
+    B = sd[stem + (".lora_B.weight" if dotted else ".lora_up.weight")]
+    t_emb = dit.adaln_t_table[[2, 6]].float()                    # exactly on table rows 2 and 6
+    before = torch.cat(ap(t_emb), dim=-1)
+    assert turbo.adaln_patch(dit, pairs, "cpu", torch.float32, egrid=egrid) == len(pairs)
+    after = torch.cat(ap(t_emb), dim=-1)
+    want = (0.75 * B @ (A @ egrid[[2, 6]].T)).T.reshape(after.shape)   # x += B @ A @ silu(t_emb), strength in B
+    assert torch.allclose(after - before, want, atol=1e-5)
+    off = dit.adaln_t_table[[2, 6]].float() + 1e-4               # near a row: the nearest row's grid entry stands in
+    assert torch.allclose(torch.cat(ap(off), dim=-1) - torch.cat(turbo._adaln_forward(ap, [], dit.adaln_t_table,
+                                                                 egrid)(off), dim=-1), want, atol=1e-5)
+    turbo.adaln_unpatch(pairs)
+    turbo.adaln_unpatch(pairs)                                   # idempotent
+    assert torch.equal(torch.cat(ap(t_emb), dim=-1), before) and "forward" not in vars(ap)
+    assert turbo.adaln_patch(dit, pairs, "cpu", torch.float32) == 0        # the real grid has 1025 rows, not 9
+    assert turbo.adaln_patch(_dit(), pairs, "cpu", torch.float32, egrid=egrid) == 0   # a full base needs no injection
+
+
+def test_frozen_rows_training_set_and_preview_set(desc, driver, tmp_path, monkeypatch):
+    """Fizgig 7.0.1: the adapter's and the context's rows train; a preview swaps in context + speed, then back."""
+    from PIL import Image
+    from training import train
+    from training.families.minimax_h3 import turbo
+    dit = _dit(pruned=True)
+    f, g = tmp_path / "turbo.safetensors", tmp_path / "adapter.safetensors"
+    _turbo_file(f, dit)
+    _turbo_file(g, dit, rank=3)
+    egrid = torch.randn(9, E_WIDE, generator=torch.Generator().manual_seed(3))
+    monkeypatch.setattr(turbo, "load_h3_egrid", lambda: egrid)
+    monkeypatch.setattr(MiniMaxH3Driver, "decode", lambda self, vae, lat, w, h: Image.new("RGB", (w, h)))
+    net = FamilyLoRA(dit, driver)
+    assert net.add_file(str(g), train.ADAPTER, 1.0) == len(dit.blocks)
+    driver.frozen_file_added(dit, str(g), 1.0, "adapter")
+    ap = dit.blocks[0].adaln_proj
+    patched = vars(ap)["forward"]
+    assert "forward" in vars(ap)                                  # the training set is on for every step
+    assert net.add_file(str(f), train.SPEED, 0.75) == len(dit.blocks)      # the AdaLN rows do not fit as weights
+    net.set_enabled(train.SPEED, False)
+    driver.frozen_file_added(dit, str(f), 0.75, "speed")
+    assert set(driver._frozen_adaln) == {"adapter", "speed"}
+    net.add_trainable(4, 4)
+    cond = {"hidden_states": torch.randn(7, 24)}
+    speed = desc.preview_speed()
+    assert (speed.strength, speed.settings.steps, desc.preview_speed_defaults()) == (0.75, 6, (6, 0.75))
+    seen = []
+    real = driver._generate
+
+    def spy(d, c, w, h, *a):
+        rows = {id(m) for r in ("speed",) for m, _a, _b in driver._frozen_adaln[r]}
+        seen.append((id(d.blocks[0].adaln_proj) in rows and "forward" in vars(d.blocks[0].adaln_proj),
+                     vars(d.blocks[0].adaln_proj).get("forward") is not patched,
+                     d.blocks[0].attn.qkv_proj.scales[train.SPEED]))
+        return real(d, c, w, h, *a)
+    monkeypatch.setattr(driver, "_generate", spy)
+    neg = {"hidden_states": torch.randn(3, 24)}
+    paths = train._render_previews(driver, dit, net, None, [cond], str(tmp_path / "sample"), 1, output_name="t",
+                                   steps=6, cfg=2.5, neg=neg, width=64, height=64, seed=5, speed=speed.settings)
+    assert len(paths) == 1
+    assert seen == [(True, True, 0.75)]                          # the preview set, the Turbo's Linears at 0.75
+    assert "forward" in vars(ap) and dit.blocks[0].attn.qkv_proj.scales[train.SPEED] == 0.0   # training set back
+    monkeypatch.setattr(driver, "_generate", real)
+    plain = driver.generate(dit, cond, 64, 64, steps=2, seed=5)
+    net.set_enabled(train.SPEED, True)
+    assert not torch.allclose(plain, driver.generate(dit, cond, 64, 64, steps=2, seed=5))   # the Turbo changes it
+
+
+def test_turbo_pipeline_pace_and_visibility(desc, tmp_path):
+    from training.families.krea2.description import KREA2
+    steps, pace, strength = (P.BY_KEY[k] for k in ("FAMILY_TURBO_STEPS", "FAMILY_TURBO_PACE", "FAMILY_TURBO_STRENGTH"))
+    assert P.family_shows(steps, desc) and P.family_shows(pace, desc) and not P.family_shows(strength, desc)
+    assert P.family_shows(strength, KREA2) and not P.family_shows(steps, KREA2)
+    assert not steps.preset and "FAMILY_TURBO_PACE" not in P.PRESET_KEYS and (steps.default, pace.default) == (6, 75.0)
+    turbo = tmp_path / "turbo.safetensors"
+    turbo.write_bytes(b"x")
+    vals = {**P.defaults(), "LORA_NAME": "h3", "SAMPLE_STEPS": 20, "SAMPLE_PROMPT": "a photo"}
+    models = {"minimax_dit": "d", "minimax_vae": "v", "minimax_text_encoder": "t", "minimax_turbo_lora": str(turbo)}
+    kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", models)
+    assert kw["speed_lora"] == str(turbo) and "speed_lora_strength" not in kw and kw["sample_steps"] == 6
+    kw, _ = pipeline.train_kwargs(desc, {**vals, "FAMILY_TURBO_STEPS": 4, "FAMILY_TURBO_PACE": 250}, tmp_path / "run",
+                                  models)
+    assert (kw["speed_lora_strength"], kw["sample_steps"]) == (2.0, 4)       # Fizgig clamps the strength to 0-2
+    kw, _ = pipeline.train_kwargs(desc, {**vals, "FAMILY_TURBO_PACE": 0}, tmp_path / "run", models)
+    assert "speed_lora" not in kw and kw["sample_steps"] == 20              # 0 % = previews without it
+    kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", {**models, "minimax_turbo_lora": ""})
+    assert "speed_lora" not in kw and kw["sample_steps"] == 20              # no Turbo file: the Steps box applies

@@ -119,6 +119,7 @@ class MiniMaxH3Driver(FamilyDriver):
         self.adapter_ramp = 0.0
         self.train_refiner = False
         self._ramp = None
+        self._frozen_adaln = {}          # role -> [(AdalnProj, A, B)]: frozen files' full-model AdaLN rows
         self._warned_range = False
 
     # ---- run options (driver_options: the Train tab's H3 dials) --------------------------------------------------
@@ -313,9 +314,52 @@ class MiniMaxH3Driver(FamilyDriver):
             h = h[None]
         return h.to(device=device, dtype=self.compute_dtype)
 
+    # ---- frozen files' full-model AdaLN rows (Fizgig 7.0.1 MiniMaxDriver.frozen_file_added / _patch_adaln) ----------
+    def frozen_file_added(self, dit, path, strength, role) -> None:
+        """A frozen file's full-model AdaLN rows (the Turbo LoRA, an older H3 LoRA trained with AdaLN on as a Context
+        LoRA, a training adapter): the pruned base has no AdaLN Linears that wide to wrap, so they are injected at run
+        time from the bundled silu(t_emb) grid - the training set (adapter + context) on every training step, the
+        preview set (context + speed) while a preview renders. Never a run-killer."""
+        from training.families.minimax_h3 import turbo
+        try:
+            pairs = turbo.read_adaln_pairs(dit, path, strength)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[{role}] could not read the AdaLN rows of {path} ({type(e).__name__}: {e}) - they are "
+                           f"left out")
+            return
+        if not pairs:
+            return
+        self._frozen_adaln[role] = pairs
+        logger.info(f"[{role}] {len(pairs)} AdaLN rows injected at run time"
+                    + (" (previews only)" if role == "speed" else ""))
+        self._patch_adaln(dit, ("adapter", "context"))
+
+    def _patch_adaln(self, dit, roles) -> None:
+        """One patch for the union of the active roles' rows (a patch replaces the module forward wholesale, so every
+        set on a module goes in together)."""
+        from training.families.minimax_h3 import turbo
+        held = self._frozen_adaln
+        turbo.adaln_unpatch([p for v in held.values() for p in v])
+        pairs = [p for r in roles for p in held.get(r, [])]
+        if pairs:
+            device = next(p for p in dit.parameters() if p.device.type != "meta").device
+            turbo.adaln_patch(dit, pairs, device, self.compute_dtype)
+
     @torch.no_grad()
     def generate(self, dit, cond, width, height, *, steps, seed, cfg=1.0, neg_cond=None, sigmas=None, options=(),
                  noise=None, on_step=None, refs=None):
+        """A preview render. The loop has the Turbo (the family's speed LoRA) switched on around this call and passes
+        its steps and CFG; its AdaLN rows and a context LoRA's are injected for the render, the training adapter's
+        taken off - and the training set put back after (Fizgig 7.0.1)."""
+        if not self._frozen_adaln:
+            return self._generate(dit, cond, width, height, steps, seed, cfg, neg_cond, noise, on_step)
+        try:
+            self._patch_adaln(dit, ("context", "speed"))
+            return self._generate(dit, cond, width, height, steps, seed, cfg, neg_cond, noise, on_step)
+        finally:
+            self._patch_adaln(dit, ("adapter", "context"))
+
+    def _generate(self, dit, cond, width, height, steps, seed, cfg, neg_cond, noise, on_step):
         device = dit.video_patch_proj.weight.device
         text = self._text(cond, device)
         uncond = self._text(neg_cond, device) if (neg_cond is not None and cfg > 1.0) else None

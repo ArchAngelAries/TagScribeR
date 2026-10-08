@@ -359,6 +359,14 @@ PARAMS: tuple[Param, ...] = (
     P("FAMILY_TURBO_STRENGTH", "Turbo LoRA strength", FLOAT, -1.0, "Samples",
       "The family's speed LoRA for fast previews (needs its file under Model files). 0 = previews without it; "
       "-1 = the family default.", preset=False, minimum=-1.0, maximum=2.0, family_only="speed"),
+    # MiniMax H3's Turbo row (Fizgig 7.0.1 "N steps at M%": FAMILY_TURBO_STEPS / FAMILY_TURBO_PACE; Steps stays the
+    # plain-model count)
+    P("FAMILY_TURBO_STEPS", "Turbo steps", INT, 6, "Samples",
+      "Preview steps with the Turbo LoRA (needs its file under Model files). Steps above is the count without it.",
+      preset=False, minimum=1, maximum=200, family_only="turbo_pace"),
+    P("FAMILY_TURBO_PACE", "Turbo strength (%)", FLOAT, 75.0, "Samples",
+      "The Turbo LoRA's strength in previews, in percent (75 is the pairing fast ComfyUI renders use). 0 = previews "
+      "without it, at the plain Steps. Clamped to 200.", preset=False, minimum=0.0, family_only="turbo_pace"),
     # Klein's Distilled previews (Fizgig 7.0.1 "Use Distilled model for samples", CACHE_SAMPLE_MODEL, inference INT8)
     P("SAMPLE_USE_DISTILLED", "Use Distilled model for samples (4-step, matches ComfyUI)", BOOL, True, "Samples",
       "Render previews on the Distilled model (set its file under Model files): 4 steps, no CFG, ComfyUI's Euler "
@@ -473,7 +481,9 @@ def family_shows(param: Param, desc) -> bool:
     if f == "fast_id":
         return bool(desc.identity_blocks)
     if f == "speed":
-        return bool(desc.preview_speed())
+        return bool(desc.preview_speed()) and not desc.samples_turbo_pace
+    if f == "turbo_pace":
+        return bool(desc.preview_speed()) and desc.samples_turbo_pace
     if f == "option":
         return param.key in desc.family_options
     return True

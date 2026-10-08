@@ -2,7 +2,7 @@
 
 Fizgig (https://github.com/shootthesound/Fizgig, Apache-2.0) is the reference for every training behaviour here: the
 flow-matching objective (target x0 - noise), the low-noise % dial -> schedule shift, the 20-49 block window, the frozen
-training adapter, caption dropout, EMA, the kohya LoRA keys and the presets. See docs/TRAINING_PLAN.md and
+training adapter, caption dropout, EMA, the kohya LoRA keys, the presets and the Turbo-LoRA previews (turbo.py). See docs/TRAINING_PLAN.md and
 THIRD_PARTY_NOTICES.md.
 
 Not ported yet (Fizgig has them; this family does not): video clips, audio / voice items, reference images (RefMods),

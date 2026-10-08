@@ -107,7 +107,8 @@ PARAMS: tuple[Param, ...] = (
       options=EMA_OPTIONS, family_only="ema"),
     P("CONTEXT_LORA_PATH", "Context LoRA", PATH, "", "Training Parameters",
       "Optional: an existing LoRA kept frozen and active while you train, so the new LoRA learns to work on top "
-      "of it (e.g. a face on a style). It is never saved into the output.", advanced=True),
+      "of it (e.g. a face on a style). It is never saved into the output. LoRA, LoKR and LoHa files from most "
+      "trainers load (kohya, diffusers, OneTrainer, AI-Toolkit naming).", advanced=True),
     P("CONTEXT_LORA_STRENGTH", "Context LoRA strength", FLOAT, 1.0, "Training Parameters",
       "The context LoRA's strength during training and previews.", minimum=0.0, maximum=2.0, advanced=True),
     P("FAMILY_EDIT", "Edit LoRA (before/after pairs)", BOOL, False, "Training Parameters",

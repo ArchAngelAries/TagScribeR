@@ -181,6 +181,17 @@ class FamilyDriver:
         map."""
         return [m for g in self.block_map(dit) for b in g.blocks for m in b.modules]
 
+    def alias_flat(self, flat: str):
+        """Another trainer's name for one of this model's Linears (e.g. diffusers naming from OneTrainer or
+        AI-Toolkit), flattened with dots as underscores -> this model's flattened name, or None. The loaders look the
+        result up among the model's own Linears, so a family only lists its renames."""
+        return None
+
+    def convert_lora_state_dict(self, sd: dict) -> dict:
+        """A LoRA file's tensors before the reader looks at them: a family whose ecosystem stores some modules in
+        another layout (Klein's diffusers q / k / v for its fused qkv) converts them here. Default: unchanged."""
+        return sd
+
     def lora_key_name(self, module_path: str) -> str:
         """The dotted module name a kohya-format LoRA file uses for a module (default: the module's own path). A
         family whose in-memory names differ from the names its LoRA ecosystem expects (SDXL: diffusers names vs

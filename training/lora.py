@@ -7,6 +7,9 @@
 # krea2/trainer.py _save_lora does); a frozen file's `diff_b` bias deltas (the Krea 2 Turbo LoRA's) are applied while the
 # adapter is on (Fizgig krea2/trainer.py _apply_turbo_lora); `driver.lora_key_name` lets a kohya family write (and read)
 # keys named differently from its module paths (SDXL: LDM names). Behaviour of non-kohya families is unchanged.
+# Brought level with Fizgig 7.0.1 (commit 1c8ec88): frozen LoHa files load (LoHa, add_loha), `lora.down` / `lora.up` key
+# spelling and the `unet.` prefix are read, and the reader goes through `driver.convert_lora_state_dict` and
+# `driver.alias_flat` (another trainer's module names: Krea 2 LoRAs from OneTrainer / AI-Toolkit, Fizgig 6.8.2).
 """The family layer's LoRA: wraps a family's Linears, trains one adapter and runs any number of frozen ones.
 
 Which Linears (driver.block_map / lora_target_names) and how files are keyed (description.lora: file prefix, down/up
@@ -21,7 +24,8 @@ is named "lora"; frozen ones (training adapter, context LoRA, a workbench primar
 
 Files in any common layout are accepted: the family's own keys, kohya (`lora_unet_<flattened>.lora_down/up`), or
 PEFT / diffusers (`lora_A/lora_B` or `lora_down/lora_up`, bare or under `transformer.` / `diffusion_model.`).
-LyCORIS LoKR files are read (low-rank factors multiplied out); LoHa is refused with a clear message.
+LyCORIS LoKR files are read (low-rank factors multiplied out), and frozen LoHa files (the Hadamard delta materialised
+per forward). Another trainer's module names reach this model through the driver's alias_flat.
 
 Conv2d modules named by the driver are wrapped too (LoRAConv2d). LoKR adapters are Linear-only: a LoKR run leaves a
 family's Conv2d targets untrained (logged), the same as LyCORIS' default "LoKR for Linear" preset.
@@ -37,7 +41,7 @@ import torch.nn as nn
 logger = logging.getLogger(__name__)
 
 TRAINABLE = "lora"
-_PREFIXES = ("transformer.", "diffusion_model.", "model.diffusion_model.", "base_model.model.", "")
+_PREFIXES = ("transformer.", "unet.", "diffusion_model.", "model.diffusion_model.", "base_model.model.", "")
 
 
 _ALPHA_SENTINEL_THRESHOLD = 1e6   # alpha >= this in a LyCORIS file means "scale already baked in" (scale = 1)
@@ -87,6 +91,23 @@ def lycoris_scale_from_keys(mod_keys: Dict[str, torch.Tensor]) -> float:
 class LoRAFactor(nn.Linear):
     """One adapter matrix (A or B). Its own class so block-swap offloaders, which stream every module whose class name
     ends in "Linear", leave the adapters resident: trainable weights must never be moved between steps."""
+
+
+class LoHa(nn.Module):
+    """A frozen LoHa (Hadamard) adapter: delta = (w1_a @ w1_b) * (w2_a @ w2_b), materialised per forward as the old
+    loaders' LoHaInfModule does (the Hadamard product does not factor); the scale is applied by the LoRALinear."""
+
+    def __init__(self, w1a, w1b, w2a, w2b):
+        super().__init__()
+        self.hada_w1_a, self.hada_w1_b = nn.Parameter(w1a.clone()), nn.Parameter(w1b.clone())
+        self.hada_w2_a, self.hada_w2_b = nn.Parameter(w2a.clone()), nn.Parameter(w2b.clone())
+
+    def delta(self):
+        return (self.hada_w1_a.float() @ self.hada_w1_b.float()) * (self.hada_w2_a.float() @ self.hada_w2_b.float())
+
+    def forward(self, x):
+        w = (self.hada_w1_a @ self.hada_w1_b) * (self.hada_w2_a @ self.hada_w2_b)
+        return x @ w.to(x.dtype).transpose(-1, -2)
 
 
 class LoKR(nn.Module):
@@ -150,12 +171,19 @@ class LoRALinear(nn.Module):
         self.adapters[name] = ad
         self.scales[name] = scale
 
+    def add_loha(self, name, w1a, w1b, w2a, w2b):
+        ad = LoHa(w1a, w1b, w2a, w2b)
+        dev = getattr(self, "home", None) or self.base.weight.device
+        ad.to(dev, torch.bfloat16).requires_grad_(False)
+        self.adapters[name] = ad
+        self.scales[name] = 1.0
+
     def forward(self, x):
         out = self.base(x)
         for n, ad in self.adapters.items():
             s = self.scales.get(n, 0.0)
             if s:
-                if isinstance(ad, LoKR):
+                if isinstance(ad, (LoKR, LoHa)):
                     out = out + (s * ad(x)).to(out.dtype)
                 else:
                     out = out + (s * ad(x.to(ad[0].weight.dtype))).to(out.dtype)
@@ -303,27 +331,44 @@ class FamilyLoRA:
     def _module_for(self, stem):
         """A file's module stem (dotted, prefixed, or kohya-flattened) -> a Linear name in this model, or None."""
         if stem.startswith("lora_unet_"):
-            return self._flat.get(stem[len("lora_unet_"):])
-        for p in _PREFIXES:
-            if p and not stem.startswith(p):
-                continue
-            name = stem[len(p):]
-            if name in self.linears:
-                return name
-            if name.replace(".", "_") in self._flat:
-                return self._flat[name.replace(".", "_")]
+            flats = [stem[len("lora_unet_"):]]
+        else:
+            flats = []
+            for p in _PREFIXES:
+                if p and not stem.startswith(p):
+                    continue
+                name = stem[len(p):]
+                if name in self.linears:
+                    return name
+                flats.append(name.replace(".", "_"))
+        for flat in flats:
+            if flat in self._flat:
+                return self._flat[flat]
+        for flat in flats:                  # another trainer's naming (the driver's renames)
+            alias = self.driver.alias_flat(flat)
+            if alias in self._flat:
+                return self._flat[alias]
         return None
 
     def read_file(self, path):
         """-> {module name: entry} for every Linear the file adapts in this model. A LoRA entry is
         ("lora", A, B, scale) with scale = alpha / rank; a LoKR entry is ("lokr", w1, w2, scale) with low-rank factors
-        multiplied out and the LyCORIS scale rule (lycoris_scale_from_keys). LoHa is refused."""
+        multiplied out and the LyCORIS scale rule (lycoris_scale_from_keys). A LoHa entry is
+        ("loha", (w1_a, w1_b), (w2_a, w2_b), scale), the LyCORIS scale rule as for LoKR."""
         from safetensors.torch import load_file
-        sd = load_file(path)
-        if any(re.search(r"\.hada_w1_a(\.|$)", k) for k in sd):
-            raise ValueError(f"{path}: LoHa files are not supported by the standard layer yet")
+        sd = self.driver.convert_lora_state_dict(load_file(path))
         out = {}
         for key in sd:
+            m = re.match(r"(.+)\.hada_w1_a$", key)
+            if m:
+                stem = m.group(1)
+                full = self._module_for(stem)
+                if full is None:
+                    continue
+                keys = {k[len(stem) + 1:]: v for k, v in sd.items() if k.startswith(stem + ".")}
+                out[full] = ("loha", (keys["hada_w1_a"], keys["hada_w1_b"]), (keys["hada_w2_a"], keys["hada_w2_b"]),
+                             lycoris_scale_from_keys(keys))
+                continue
             m = re.match(r"(.+)\.lokr_w1(_a)?$", key)
             if m:
                 stem = m.group(1)
@@ -335,11 +380,11 @@ class FamilyLoRA:
                 w2 = keys["lokr_w2"] if "lokr_w2" in keys else keys["lokr_w2_a"].float() @ keys["lokr_w2_b"].float()
                 out[full] = ("lokr", w1, w2, lycoris_scale_from_keys(keys))
                 continue
-            m = re.match(r"(.+)\.(lora_A|lora_down)\.weight$", key)
+            m = re.match(r"(.+)\.(lora_A|lora_down|lora\.down)\.weight$", key)
             if not m:
                 continue
             stem, down = m.group(1), m.group(2)
-            up = "lora_B" if down == "lora_A" else "lora_up"
+            up = {"lora_A": "lora_B", "lora_down": "lora_up", "lora.down": "lora.up"}[down]
             if f"{stem}.{up}.weight" not in sd:
                 continue
             full = self._module_for(stem)
@@ -384,7 +429,12 @@ class FamilyLoRA:
             w = self._wrap(full)
             if w is None:
                 continue
-            if kind == "lokr":
+            if kind == "loha":
+                if isinstance(w, LoRAConv2d) or P[0].shape[0] != w.base.out_features \
+                        or P[1].shape[1] != w.base.in_features:
+                    continue                          # LoHa on convs is not read
+                w.add_loha(name, P[0], P[1], Q[0], Q[1])
+            elif kind == "lokr":
                 if isinstance(w, LoRAConv2d) or P.shape[0] * Q.shape[0] != w.base.out_features \
                         or P.shape[1] * Q.shape[1] != w.base.in_features:
                     continue
@@ -463,7 +513,8 @@ class FamilyLoRA:
         def params(full):
             ad = self.wrapped[full].adapters[name]
             return (ad.lokr_w1, ad.lokr_w2) if isinstance(ad, LoKR) else (ad[0].weight, ad[1].weight)
-        same = set(new) == set(st["alpha_rank"]) and all(
+        same = set(new) == set(st["alpha_rank"]) and not any(
+            new[f][0] == "loha" or isinstance(self.wrapped[f].adapters[name], LoHa) for f in new) and all(
             (new[f][0] == "lokr") == isinstance(self.wrapped[f].adapters[name], LoKR)
             and params(f)[0].shape == new[f][1].shape and params(f)[1].shape == new[f][2].shape for f in new)
         if same:
@@ -523,7 +574,7 @@ class FamilyLoRA:
             As, Bs = [], []
             for n, sc in live:
                 ad = w.adapters[n]
-                if isinstance(ad, LoKR):          # mixed with a LoRA: SVD the Kronecker delta to rank <= 64
+                if isinstance(ad, (LoKR, LoHa)):  # Kronecker / Hadamard delta: SVD to a rank <= 64 LoRA
                     U, S, Vh = torch.linalg.svd(ad.delta(), full_matrices=False)
                     k = min(64, S.numel())
                     root = S[:k].sqrt()

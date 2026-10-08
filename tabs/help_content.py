@@ -381,6 +381,9 @@ can't affect it.</li>
 <li>Training runs as separate processes, so the app stays responsive and a crash can't take it down.</li>
 <li>Stages: <b>caching latents</b> → <b>caching captions</b> → <b>training</b>. Caching only encodes what
 changed since the last run.</li>
+<li>A <b>Context LoRA</b> (Show all settings) stays frozen and active while you train, so the new LoRA learns on top
+of it; it is never saved into the output. LoRA, LoKR and LoHa files load, in kohya, diffusers, OneTrainer or
+AI-Toolkit naming.</li>
 <li>Tokenizers are read from the local Hugging Face cache first, so once the model downloader has fetched them, a
 run starts without an internet connection.</li>
 </ul>

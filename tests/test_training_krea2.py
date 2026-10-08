@@ -502,3 +502,19 @@ def test_vae_port_encodes_and_decodes_on_a_tiny_config(driver):
     lat = driver.encode_images(vae, [(np.random.rand(32, 48, 3) * 255).astype(np.uint8)])
     assert lat[0].shape == (16, 4, 6) and lat[0].dtype == torch.bfloat16
     assert driver.decode(vae, lat[0][None, :, None], 48, 32).size == (48, 32)
+
+
+def test_diffusers_named_lora_loads_as_context(driver, tmp_path):
+    """Fizgig 6.8.2: Krea 2 LoRAs from OneTrainer / AI-Toolkit (diffusers names) attach through alias_flat."""
+    from safetensors.torch import save_file
+    dit = _dit()
+    q, mlp = dit.blocks[0].attn.wq, dit.blocks[1].mlp.down
+    net = FamilyLoRA(dit, driver)
+    sd = {"transformer.transformer_blocks.0.attn.to_q.lora_A.weight": torch.randn(2, q.in_features),
+          "transformer.transformer_blocks.0.attn.to_q.lora_B.weight": torch.randn(q.out_features, 2),
+          "transformer.transformer_blocks.1.ff.down.lora_A.weight": torch.randn(2, mlp.in_features),
+          "transformer.transformer_blocks.1.ff.down.lora_B.weight": torch.randn(mlp.out_features, 2)}
+    save_file(sd, str(tmp_path / "ot.safetensors"))
+    assert net.add_file(str(tmp_path / "ot.safetensors"), "context") == 2
+    assert "context" in dit.blocks[0].attn.wq.adapters and "context" in dit.blocks[1].mlp.down.adapters
+    assert driver.alias_flat("blocks_0_attn_wq") is None                    # own names need no alias

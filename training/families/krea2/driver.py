@@ -16,6 +16,7 @@
 * LoRA: every Linear of the DiT (264); only the 28 main blocks' Linears are quantised (INT8 / NF4)
 """
 import logging
+import re
 
 import numpy as np
 import torch
@@ -221,6 +222,22 @@ class Krea2Driver(FamilyDriver):
         return [BlockGroup("Main blocks", main), BlockGroup("Text fusion", fusion),
                 BlockGroup("Input / output", [Block("io_in", "Input embedders", keep(list(_IO_IN))),
                                               Block("io_out", "Output layer", keep(list(_IO_OUT)))])]
+
+    # diffusers naming (OneTrainer, AI-Toolkit, diffusers exports) -> Krea 2's own, on flattened names (Fizgig
+    # krea2/driver.py _ALIASES, restored in 6.8.2; the table of networks.lora._KREA2_DIFFUSERS_RENAMES, Fizgig #50)
+    _ALIASES = ((r"^transformer_blocks_(\d+)_", r"blocks_\1_"), (r"^text_fusion_", "txtfusion_"),
+                (r"_attn_to_out_0$", "_attn_wo"), (r"_attn_to_gate$", "_attn_gate"), (r"_attn_to_q$", "_attn_wq"),
+                (r"_attn_to_k$", "_attn_wk"), (r"_attn_to_v$", "_attn_wv"), (r"_ff_up$", "_mlp_up"),
+                (r"_ff_gate$", "_mlp_gate"), (r"_ff_down$", "_mlp_down"), (r"^img_in$", "first"),
+                (r"^final_layer_linear$", "last_linear"), (r"^txt_in_linear_1$", "txtmlp_1"),
+                (r"^txt_in_linear_2$", "txtmlp_3"), (r"^time_embed_linear_1$", "tmlp_0"),
+                (r"^time_embed_linear_2$", "tmlp_2"), (r"^time_mod_proj$", "tproj_1"))
+
+    def alias_flat(self, flat):
+        out = flat
+        for pat, new in self._ALIASES:
+            out = re.sub(pat, new, out)
+        return out if out != flat else None
 
     def quant_target_names(self, dit):
         """Fizgig quantises only `blocks.` minus mod. / norm / txtfusion (krea2/utils.py KREA2_FP8_OPTIMIZATION_*):

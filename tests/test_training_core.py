@@ -419,3 +419,27 @@ def test_slider_and_finetune_presets_are_refused_not_run_as_loras():
         assert "cannot train yet" in rep.messages()[0]
     new, rep = presets.apply({"FAMILY_SLIDER": False, "FAMILY_FT": False, "NETWORK_DIM": 4}, cur)   # Fizgig's LoRAs
     assert not rep.blocked and new["NETWORK_DIM"] == 4
+
+
+def test_frozen_loha_and_diffusers_dot_spelling(tiny, tmp_path):
+    """Fizgig 7.0.0: LoHa files load (the Hadamard delta), and diffusers' own `lora.down` / `lora.up` spelling."""
+    from safetensors.torch import save_file
+    from training.lora import LoHa, lycoris_scale_from_keys
+    dit, net = _net(tiny)
+    torch.manual_seed(1)
+    loha = {"hada_w1_a": torch.randn(8, 2), "hada_w1_b": torch.randn(2, 8), "hada_w2_a": torch.randn(8, 2),
+            "hada_w2_b": torch.randn(2, 8), "alpha": torch.tensor(1.0)}
+    sd = {f"lora_unet_blocks_1_lin.{k}": v for k, v in loha.items()}
+    sd.update({"transformer.blocks.0.lin.lora.down.weight": torch.randn(2, 8),
+               "transformer.blocks.0.lin.lora.up.weight": torch.randn(8, 2)})
+    save_file(sd, str(tmp_path / "h.safetensors"))
+    assert net.add_file(str(tmp_path / "h.safetensors"), "context") == 2
+    w = dit.blocks[1].lin
+    assert isinstance(w.adapters["context"], LoHa)
+    x = torch.randn(3, 8)
+    delta = (loha["hada_w1_a"] @ loha["hada_w1_b"]) * (loha["hada_w2_a"] @ loha["hada_w2_b"])
+    want = w.base(x) + lycoris_scale_from_keys(loha) * (x @ delta.T)
+    net.set_enabled("lora", False)
+    assert torch.allclose(w(x), want, atol=0.05 * float(want.abs().max()))     # bf16 adapter
+    baked, ranks = net.bake(["context"])                 # a LoHa bakes through the SVD path like a LoKR
+    assert ranks["blocks.1.lin"] > 0 and ranks["blocks.0.lin"] == 2

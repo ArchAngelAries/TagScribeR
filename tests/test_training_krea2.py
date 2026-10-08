@@ -56,8 +56,9 @@ def test_description_is_valid_and_registered_first(desc):
     assert registry.by_arch_id("krea2") is desc
     assert "_" not in desc.arch_id                       # cache filenames split on "_"
     assert (desc.latent_channels, desc.spatial_factor, desc.bucket_step) == (16, 8, 16)
-    assert desc.precisions == ("bf16", "fp8", "int8", "nf4") and set(desc.train_memory) == {"fp8", "int8", "nf4"}
-    assert desc.auto_order == ("int8", "nf4", "fp8") and desc.auto_swap_order == ("fp8",)     # Fizgig's ladder
+    assert desc.precisions == ("bf16", "fp8", "int8", "nf4") and set(desc.train_memory) == {"bf16", "fp8", "int8", "nf4"}
+    assert desc.auto_precisions == ("int8", "nf4") and desc.auto_swap_order == ()     # Fizgig 7.0.1's Auto
+    assert desc.train_memory["int8"][0] == ((0.25, 16.2), (1.0, 19.1))                  # Fizgig's corrected 1 MP point
     assert "automagic3" in desc.optimizers and "adamw8bit" in desc.optimizers
     assert desc.network_types == ("lora", "lokr") and desc.ema_default == "0.98"
     assert {desc.pref_for(r) for r in ("dit", "vae", "text_encoder", "speed_lora")} == set(desc.pref_keys)

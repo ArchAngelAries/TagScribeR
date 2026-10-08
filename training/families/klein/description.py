@@ -89,7 +89,7 @@ KLEIN_9B = FamilyDescription(
     precisions=("bf16", "fp8", "int8", "nf4"),
     # Fizgig's Klein default is an fp8 base (FP8 + Scaled on, lora_trainer_gui.py PRESETS), with NF4 on small cards
     # (_klein_small_card: under 15 GiB) and block swap on fp8.
-    auto_order=("fp8", "nf4"),
+    auto_precisions=("fp8", "nf4"),
     auto_swap_order=("fp8",),
     # Fizgig measured Klein on an fp8 base (docs/KLEIN.md "VRAM"): the fp8 base stays resident at ~9.6 GB and "a 9B LoRA
     # fits 16 GB (~14 GB observed)"; the NF4 base is ~5.6 GB and "a full LoRA trains in about 8.5 GB at 0.5 MP" (10-12 GB

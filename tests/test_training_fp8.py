@@ -146,6 +146,8 @@ class _Drv:
 
 
 def test_auto_follows_fizgig_krea2_ladder(monkeypatch):
+    """Fizgig 7.0.1 (families/krea2.py, families/quant.py plan): INT8, NF4, INT8 + swap, NF4; fp8 only when the
+    machine runs neither INT8 nor NF4 (TagScribeR)."""
     from training.registry import get
     desc = get("krea2")
     avail = {"int8": True, "nf4": True}
@@ -154,8 +156,9 @@ def test_auto_follows_fizgig_krea2_ladder(monkeypatch):
     plan = lambda free: quant.plan(desc, _Drv(), "auto", -1, free_gb=free, megapixels=0.25)[:2]  # noqa: E731
     assert plan(24.0) == ("int8", 0)                    # INT8 leads where it fits (16.2 + 1.5 headroom)
     assert plan(16.0) == ("nf4", 0)                     # then NF4 with no swap
-    p, n = plan(11.0)                                   # below NF4: fp8 with block swap
-    assert p == "fp8" and 0 < n <= 26
+    assert plan(11.0) == ("int8", 16)                   # below NF4: INT8 with the fewest swapped blocks that fit
+    assert quant.plan(desc, _Drv(), "auto", -1, free_gb=20.0, megapixels=1.0)[:2] == ("nf4", 0)   # 19.1 + 1.5 > 20
+    assert plan(3.0) == ("int8", 26)                    # TagScribeR: even max swap is short - the smallest peak
     avail.update(int8=False, nf4=False)                 # a card with no _int_mm and no bitsandbytes
     assert plan(24.0) == ("fp8", 0)
     p, n = plan(18.5)                                   # e.g. a 20 GB card: fp8 with a few blocks swapped

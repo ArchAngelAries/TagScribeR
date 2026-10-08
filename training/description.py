@@ -2,7 +2,8 @@
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: entry points are `python -m training.train` / `training.cache`; the Tkinter GUI's
 # legacy ARCHITECTURES adapter (architecture_entry) is dropped; model file paths live in TagScribeR settings;
-# `ModelFile.default_to` and `family_options` (SDXL: one checkpoint file holds the UNet, VAE and text encoders).
+# `ModelFile.default_to` and `family_options` (SDXL: one checkpoint file holds the UNet, VAE and text encoders);
+# `auto_swap_order` (Klein block-swaps its fp8 base).
 """FamilyDescription: everything the trainer needs to know about one model family, in one object.
 
 A description holds the family's facts once (model files, latent rules, LoRA key format, presets, sampling
@@ -133,9 +134,11 @@ class FamilyDescription:
     # block)}; the peak may instead be ((megapixels, GB), ...) points, interpolated for the run's resolution.
     # {} = Auto just takes the first precision
     train_memory: dict = field(default_factory=dict)
-    # the family's own Auto preference: precisions tried without block swap, in order (() = the generic order,
-    # most precise first), and the precisions Auto may block-swap (() = int8, then bf16)
-    auto_order: tuple = ()
+    # what Auto may choose, in order (() = every offered precision, most precise first). Krea 2: INT8, then NF4 - its
+    # original trainer's order; bf16 (and TagScribeR's fp8) stay manual choices
+    auto_precisions: tuple = ()
+    # TagScribeR: the precisions Auto may block-swap when nothing fits whole (() = Fizgig's rule: int8, then bf16, of
+    # those Auto may choose). Klein swaps its fp8 base
     auto_swap_order: tuple = ()
     optimizers: tuple = ("adamw8bit", "adamw")
     network_types: tuple = ("lora",)

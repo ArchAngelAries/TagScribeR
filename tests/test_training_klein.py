@@ -52,7 +52,7 @@ def test_description_is_valid_and_registered(desc):
     assert "_" not in desc.arch_id
     assert (desc.latent_channels, desc.spatial_factor, desc.bucket_step) == (128, 16, 16)
     assert desc.precisions == ("bf16", "fp8", "int8", "nf4") and set(desc.train_memory) == {"fp8", "int8", "nf4"}
-    assert desc.auto_order == ("fp8", "nf4")                       # Fizgig: fp8 base, NF4 on small cards
+    assert desc.auto_precisions == ("fp8", "nf4")                       # Fizgig: fp8 base, NF4 on small cards
     assert desc.network_types == ("lora",) and desc.ema_default == "" and "automagic3" not in desc.optimizers
     assert desc.speed_loras == () and desc.preview_speed() is None
     assert (desc.preview_steps, desc.preview_cfg, desc.preview_width) == (40, 4.5, 768)

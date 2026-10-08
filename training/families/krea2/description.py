@@ -1,6 +1,7 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig): the facts of src/fizgig/krea2/ (utils.py, trainer.py,
 # embedder.py, sampling.py), lora_trainer_gui.py (KREA2_BUILT_IN_PRESETS, the Krea 2 model paths),
-# scripts/fetch_models.py (files and sizes) and utils/capabilities.py (recommend_krea2_strategy's measured memory).
+# scripts/fetch_models.py (files and sizes) and utils/capabilities.py (recommend_krea2_strategy's measured memory); since
+# Fizgig 7.0.1 (commit 1c8ec88) also families/krea2.py (Auto order and memory figures).
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: Fizgig has no FamilyDescription for Krea 2 (it predates the family layer), so this one is
 # assembled from those sources - every value cites its file; the presets keep Fizgig's keys and values verbatim (legacy
@@ -97,24 +98,21 @@ KREA2 = FamilyDescription(
     ema_default="0.98",                                      # lora_trainer_gui.py:1004-1005 (Peter, 9 Sep 2026)
     implementation="https://github.com/krea-ai/krea-2",      # Fizgig training/metadata.py IMPL_KREA2
     precisions=("bf16", "fp8", "int8", "nf4"),
-    # Fizgig's Auto ladder for Krea 2 (utils/capabilities.py recommend_krea2_strategy): INT8 with no swap, then NF4
-    # with no swap, then fp8 with no swap, then fp8 with as few swapped blocks as fit. INT8 and NF4 are skipped on a
-    # machine that cannot run them (no torch._int_mm / no bitsandbytes), which leaves fp8.
-    auto_order=("int8", "nf4", "fp8"),
-    auto_swap_order=("fp8",),
-    # Measured by Fizgig (utils/capabilities.py: _INT8_PEAK_GB, _NF4_PEAK_GB, _RES_GB_PER_MP, _SWAP_GB_PER_BLOCK,
-    # _MAX_SWAP_KREA2), 5090, 28 Jul 2026, gradient checkpointing, batch 1, rank 32, training-only peaks at 0.25 MP:
-    #   INT8 16.2 GB, NF4 11.4 GB fp8 18.7 GB. Resolution: +0.15 GB from 0.25 to 1.05 MP
-    #   measured, budgeted at 0.25 GB/MP -> (0.25, base), (1.0, base + 0.2). Batch: +2.4 GB per extra image (not
-    #   modelled by the Auto plan: use batch 1 on a tight card). Rank: +0.015 GB per rank above 32.
-    # Swap: 0.42 GB saved per swapped block, MEASURED WITH FP8 weights (18.7 - 0.42 * swap); INT8 stores the same one
-    #   byte per weight, so the same figure is used for it (an inference, not a measurement). Max swap 26 (28 blocks,
-    #   2 stay resident). NF4 cannot swap.
-    # bf16 has NO entry: Fizgig never measured it (12.9B x 2 bytes = ~26 GB of weights alone), so Auto never picks
-    #   it; it stays selectable for cards with 32 GB or for a manual block swap (about 0.8 GB per block, unmeasured).
-    # fp8: 18.7 GB MEASURED (_FP8_PEAK_GB), 0.42 GB per swapped block MEASURED on fp8 (18.7 - 0.42 * swap).
-    train_memory={"fp8": (((0.25, 18.7), (1.0, 18.9)), 0.42), "int8": (((0.25, 16.2), (1.0, 16.4)), 0.42),
-                  "nf4": (((0.25, 11.4), (1.0, 11.6)), 0.0)},
+    # Fizgig's Auto for Krea 2 (families/krea2.py auto_precisions, v7.0.1): INT8 with no swap, then NF4 with no swap,
+    # then INT8 with as few swapped blocks as fit, then NF4 as the smallest base. bf16 and fp8 are manual choices (fp8 is
+    # TagScribeR's: Fizgig dropped it as a Krea 2 base in 6.8.0). INT8 and NF4 are skipped on a machine that cannot run
+    # them (no torch._int_mm / no bitsandbytes); with neither, Auto falls back to fp8 (training/quant.py plan).
+    auto_precisions=("int8", "nf4"),
+    # Fizgig's figures (families/krea2.py train_memory, v7.0.1): the original trainer's measured 0.25 MP peaks
+    # (utils/capabilities.py: 5090, batch 1, rank 32; 0.42 GB saved per swapped INT8 block) and the driver's measured
+    # growth to 1 MP on full-size photos (5090, rank 8, previews off): INT8 +2.9 GB, NF4 13.4 GB at 1 MP. "The
+    # original's +0.25 GB/MP under-plans 1 MP: INT8 + 16 swapped blocks ran out on a 12 GB card." bf16 measured on the
+    # driver, rank 8, 0.25 MP, 26.0 GB; its 1 MP point carries INT8's growth. Max swap 26 (28 blocks, 2 stay resident);
+    # NF4 cannot swap. Batch: +2.4 GB per extra image (not modelled by the Auto plan: use batch 1 on a tight card).
+    # fp8 (TagScribeR only): 18.7 GB at 0.25 MP and 0.42 GB per swapped block MEASURED by the original trainer
+    #   (_FP8_PEAK_GB); its 1 MP point is INFERRED the way Fizgig infers bf16's, by carrying INT8's +2.9 GB.
+    train_memory={"int8": (((0.25, 16.2), (1.0, 19.1)), 0.42), "nf4": (((0.25, 11.4), (1.0, 13.4)), 0.0),
+                  "bf16": (((0.25, 26.0), (1.0, 28.9)), 0.84), "fp8": (((0.25, 18.7), (1.0, 21.6)), 0.42)},
     # Fizgig's Krea 2 list is its whole optimizer catalogue (optimizers.available_optimizers). Automagic v3 runs as
     # Fizgig runs it (krea2/trainer.py:2559-2594): the LoRA split into txtfusion / attn / mlp / io groups that each
     # vote their own rate, sign window 16, the LR box is only its start rate, and Adaptive LR, the LR scheduler, the

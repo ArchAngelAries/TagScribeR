@@ -1,6 +1,8 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/families/quant.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: import paths, env var prefix TAGSCRIBER_; the quantised Linears come from the driver's
+# Changes for TagScribeR: import paths, env var prefix TAGSCRIBER_; fp8 as a base precision (kept, or quantised to, one
+# byte per weight with a dequantising forward) and Auto's fallback when the machine runs neither INT8 nor NF4 (probed
+# by `available`); a family's own swap base (`auto_swap_order`); the quantised Linears come from the driver's
 # quant_target_names (the LoRA targets unless a family narrows them); a module flagged `_prequantized` (MiniMax H3's ConvRot
 # int8 Linear) is left alone for INT8 and read through its `dense_weight()` for NF4; otherwise unchanged.
 """Quantised frozen bases for described families: INT8 (W8A8) and 4-bit NF4, on the Linears of the driver's block map.
@@ -188,10 +190,12 @@ def plan(desc, driver, precision="auto", blocks_to_swap=-1, free_gb=None, margin
         free_gb = free_vram_gb()
     mem = {p: (_peak(v, megapixels), v[1]) for p, v in (desc.train_memory or {}).items()}
     offered = [p for p in PRECISIONS if p in desc.precisions]
-    # a family may state its own Auto preference (Fizgig's Krea 2 order is INT8, then NF4, then fp8, and it swaps
-    # on fp8); precisions this machine cannot run are left out of Auto, with the reason logged
-    order = [p for p in (getattr(desc, "auto_order", ()) or offered) if p in offered]
-    swap_order = [p for p in (getattr(desc, "auto_swap_order", ()) or ("int8", "bf16")) if p in offered]
+    # a family may state what Auto may choose (Fizgig's Krea 2: INT8, then NF4) and, in TagScribeR, what it may swap
+    # (Klein: its fp8 base); otherwise Fizgig's rule, int8 then bf16 of those Auto may choose. Precisions this
+    # machine cannot run are left out of Auto, with the reason logged
+    order = [p for p in (getattr(desc, "auto_precisions", ()) or offered) if p in offered]
+    own_swap = getattr(desc, "auto_swap_order", ())
+    swap_order = [p for p in own_swap if p in offered] or [p for p in ("int8", "bf16") if p in order]
     if precision == "auto":
         for p in list(dict.fromkeys(order + swap_order)):
             ok, why = available(p)
@@ -199,6 +203,9 @@ def plan(desc, driver, precision="auto", blocks_to_swap=-1, free_gb=None, margin
                 logger.info(f"[precision] Auto skips {p}: {why}")
                 order = [x for x in order if x != p]
                 swap_order = [x for x in swap_order if x != p]
+        if not order and "fp8" in offered:  # TagScribeR: no INT8 kernel and no bitsandbytes - the fp8 base still runs
+            logger.info("[precision] Auto falls back to fp8, which needs no special kernel")
+            order, swap_order = ["fp8"], ["fp8"]
     cap = driver.max_blocks_to_swap()
     budget = free_gb - margin_gb
 

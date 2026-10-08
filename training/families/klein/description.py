@@ -47,6 +47,12 @@ KLEIN_9B = FamilyDescription(
                   "fetch_models.py); the bf16 file (~17 GB) works too. Gated repos: accept Black Forest Labs' "
                   "licence on Hugging Face first. Not the Distilled model.",
                   role="dit"),
+        ModelFile("klein_distilled_dit", "Klein 9B Distilled DiT (previews)", False,
+                  "black-forest-labs/FLUX.2-klein-9b-fp8", "flux-2-klein-9b-fp8.safetensors", 9.0,
+                  "Optional: the 4-step Distilled model, for fast training previews that match ComfyUI (Samples: "
+                  "'Use Distilled model for samples', on by default). Never trained. Gated repo: accept Black Forest "
+                  "Labs' licence first. Without it, previews render the Base model at 40 steps.",
+                  role="preview_dit"),                       # Fizgig 7.0.1 families/klein.py distilled_dit
         ModelFile("klein_vae", "FLUX.2 AE (ae.safetensors)", True, "black-forest-labs/FLUX.2-dev", "ae.safetensors",
                   0.32,
                   "The AE from the ROOT of the FLUX.2-dev repo (a gated repo) - not the diffusers-format file in its "
@@ -137,9 +143,15 @@ KLEIN_9B = FamilyDescription(
                          source="Fizgig ARCHITECTURES sample_steps_default 40, sample_cfg_default 4.5 "
                                 "(lora_trainer_gui.py:322-345) + klein/model_utils.py get_schedule / denoise_cfg"),
     ),
-    # Fizgig previews on the Distilled model (4 steps, a second ~9 GB model) when its file is given - NOT PORTED: the
-    # generic layer previews on the resident training model, so this is Fizgig's no-Distilled fallback (Base, 40 steps,
-    # CFG 4.5).
+    # Fizgig 7.0.1: previews render on the Distilled checkpoint (4 steps, CFG 1, ComfyUI's Euler simple schedule at
+    # shift 2.02) when its file is set and "Use Distilled model for samples" is on (the default), the training model
+    # parked meanwhile; otherwise on the training model at Base's 40 steps / CFG 4.5.
+    train_preview_checkpoint=True,
+    preview_checkpoint_sampling=SamplingSettings(
+        "Distilled 4-step", steps=4, cfg=1.0, sampler="euler", scheduler="simple",
+        options=(("schedule", "simple"), ("shift", 2.02), ("guidance", 1.0)),
+        note="Guidance-distilled: no CFG; ComfyUI's Euler simple schedule at shift 2.02.",
+        source="Fizgig families/klein.py preview_checkpoint_sampling (training/trainer.py sample_image_inference)"),
     preview_steps=40,
     preview_cfg=4.5,
     preview_width=768,                                       # ARCHITECTURES sample_width_default 768

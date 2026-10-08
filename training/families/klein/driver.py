@@ -224,6 +224,75 @@ class KleinDriver(FamilyDriver):
         """Fizgig cache_text.py: (512, 12288) per caption, bf16."""
         return [{"text_embed": h.to(torch.bfloat16).cpu()} for h in te.encode(list(captions))]
 
+    # ---- Distilled training previews: the old trainer's model handoff (Fizgig 7.0.1 klein/driver.py) ------------
+    def park_for_preview(self, dit, device):
+        """Maximum block swap on the training model so the Distilled fits beside it: 6 double + 22 single, per type.
+        An NF4 base cannot swap and is small - left as it is (token None)."""
+        if getattr(dit, "_nf4_quantized", False):
+            return None
+        orig = int(dit.blocks_to_swap or 0)
+        nd, ns = dit.num_double_blocks - 2, dit.num_single_blocks - 2
+        dit.enable_block_swap(nd + ns, torch.device(device), True, double_blocks_to_swap=nd,
+                              single_blocks_to_swap=ns)
+        dit.prepare_block_swap_before_forward()
+        return orig
+
+    @staticmethod
+    def _preview_swap(nd=N_DOUBLE, ns=N_SINGLE):
+        """The Distilled's own swap by card (Fizgig _auto_distilled_sample_swap): 23 GB+ none, 15-22 GB 16 (split by
+        type), under 15 GB the maximum per type. TAGSCRIBER_SIM_VRAM_GB simulates a card."""
+        import os
+        sim = os.environ.get("TAGSCRIBER_SIM_VRAM_GB", "").strip()
+        if sim:
+            gb = float(sim)
+        elif torch.cuda.is_available():
+            gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+        else:
+            return 0, None, None
+        if gb >= 23:
+            return 0, None, None
+        if gb >= 15:
+            return 16, None, None
+        return (nd - 2) + (ns - 2), nd - 2, ns - 2
+
+    def load_preview_checkpoint(self, path, device, int8=False):
+        """The Distilled DiT: loaded on the CPU when it streams, optionally INT8 (before the swap and the LoRA),
+        forward-only block swap. -> (model, swapped blocks)."""
+        from training.families.klein.model import load_klein_dit
+        n, nd, ns = self._preview_swap()
+        device = torch.device(device)
+        loading = torch.device("cpu") if n else device
+        m = load_klein_dit(path, device=loading)
+        m.set_attn_mode(ATTENTION_MODES[self.attention_mechanism])
+        if int8:
+            from training.modules.int8 import apply_int8_quantization
+            apply_int8_quantization(m, target_keys=("double_blocks", "single_blocks"),
+                                    exclude_keys=("norm", "pe_embedder", "time_in", "_modulation"),
+                                    compute_device=device if device.type == "cuda" else loading)
+        if n:
+            m.enable_block_swap(n, device, supports_backward=False, double_blocks_to_swap=nd,
+                                single_blocks_to_swap=ns)
+            m.move_to_device_except_swap_blocks(device)
+        else:
+            m.to(device)
+        m.prepare_block_swap_before_forward()
+        return m.eval().requires_grad_(False), n
+
+    def unpark_after_preview(self, dit, device, token):
+        """The run's own swap back (re-placing the parked blocks), or, with none, the preview's offloaders torn down -
+        their backward hooks would otherwise fire on the next backward - and the model back on the device."""
+        if token is None:
+            return
+        device = torch.device(device)
+        if token > 0:
+            dit.enable_block_swap(token, device, True)
+            dit.move_to_device_except_swap_blocks(device)
+        else:
+            from training import quant
+            dit.disable_block_swap()
+            quant.move(dit, device)
+        dit.switch_block_swap_for_training()
+
     # ---- edit training (Fizgig 7.0.1: references reach the DiT as latents only) -------------------------------
     supports_references = True
 
@@ -282,10 +351,17 @@ class KleinDriver(FamilyDriver):
                  noise=None, on_step=None, refs=None):
         device = next(dit.parameters()).device
         neg = self._text(neg_cond, device) if neg_cond is not None and cfg > 1.0 else None
+        opts = dict(options)
+        if sigmas is not None and len(sigmas) == steps:
+            schedule = [float(s) for s in sigmas] + [0.0]
+        elif opts.get("schedule") == "simple":            # the Distilled previews (Fizgig 7.0.1)
+            schedule = S.get_simple_euler_schedule(steps, float(opts.get("shift", 2.02)))
+        else:
+            schedule = None                                 # the empirical-mu schedule
         return S.sample_latents(dit, self._text(cond, device), neg, device=device,
                                 width=S.roundup(width, 16, "width"), height=S.roundup(height, 16, "height"),
                                 steps=steps, cfg=cfg, seed=seed, noise=noise, on_step=on_step,
-                                channels=getattr(dit, "in_channels", 128), refs=refs)
+                                channels=getattr(dit, "in_channels", 128), refs=refs, schedule=schedule)
 
     @torch.no_grad()
     def decode(self, vae, latents, width, height):

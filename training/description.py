@@ -27,7 +27,8 @@ class ModelFile:
     size_gb: float = 0.0
     note: str = ""                    # one plain line shown under the row
     local_name: str = ""              # name in models/ when the repo's own is generic (diffusion_pytorch_model...)
-    role: str = ""                    # "dit" | "vae" | "text_encoder" | "training_adapter" | "speed_lora" | ""
+    role: str = ""                    # "dit" | "vae" | "text_encoder" | "training_adapter" | "speed_lora" |
+    #                                   "preview_dit" (a second checkpoint previews render on) | ""
     default_to: str = ""              # role whose file stands in when this row is left empty (SDXL: the VAE and the text
     #                                   encoders live inside the checkpoint, so an empty row means "use the checkpoint")
 
@@ -183,6 +184,10 @@ class FamilyDescription:
     preview_negative: str = ""        # the family's default preview negative prompt ("" = the app default); tag-
     #                                   trained models want tag-style negatives
     preview_speed_lora: str = ""      # name of the SpeedLoRA previews use when its file is set in Settings
+    # previews may render on a second checkpoint (the model file with role "preview_dit", Klein's Distilled) with its
+    # own recipe, the training model parked meanwhile (Fizgig 7.0.1 train_preview_checkpoint)
+    train_preview_checkpoint: bool = False
+    preview_checkpoint_sampling: Optional[SamplingSettings] = None
     preview_speed_steps: int = 0      # preview steps with it (0 = the SpeedLoRA's own)
     preview_speed_strength: Optional[float] = None   # preview strength for it (None = the SpeedLoRA's own; 0 = off
     # by default: previews render without it until the Samples tab's Turbo strength is raised)
@@ -241,6 +246,11 @@ class FamilyDescription:
 
     def block_ids(self) -> list:
         return [f"{self.block_prefix}_{i}" for i in range(self.n_blocks)]
+
+    def preview_checkpoint(self):
+        """(ModelFile, SamplingSettings) of the family's preview checkpoint, or None."""
+        f = next((m for m in self.model_files if m.role == "preview_dit"), None)
+        return (f, self.preview_checkpoint_sampling) if f is not None and self.preview_checkpoint_sampling else None
 
     def preview_speed(self):
         """The SpeedLoRA used for in-training previews, or None."""

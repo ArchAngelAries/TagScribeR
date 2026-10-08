@@ -222,7 +222,8 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
         used = f.role in ("dit", "vae", "text_encoder") or \
             (f.role == "training_adapter" and values.get("FAMILY_TRAINING_ADAPTER", True)) or \
             (f.role == "speed_lora" and values.get("SAMPLE_ENABLED") and float(values.get("FAMILY_TURBO_STRENGTH",
-                                                                                         -1) or 0) != 0)
+                                                                                         -1) or 0) != 0) or \
+            (f.role == "preview_dit" and values.get("SAMPLE_ENABLED") and values.get("SAMPLE_USE_DISTILLED", True))
         if f.required and not os.path.isfile(path):
             err(f"Model file missing: {f.label} - set it under Model files" + (f" ({f.repo})" if f.repo else ""))
         elif used and path and not os.path.isfile(path):
@@ -439,6 +440,13 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                     # two are equal)
                     if kw.get("sample_steps") == desc.preview_steps:
                         kw["sample_steps"] = desc.preview_speed_defaults()[0]
+            ck = desc.preview_checkpoint()
+            if desc.train_preview_checkpoint and ck and values.get("SAMPLE_USE_DISTILLED", True):
+                ck_path = (models.get(ck[0].pref_key) or "").strip()
+                if ck_path and os.path.isfile(ck_path):        # Klein's "Use Distilled model for samples"
+                    kw.update(preview_checkpoint=ck_path,
+                              preview_checkpoint_cache=str(values.get("CACHE_SAMPLE_MODEL") or "auto"),
+                              preview_int8=bool(values.get("PREVIEW_INT8")))
             if edit:
                 ref = str(values.get("FAMILY_EDIT_REF") or "").strip() or \
                     (edit_pairs(image_folder, str(values.get("FAMILY_EDIT_DIR") or ""))[2] or "")

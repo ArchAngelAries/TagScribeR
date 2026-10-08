@@ -401,3 +401,42 @@ def test_train_blocks_reach_the_loop_and_the_metadata(setup):
     with safe_open(str(run.run_dir / "tiny_lora.safetensors"), framework="pt") as f:
         assert f.metadata()["ss_train_blocks"] == "block_1"
         assert all(".blocks.1." in k for k in f.keys())
+
+
+def test_checkpoint_previews_load_reuse_and_restore(tmp_path):
+    """training/train.py _CheckpointPreviews (Fizgig 7.0.1): the epoch's LoRA rides on the preview checkpoint as a
+    frozen adapter; with the RAM cache the checkpoint is reused next epoch with the new LoRA swapped in; the
+    training model is parked and restored around every render and the RNG state is untouched."""
+    from tests.tiny_family import TinyDiT, register
+    from training import train
+    from training.lora import FamilyLoRA
+    desc = register()
+    drv = desc.load_driver()
+    calls = []
+    drv.park_for_preview = lambda dit, dev: calls.append("park") or "token"
+    drv.unpark_after_preview = lambda dit, dev, tok: calls.append(("unpark", tok))
+
+    def load(path, dev, int8=False):
+        calls.append("load")
+        return TinyDiT().requires_grad_(False), 0
+    drv.load_preview_checkpoint = load
+    torch.manual_seed(0)
+    dit = TinyDiT().requires_grad_(False)
+    net = FamilyLoRA(dit, drv)
+    net.add_trainable(4, 4)
+    ck = train._CheckpointPreviews(drv, "unused.safetensors", "cpu", cache_mode="on", scratch_dir=str(tmp_path))
+    seen = []
+
+    def render(m, fl, swapped):
+        w = next(w for w in fl.wrapped.values() if train.TRAINABLE_PREVIEW in w.adapters)
+        seen.append(w.adapters[train.TRAINABLE_PREVIEW][1].weight.detach().float().abs().sum().item())
+        return ["preview.png"]
+    rng = torch.get_rng_state()
+    assert ck.render(dit, net, None, render) == ["preview.png"]
+    with torch.no_grad():
+        for p in net.parameters():
+            p.add_(0.1)                                    # the next epoch's LoRA
+    ck.render(dit, net, None, render)
+    assert calls == ["park", "load", ("unpark", "token"), "park", ("unpark", "token")]   # loaded once, then reused
+    assert seen[0] == 0.0 and seen[1] > 0                  # the reused checkpoint carries the new LoRA
+    assert torch.equal(torch.get_rng_state(), rng) and not list(tmp_path.glob("*.safetensors"))

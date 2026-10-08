@@ -9,8 +9,9 @@
 # `batch_cond`, `step_policy`, `after_optimizer_step`, `run_metadata`, `frozen_file_added`, `park_for` / `unpark`,
 # `save_preview`, `plan_run`, `auto_uncompiled_precision`, `load_planned` (+ `loads_quantized`, `int8_fp32_scales`), `alias_flat`,
 # `compile_targets` / `compile_blocks` / `compile_plan` (shared torch.compile, decided on the empty card),
-# `convert_lora_state_dict`. Not yet (they arrive with their features): sliders, fine-tune, clips, preview
-# checkpoints, legacy state order, `cache_stage`.
+# `park_for_preview` / `load_preview_checkpoint` / `unpark_after_preview` (previews on a preview checkpoint),
+# `convert_lora_state_dict`. Not yet (they arrive with their features): sliders, fine-tune, clips,
+# legacy state order, `cache_stage`.
 """FamilyDriver: the one interface a new model family implements.
 
 The generic code - caching, training, previews, the LoRA layer and the Train tab - talks to a family ONLY through
@@ -112,6 +113,20 @@ class FamilyDriver:
         """Write one decoded preview at `path` and return the files written. Default: the PNG."""
         result.save(path)
         return [path]
+
+    # ---- training previews on the preview checkpoint (descriptions with train_preview_checkpoint) ------------
+    def park_for_preview(self, dit, device):
+        """Free VRAM on the training model for the preview checkpoint; returns a token for unpark_after_preview."""
+        raise NotImplementedError
+
+    def load_preview_checkpoint(self, path, device, int8=False):
+        """The preview checkpoint, frozen, ready to render beside the parked training model -> (model, swapped
+        blocks)."""
+        raise NotImplementedError
+
+    def unpark_after_preview(self, dit, device, token) -> None:
+        """Put the training model back exactly as training had it."""
+        raise NotImplementedError
 
     # ---- torch.compile (descriptions with compiles=True) ------------------------------------------------
     def compile_targets(self, dit):

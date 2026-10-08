@@ -321,6 +321,21 @@ PARAMS: tuple[Param, ...] = (
     P("FAMILY_TURBO_STRENGTH", "Turbo LoRA strength", FLOAT, -1.0, "Samples",
       "The family's speed LoRA for fast previews (needs its file under Model files). 0 = previews without it; "
       "-1 = the family default.", preset=False, minimum=-1.0, maximum=2.0, family_only="speed"),
+    # Klein's Distilled previews (Fizgig 7.0.1 "Use Distilled model for samples", CACHE_SAMPLE_MODEL, inference INT8)
+    P("SAMPLE_USE_DISTILLED", "Use Distilled model for samples (4-step, matches ComfyUI)", BOOL, True, "Samples",
+      "Render previews on the Distilled model (set its file under Model files): 4 steps, no CFG, ComfyUI's Euler "
+      "simple schedule, so they look like ComfyUI renders of your LoRA. The training model steps aside while they "
+      "render. Steps, CFG and the negative prompt apply only to Base previews. Without the file, previews use the "
+      "training model.", preset=False, family_only="preview_ckpt"),
+    P("CACHE_SAMPLE_MODEL", "Keep the sample model in RAM", CHOICE, "auto", "Samples",
+      "Keeps the ~10 GB Distilled model in system RAM between epochs so it isn't read from disk every time (a few "
+      "seconds per epoch saved). auto = only when at least 18 GB of RAM is free; off = reload each time. Only used "
+      "when the Distilled model isn't block-swapped (24 GB+ cards).", options=("auto", "on", "off"), preset=False,
+      advanced=True, family_only="preview_ckpt"),
+    P("PREVIEW_INT8", "INT8 sample model", BOOL, False, "Samples",
+      "Quantise the Distilled sample model to INT8 at load: less VRAM and faster previews on GPUs with INT8 matmuls "
+      "(NVIDIA 30-series and newer). Previews only; training is not affected.", preset=False, advanced=True,
+      family_only="preview_ckpt"),
     P("FAMILY_EDIT_REF", "Edit preview photo", PATH, "", "Samples",
       "Edit LoRA: the photo every preview applies the edit to (empty = the first original).", preset=False,
       family_only="edit"),
@@ -412,6 +427,8 @@ def family_shows(param: Param, desc) -> bool:
         return "lokr" in desc.network_types
     if f == "edit":
         return bool(desc.edit_training)
+    if f == "preview_ckpt":
+        return bool(desc.train_preview_checkpoint)
     if f == "fast_id":
         return bool(desc.identity_blocks)
     if f == "speed":

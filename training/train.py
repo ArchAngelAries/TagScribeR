@@ -11,7 +11,8 @@
 # The pause contract, state dirs, resume, schedulers, EMA, adapters and file naming are Fizgig's.
 # Brought level with Fizgig 7.0.1 (commit 1c8ec88): the final save also kept under its epoch number (#176); a failed
 # preview undoes exactly what it changed; CFG above 1 honoured with a speed LoRA; preview time left out of the bar's
-# s/it; the resumed schedule fast-forwarded by whole optimizer steps with accumulation; an explicit thumbnail kept.
+# s/it; the resumed schedule fast-forwarded by whole optimizer steps with accumulation; an explicit thumbnail kept;
+# previews on a preview checkpoint (_CheckpointPreviews, Klein's Distilled).
 """The LoRA trainer for any family, driven through the family's driver.
 
     python -m training.train --config RUN_FOLDER/train_config.json
@@ -53,6 +54,7 @@ logger = logging.getLogger("training.train")
 ADAPTER = "training_adapter"
 CONTEXT = "context"
 SPEED = "speed_lora"
+TRAINABLE_PREVIEW = "preview_lora"     # the epoch's LoRA, frozen on a preview checkpoint
 PAUSE_FILE = ".pause_requested"
 OVERRIDE_FILE = ".sample_override.json"
 
@@ -295,6 +297,95 @@ def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_n
     return paths
 
 
+class _CheckpointPreviews:
+    """Training previews on the family's preview checkpoint (train_preview_checkpoint: Klein's Distilled), with the old
+    Klein trainer's memory handoff (Fizgig 7.0.1 families/train.py): the driver parks the training model, loads the
+    checkpoint (its own swap by card, optionally INT8), the epoch's LoRA - the live adapter, EMA weights if EMA is on -
+    and the context LoRA ride on it as frozen adapters, and the training model is put back exactly. Between epochs the
+    checkpoint stays in system RAM when it isn't block-swapped and the cache mode allows (auto: decided once per run,
+    free RAM >= 18 GB); any failure to reuse it falls back to a fresh load."""
+
+    def __init__(self, driver, path, device, cache_mode="auto", int8=False, context=None, scratch_dir=None):
+        self.driver, self.path, self.device = driver, path, torch.device(device)
+        self.cache_mode, self.int8, self.context = str(cache_mode or "auto").lower(), bool(int8), context
+        self.cached = None                 # (model, FamilyLoRA, swapped) on the CPU between epochs
+        self._auto = None
+        import tempfile
+        self._lora_file = os.path.join(scratch_dir or tempfile.gettempdir(),
+                                       f"tagscriber_preview_lora_{os.getpid()}.safetensors")
+
+    def _cache_on(self, swapped):
+        if self.cache_mode == "off" or swapped:
+            return False
+        if self.cache_mode == "on":
+            return True
+        if self._auto is None:
+            try:
+                import psutil
+                self._auto = psutil.virtual_memory().available / 1e9 >= 18.0
+            except Exception:
+                self._auto = False
+        return self._auto
+
+    def render(self, dit, net, ema, render):
+        """Park, put the checkpoint up with this epoch's LoRA, call render(model, adapters, swapped), restore."""
+        if ema is not None:
+            ema.swap_in()
+        try:
+            net.save(self._lora_file, dtype=torch.bfloat16)
+        finally:
+            if ema is not None:
+                ema.swap_out()
+        rng = torch.get_rng_state()
+        cuda_rng = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+        token = self.driver.park_for_preview(dit, self.device)
+        m = fl = None
+        swapped = 0
+        try:
+            gc.collect()
+            _empty_cache()
+            if self.cached is not None:
+                try:
+                    m, fl, swapped = self.cached
+                    self.cached = None
+                    quant.move(m, self.device)
+                    fl.swap_file(TRAINABLE_PREVIEW, self._lora_file)
+                    logger.info("[sample] preview checkpoint reused from RAM (no disk reload)")
+                except Exception:
+                    logger.warning("[sample] preview checkpoint reuse failed - reloading from disk", exc_info=True)
+                    m = fl = None
+            if m is None:
+                m, swapped = self.driver.load_preview_checkpoint(self.path, self.device, int8=self.int8)
+                fl = FamilyLoRA(m, self.driver, device=self.device)
+                fl.add_file(self._lora_file, TRAINABLE_PREVIEW)
+                if self.context:
+                    fl.add_file(self.context[0], CONTEXT, self.context[1])
+                logger.info(f"[sample] previews on {os.path.basename(self.path)}"
+                            + (f" ({swapped} blocks streamed)" if swapped else ""))
+            return render(m, fl, swapped)
+        finally:
+            keep = m is not None and self._cache_on(swapped)
+            if keep:
+                try:
+                    quant.move(m, "cpu")
+                    self.cached = (m, fl, swapped)
+                except Exception:
+                    logger.warning("[sample] could not keep the preview checkpoint in RAM", exc_info=True)
+                    self.cached = None
+            del m, fl
+            gc.collect()
+            gc.collect()
+            _empty_cache()
+            self.driver.unpark_after_preview(dit, self.device, token)
+            torch.set_rng_state(rng)
+            if cuda_rng is not None:
+                torch.cuda.set_rng_state_all(cuda_rng)
+            try:
+                os.remove(self._lora_file)
+            except OSError:
+                pass
+
+
 def train_family(family, dit_path, dataset_config, output_dir, output_name, *, network_dim=32, network_alpha=32,
                  learning_rate=1e-4, max_train_epochs=16, save_every_n_epochs=1, save_state=False,
                  save_state_on_train_end=False, keep_last_n_states=2, seed=42, precision="bf16",
@@ -313,7 +404,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                  gradient_accumulation=1,
                  log_per_image_loss=False, per_image_lr=False, auto_recaption=False, warmup_look_outliers=False,
                  trigger_word=None, trigger_position="start", captioner=None, device=None, driver_options=None,
-                 train_blocks=None):
+                 train_blocks=None, preview_checkpoint=None, preview_checkpoint_cache="auto", preview_int8=False):
     desc = get_family(family)
     if desc is None or not desc.training_ready:
         raise RuntimeError(f"unknown or untrainable family {family!r}")
@@ -562,6 +653,21 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
 
     last_prompt = [None]
     previews_on = [True]
+    ckpt_previews = None
+    if preview_checkpoint and encoded is not None:
+        if not desc.train_preview_checkpoint:
+            logger.warning(f"[sample] {desc.display_name} has no checkpoint previews - ignoring the preview checkpoint")
+        elif not os.path.isfile(preview_checkpoint):
+            logger.warning(f"[sample] preview checkpoint {preview_checkpoint} not found - previews use the training "
+                           f"model")
+        else:
+            ckpt_previews = _CheckpointPreviews(
+                driver, preview_checkpoint, device, preview_checkpoint_cache, preview_int8,
+                context=(context_lora_path, context_lora_strength) if context_lora_path else None,
+                scratch_dir=output_dir)
+            ck = desc.preview_checkpoint_sampling
+            logger.info(f"[sample] previews render on {os.path.basename(preview_checkpoint)} ({ck.name}: {ck.steps} "
+                        f"steps, CFG {ck.cfg:g}); the training model is parked meanwhile")
 
     def metadata(epoch):
         thumb = None if (metadata_thumbnail or "").lower() in ("off", "none") else (
@@ -620,11 +726,18 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         if not sd:          # seed 0 = a fresh random seed every preview round
             sd = random.randint(1, 2 ** 31 - 1)
         try:
-            paths = _render_previews(driver, dit, net, vae, conds, sample_dir, epoch, output_name=output_name,
-                                     steps=sample_steps, cfg=sample_cfg_scale, neg=neg, width=w, height=h,
-                                     seed=sd, ema=ema,
-                                     speed=speed_desc.settings if (speed_lora and speed_desc) else None,
-                                     lowmem=lowmem, swapped=bool(swapped), refs=ref_latents)
+            if ckpt_previews is not None:   # the checkpoint's own recipe (Distilled: 4 steps, no CFG)
+                ck = desc.preview_checkpoint_sampling
+                paths = ckpt_previews.render(dit, net, ema, lambda m, fl, swp: _render_previews(
+                    driver, m, fl, vae, conds, sample_dir, epoch, output_name=output_name, steps=ck.steps,
+                    cfg=ck.cfg, neg=None, width=w, height=h, seed=sd, speed=ck, swapped=bool(swp),
+                    refs=ref_latents))
+            else:
+                paths = _render_previews(driver, dit, net, vae, conds, sample_dir, epoch, output_name=output_name,
+                                         steps=sample_steps, cfg=sample_cfg_scale, neg=neg, width=w, height=h,
+                                         seed=sd, ema=ema,
+                                         speed=speed_desc.settings if (speed_lora and speed_desc) else None,
+                                         lowmem=lowmem, swapped=bool(swapped), refs=ref_latents)
         except Exception:
             previews_on[0] = False
             logger.exception(f"[sample] epoch {epoch}: preview failed - previews are off for the rest of this run; "

@@ -183,6 +183,19 @@ def get_schedule(num_steps: int, image_seq_len: int, flow_shift=None) -> list:
     return timesteps.tolist()
 
 
+def get_simple_euler_schedule(num_steps: int, shift: float = 2.02) -> list:
+    """ComfyUI's Euler Simple schedule for Flux2 / Klein (ModelSamplingFlux(shift) + simple_scheduler): 10000 sigmas
+    by flux_time_shift(shift, 1, t), num_steps evenly spaced from the end, then 0. Resolution-independent - the
+    Distilled previews' schedule (Fizgig 7.0.1 klein/model_utils.py get_simple_euler_schedule)."""
+    n_sigmas = 10000
+    t = torch.arange(1, n_sigmas + 1, dtype=torch.float64) / n_sigmas
+    sigmas = torch.tensor([math.exp(shift) / (math.exp(shift) + (1.0 / ti - 1.0) ** 1.0) for ti in t.tolist()])
+    ss = n_sigmas / num_steps
+    schedule = [float(sigmas[-(1 + int(x * ss))]) for x in range(num_steps)]
+    schedule.append(0.0)
+    return schedule
+
+
 def roundup(value, multiple, name):
     aligned = ((value + multiple - 1) // multiple) * multiple
     if aligned != value:
@@ -198,7 +211,7 @@ def initial_noise(seed, width, height, channels=128):
 
 @torch.no_grad()
 def sample_latents(dit, ctx, neg_ctx, *, device, width, height, steps, cfg, seed, noise=None, on_step=None,
-                   channels=128, refs=None):
+                   channels=128, refs=None, schedule=None):
     """Fizgig do_inference (Base model, no reference image): Euler over get_schedule; with a negative prompt and
     cfg > 1, classifier-free guidance pred = uncond + cfg * (cond - uncond) (two passes); latents stay bf16 through the
     loop and the DiT runs under bf16 autocast, as denoise() / denoise_cfg() do. ctx / neg_ctx (1, T, D).
@@ -209,7 +222,7 @@ def sample_latents(dit, ctx, neg_ctx, *, device, width, height, steps, cfg, seed
     use_cfg = neg_ctx is not None and cfg > 1.0
     if use_cfg:
         neg_ctx, neg_ids = pack_txt(neg_ctx.to(device=device, dtype=torch.bfloat16))
-    timesteps = get_schedule(steps, x.shape[1])
+    timesteps = schedule if schedule is not None else get_schedule(steps, x.shape[1])
     n = x.shape[1]
     ref_tok, ref_ids = pack_refs([r.to(device=device, dtype=torch.bfloat16) for r in refs] if refs else None)
     total = len(timesteps) - 1

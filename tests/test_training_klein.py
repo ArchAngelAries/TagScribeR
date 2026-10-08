@@ -57,7 +57,7 @@ def test_description_is_valid_and_registered(desc):
     assert "automagic3" in desc.optimizers and "lion8bit" in desc.optimizers
     assert desc.speed_loras == () and desc.preview_speed() is None
     assert (desc.preview_steps, desc.preview_cfg, desc.preview_width) == (40, 4.5, 768)
-    assert {desc.pref_for(r) for r in ("dit", "vae", "text_encoder")} == set(desc.pref_keys)
+    assert {desc.pref_for(r) for r in ("dit", "vae", "text_encoder", "preview_dit")} == set(desc.pref_keys)
     assert all(k in P.BY_KEY for k in desc.family_options)
     assert {k for k in desc.family_options} <= set(P.DRIVER_OPTIONS)
 
@@ -674,3 +674,56 @@ def test_edit_references_ride_after_the_image_tokens(desc, driver, tmp_path):
     assert P.family_shows(P.BY_KEY["FAMILY_EDIT"], desc)
     ds = pipeline.dataset_config(desc, vals, str(tmp_path), None)
     assert ds["datasets"][0]["control_directory"] == str(tmp_path.resolve())
+
+
+def test_distilled_previews_settings_and_schedule(desc, tmp_path):
+    """Fizgig 7.0.1: "Use Distilled model for samples" (on by default) sends the Distilled file as the preview
+    checkpoint, with the RAM-cache mode and INT8; its recipe is 4 steps, no CFG, ComfyUI's simple schedule at 2.02."""
+    from training.families.klein import sampling as Ks
+    ck_file, ck = desc.preview_checkpoint()
+    assert ck_file.role == "preview_dit" and not ck_file.required and desc.train_preview_checkpoint
+    assert (ck.steps, ck.cfg, dict(ck.options)["schedule"], dict(ck.options)["shift"]) == (4, 1.0, "simple", 2.02)
+    assert P.BY_KEY["SAMPLE_USE_DISTILLED"].default is True
+    for key in ("SAMPLE_USE_DISTILLED", "CACHE_SAMPLE_MODEL", "PREVIEW_INT8"):
+        assert P.family_shows(P.BY_KEY[key], desc) and not P.family_shows(P.BY_KEY[key], registry.get("krea2"))
+    sched = Ks.get_simple_euler_schedule(4, 2.02)
+    assert len(sched) == 5 and sched[-1] == 0.0 and sched[0] > sched[1] > sched[2] > sched[3] > 0
+    distilled = tmp_path / "distilled.safetensors"
+    distilled.write_bytes(b"x")
+    vals = {**P.defaults(), "SAMPLE_ENABLED": True, "SAMPLE_EVERY_N_EPOCHS": 1, "SAMPLE_PROMPT": "a cat",
+            "CACHE_SAMPLE_MODEL": "off", "PREVIEW_INT8": True}
+    kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", {"klein_distilled_dit": str(distilled)})
+    assert (kw["preview_checkpoint"], kw["preview_checkpoint_cache"], kw["preview_int8"]) == (str(distilled), "off",
+                                                                                              True)
+    kw, _ = pipeline.train_kwargs(desc, {**vals, "SAMPLE_USE_DISTILLED": False}, tmp_path / "run",
+                                  {"klein_distilled_dit": str(distilled)})
+    assert "preview_checkpoint" not in kw
+    kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", {})
+    assert "preview_checkpoint" not in kw                                # no file: previews on the training model
+
+
+def test_preview_handoff_parks_and_restores_the_training_model(driver, monkeypatch):
+    """park_for_preview swaps 6 double + 22 single blocks of the training model (per type), unpark restores the run's
+    own layout; the Distilled's swap by card follows Fizgig's thresholds."""
+    monkeypatch.setenv("TAGSCRIBER_SIM_VRAM_GB", "24")
+    assert driver._preview_swap() == (0, None, None)
+    monkeypatch.setenv("TAGSCRIBER_SIM_VRAM_GB", "16")
+    assert driver._preview_swap() == (16, None, None)
+    monkeypatch.setenv("TAGSCRIBER_SIM_VRAM_GB", "12")
+    assert driver._preview_swap() == (28, 6, 22)
+    calls = []
+
+    class _Dit:
+        blocks_to_swap, num_double_blocks, num_single_blocks, _nf4_quantized = 0, 8, 24, False
+
+        def enable_block_swap(self, n, device, backward, double_blocks_to_swap=None, single_blocks_to_swap=None):
+            calls.append(("swap", n, double_blocks_to_swap, single_blocks_to_swap))
+
+        def __getattr__(self, name):
+            return lambda *a, **k: calls.append((name,))
+    dit = _Dit()
+    token = driver.park_for_preview(dit, "cpu")
+    assert token == 0 and calls[0] == ("swap", 28, 6, 22)
+    monkeypatch.setattr("training.quant.move", lambda m, d: calls.append(("move", str(d))))
+    driver.unpark_after_preview(dit, "cpu", token)
+    assert ("disable_block_swap",) in calls and ("move", "cpu") in calls

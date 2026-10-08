@@ -175,7 +175,10 @@ class KleinDiT(nn.Module):
                 break
         return best
 
-    def enable_block_swap(self, num_blocks: int, device, supports_backward: bool = True):
+    def enable_block_swap(self, num_blocks: int, device, supports_backward: bool = True,
+                          double_blocks_to_swap=None, single_blocks_to_swap=None):
+        """Stream `num_blocks` (split between the two block types by swap_split), or exactly the given counts per type
+        (Fizgig 7.0.1: the Distilled preview's handoff swaps 6 double + 22 single, beyond the split's range)."""
         from training.modules.offloading import ModelOffloader
         # Detach any previous offloaders' backward hooks first: stale hooks fire next to the new ones and double-swap
         # blocks ("mat2 is on cpu", Fizgig's note at klein/model.py enable_block_swap).
@@ -183,6 +186,8 @@ class KleinDiT(nn.Module):
             if off is not None:
                 off.remove_hooks()
         double, single = self.swap_split(num_blocks, self.num_double_blocks, self.num_single_blocks)
+        if double_blocks_to_swap is not None or single_blocks_to_swap is not None:
+            double, single = int(double_blocks_to_swap or 0), int(single_blocks_to_swap or 0)
         if double > self.num_double_blocks - 2 or single > self.num_single_blocks - 2:
             raise ValueError(
                 f"Cannot swap more than {self.num_double_blocks - 2} double blocks and {self.num_single_blocks - 2} "
@@ -196,6 +201,14 @@ class KleinDiT(nn.Module):
                                                supports_backward, device)
         logger.info(f"KleinDiT: block swap {num_blocks} -> {double} double + {single} single blocks stream "
                     f"between CPU and GPU")
+
+    def disable_block_swap(self):
+        """Drop the offloaders (and their backward hooks): every block is placed with the model again."""
+        for off in (self.offloader_double, self.offloader_single):
+            if off is not None:
+                off.remove_hooks()
+        self.offloader_double = self.offloader_single = None
+        self.blocks_to_swap = 0
 
     def switch_block_swap_for_inference(self):
         if self.blocks_to_swap:

@@ -571,7 +571,12 @@ written into its file (<code>ss_train_blocks</code>).</li>
 Optimizer list offers every optimizer TagScribeR has, as Fizgig does for Klein.</li>
 <li><b>Timestep sampling</b> defaults to <code>flux2_shift</code>, which adapts to the image size. The other modes
 are for experiments.</li>
-<li>Previews render on the training model at 40 steps. The 4-step Distilled preview model isn't supported.</li>
+<li><b>Previews</b>: set the optional <i>Klein 9B Distilled DiT</i> under Model files and previews render on it in 4
+steps, as ComfyUI renders your LoRA (Samples: <i>Use Distilled model for samples</i>, on by default). The training
+model steps aside while they render and comes back exactly as it was. Without the file, or with the box unticked,
+previews render the Base model at 40 steps and CFG 4.5. <i>Keep the sample model in RAM</i> saves reloading it each
+epoch on 24 GB+ cards; <i>INT8 sample model</i> makes it smaller and faster on NVIDIA. Not run on real hardware in
+TagScribeR yet.</li>
 <li><b>Attention mechanism</b> (under Show all settings): <code>sdpa</code> runs on any GPU and is the default.
 <code>flash3</code> is listed because Fizgig lists it, but Fizgig has no working flash3 path, so choosing it stops the
 first training step with an error. Use sdpa.</li>

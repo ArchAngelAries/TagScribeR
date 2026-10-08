@@ -19,9 +19,8 @@ Status on 2026-10-08. Development notes, not user documentation. Read `CLAUDE.md
 - Real hardware results so far: Krea 2 has been trained end to end twice on the owner's machine (AMD Radeon, ROCm,
   fp8-scaled RAW checkpoint, Auto -> INT8 base, no block swap, AdamW 8-bit, adaptive LR, EMA 0.98, loss watch, base and
   Turbo-LoRA previews). No other family has been run on real weights.
-- Branch `wip/h3-stills` holds two unreviewed commits for stage 4 (the H3 "Medium to High Noise LR" dial and H3
-  Turbo-LoRA previews). The audit says both still match upstream with changes: re-key to `H3_HIGHNOISE_LR_PCT`, clamp
-  instead of raising, `FAMILY_TURBO_STEPS` / `FAMILY_TURBO_PACE`, and the general frozen-file AdaLN hook.
+- Branch `wip/h3-stills` held two commits for stage 4 (the H3 noise-band LR dial and Turbo-LoRA previews). Both are
+  now on the work branch, re-keyed as the audit asked; `wip/h3-stills` is superseded and can be deleted.
 
 ## Stage 1 status (2026-10-08)
 
@@ -58,6 +57,20 @@ text encoder in float32 (text-cache revision "1", so old caches re-cache once), 
 (offline first, google/t5-v1_1-xxl as the last fallback), Fizgig's three presets first with TagScribeR's three kept,
 INT8 / NF4, LoKR, AI-Toolkit LoRA names, 20-step CFG 4.5 previews and the optional Turbo LoRA (strength 0 by default).
 Needs real SDXL and Anima runs before either is called verified.
+
+## Stage 4 status (2026-10-08)
+
+Done on `port/stage1-bt67en`, unit-tested only: MiniMax H3's Fizgig 7.0.1 options under their `H3_*` keys and labels
+(the old `MINIMAX_*` keys migrate): Training base fl2va / ref2va (new reference-DiT row), Training structure with the
+clean-end share, Medium to High Noise LR (clamped, as upstream), the Circlestone / Ostris / Off adapter choice (two
+new Ostris rows, picked per base), the adapter-relative LR ramp, the token refiner; Fizgig's block ids
+(`h3blk_N`, `h3_rf_N`) and run metadata; bf16 trainable adapters, weight decay 1e-4 and the 8-bit eps floor, the
+whole optimizer catalog, EMA Short run (shared: any family with `ema_short_run`), 768 previews; Turbo-LoRA previews
+(`FAMILY_TURBO_STEPS` / `FAMILY_TURBO_PACE`) with run-time AdaLN rows for the adapter, a Context LoRA and the Turbo.
+The H3 Slider preset waits for stage 5. Needs a real H3 run before any of it is called verified.
+
+Left for later H3 work (audit B11 steps 4-10): HQQ, the H2D rings and upstream's own Auto plan, the 66 GB bf16 DiT and
+bf16 text encoder, clips, audio, voice, multi-concept, distillation, RefMods.
 
 ## Decisions the owner has made
 
@@ -136,6 +149,14 @@ each to `requirements.txt` and the installer in the stage that first needs it.
     Attention Mechanism; one t per image at batch size above 1; SDXL's 225-token captions and the empty caption
     encoded as text (as ComfyUI / A1111; Fizgig uses zeros); the H3 time-embedding grid asset; a Turbo LoRA that matches nothing is a warning, the run continues.
   - Mirrored from Fizgig (a fix): the fused, once-rounded add for frozen adapters (training/lora.py).
+  - MiniMax H3 (stage 4): Fizgig's options are TagScribeR parameters with Fizgig's `H3_*` keys and labels (its
+    presets import unchanged), not a port of its FamilyOption layer, which TagScribeR's parameter system already
+    covers. Kept as TagScribeR's: the LoRA holds only the trained window's modules (Fizgig writes zero adapters for
+    blocks 0-19; training is identical, the file smaller), the `minimaxh3` file-name suffix (Fizgig `mmh3`), the
+    run-seeded silence-row noise, travel-noise previews, res_multistep for Turbo previews (what Fizgig's sampler
+    actually runs). Mirrored: bf16 trainable adapters, weight decay 1e-4, 768 previews, the clamped noise-band dial.
+  - The H3 tokenizer: Fizgig bundles Qwen/Qwen3-VL-4B-Instruct's files unmodified (its `assets/qwen3vl_tokenizer/
+    ATTRIBUTION.md`), the repo TagScribeR's helper files name - the audit's open question is closed.
   - Krea 2 extras beyond the audit: port them as their stages come.
 - **README:** remove the roadmap line about a Fizgig tracker (it is a development aid, not a user feature), and keep
   the "what has actually been run" section true as stages land.

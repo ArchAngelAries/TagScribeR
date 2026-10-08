@@ -210,7 +210,7 @@ PARAMS: tuple[Param, ...] = (
       options=("Full Model", "Identity", "Style", "Style+Composition", "Details", "Custom"), strict=True,
       family_only="option"),
     P("TRAINING_BLOCKS", "Custom blocks", TEXT, "", "Training Parameters",
-      "Model area Custom only: comma-separated blocks, e.g. double_blocks.0, double_blocks.1, single_blocks.5 (8 "
+      "Model area Custom only: comma-separated blocks, e.g. double_0, double_1, single_5 (8 "
       "double blocks 0-7, 24 single blocks 0-23). Empty trains the full model, as Fizgig does.", advanced=True,
       family_only="option"),
     P("TIMESTEP_SAMPLING", "Timestep sampling", CHOICE, "flux2_shift", "Timesteps",

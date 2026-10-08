@@ -114,7 +114,7 @@ def test_legacy_klein_keys_map_or_are_ignored(desc):
     new, rep = presets.apply(legacy, P.defaults(), desc)
     assert rep.refused == [], rep.refused
     assert new["ATTENTION_MECHANISM"] == "flash3"                            # carried, no longer ignored
-    assert new["TARGET_LAYERS"] == "Identity" and new["TRAINING_BLOCKS"] == "double_blocks.0, single_blocks.5"
+    assert new["TARGET_LAYERS"] == "Identity" and new["TRAINING_BLOCKS"] == "double_0, single_5"     # 7.0.1 ids
     assert (new["MIN_TIMESTEP"], new["MAX_TIMESTEP"]) == (0.25, 1.0)
     assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["auto"]
     assert {"FP8", "SCALED", "NETWORK_DROPOUT", "LORA_LR_RATIO", "FP8_TEXT_ENCODER",
@@ -127,8 +127,8 @@ def test_legacy_klein_keys_map_or_are_ignored(desc):
 def test_block_map_is_the_112_block_linears(desc, driver):
     names = driver.lora_target_names(None)
     assert len(names) == len(set(names)) == 8 * 8 + 24 * 2
-    assert driver.block_of("double_blocks.3.txt_mlp.2") == "double_blocks.3"
-    assert driver.block_of("single_blocks.23.linear2") == "single_blocks.23" and driver.block_of("img_in") is None
+    assert driver.block_of("double_blocks.3.txt_mlp.2") == "double_3"                 # Fizgig 7.0.1 ids
+    assert driver.block_of("single_blocks.23.linear2") == "single_23" and driver.block_of("img_in") is None
     dit = _dit()
     lin = {n for n, m in dit.named_modules() if isinstance(m, torch.nn.Linear)
            and n.startswith(("double_blocks.", "single_blocks."))}
@@ -145,9 +145,9 @@ def _expected_modules(patterns):
 def test_model_area_presets_select_exactly_fizgigs_blocks(driver):
     ids = lambda a: driver.resolve_blocks(a)  # noqa: E731
     assert ids("Full Model") is None
-    assert ids("Identity") == {f"single_blocks.{i}" for i in range(1, 17)}
-    assert ids("Details") == {f"single_blocks.{i}" for i in range(12, 24)}
-    style = {f"double_blocks.{i}" for i in range(8)} | {"single_blocks.0", "single_blocks.1"}
+    assert ids("Identity") == {f"single_{i}" for i in range(1, 17)}
+    assert ids("Details") == {f"single_{i}" for i in range(12, 24)}
+    style = {f"double_{i}" for i in range(8)} | {"single_0", "single_1"}
     assert ids("Style") == ids("Style+Composition") == style
     for area, pats in AREA_PATTERNS.items():
         got = {m for m in driver.lora_target_names(None) if driver.block_of(m) in ids(area)}
@@ -158,13 +158,14 @@ def test_model_area_presets_select_exactly_fizgigs_blocks(driver):
 
 
 def test_custom_blocks_and_configure(driver):
-    assert driver.resolve_blocks("Custom", "double_blocks.2, single_blocks.9") == {"double_blocks.2", "single_blocks.9"}
-    assert driver.resolve_blocks("Custom", {"single_blocks.1": True, "single_blocks.2": False}) == {"single_blocks.1"}
+    assert driver.resolve_blocks("Custom", "double_2, single_9") == {"double_2", "single_9"}
+    assert driver.resolve_blocks("Custom", "double_blocks.2, single_blocks.9") == {"double_2", "single_9"}   # old ids
+    assert driver.resolve_blocks("Custom", {"single_1": True, "single_2": False}) == {"single_1"}
     assert driver.resolve_blocks("Custom", "") is None                         # Fizgig: empty Custom = the full model
     with pytest.raises(ValueError, match="unknown block"):
-        driver.resolve_blocks("Custom", "single_blocks.24")
+        driver.resolve_blocks("Custom", "single_24")
     driver.configure(target_layers="Details", timestep_sampling="logsnr", sigmoid_scale=1.5)
-    assert driver.trainable_blocks() == {f"single_blocks.{i}" for i in range(12, 24)}
+    assert driver.trainable_blocks() == {f"single_{i}" for i in range(12, 24)}
     assert (driver.timestep_sampling, driver.sigmoid_scale) == ("logsnr", 1.5)
     with pytest.raises(ValueError):
         driver.configure(timestep_sampling="qwen_shift")
@@ -175,7 +176,7 @@ def test_custom_blocks_and_configure(driver):
 def test_block_targeting_trains_only_those_modules(desc, driver):
     dit = _dit()
     net = FamilyLoRA(dit, driver)
-    blocks = driver.resolve_blocks("Custom", "double_blocks.1, single_blocks.2")
+    blocks = driver.resolve_blocks("Custom", "double_1, single_2")
     net.add_trainable(4, 4, blocks=blocks)
     assert len(net.trainable_modules()) == 8 + 2
     assert {k.rsplit(".", 2)[0] for k in net.state_dict() if k.endswith(".alpha")} == {
@@ -462,12 +463,12 @@ def test_train_kwargs_map_timesteps_area_and_preview(desc, tmp_path):
     assert prompts and kw["sample_cfg_scale"] == 4.5 and "sample_steps" not in kw      # 0 = the family's 40
     d = desc.load_driver()
     d.configure(**kw["driver_options"])
-    assert d.trainable_blocks() == {f"double_blocks.{i}" for i in range(8)} | {"single_blocks.0", "single_blocks.1"}
-    vals.update(TARGET_LAYERS="Custom", TRAINING_BLOCKS="single_blocks.4", TIMESTEP_SAMPLING="qinglong_flux")
+    assert d.trainable_blocks() == {f"double_{i}" for i in range(8)} | {"single_0", "single_1"}
+    vals.update(TARGET_LAYERS="Custom", TRAINING_BLOCKS="single_4", TIMESTEP_SAMPLING="qinglong_flux")
     kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", models)
     d = desc.load_driver()
     d.configure(**kw["driver_options"])
-    assert d.trainable_blocks() == {"single_blocks.4"} and d.timestep_sampling == "qinglong_flux"
+    assert d.trainable_blocks() == {"single_4"} and d.timestep_sampling == "qinglong_flux"
 
 
 def test_params_are_family_only(desc):

@@ -85,8 +85,15 @@ class KleinDriver(FamilyDriver):
 
     # ---- Model Area ---------------------------------------------------------------------------------------------
     @staticmethod
+    def block_id(token):
+        """A block named as Fizgig 7.0.1 names it ('double_N' / 'single_N', the old Repair Studio's ids) or as its older
+        Training tab did ('double_blocks.N') -> 'double_N' / 'single_N', or None."""
+        m = re.fullmatch(r"(double|single)(?:_blocks)?[._]?(\d+)", str(token).strip())
+        return f"{m.group(1)}_{int(m.group(2))}" if m else None
+
+    @staticmethod
     def resolve_blocks(area, custom=""):
-        """The block ids (block_map ids 'double_blocks.N' / 'single_blocks.N') a Model Area trains, or None for the
+        """The block ids (block_map ids 'double_N' / 'single_N', Fizgig 7.0.1's) a Model Area trains, or None for the
         full model. Presets match Fizgig's include_patterns against the module names; Custom is the ticked blocks
         (a list, a 'a, b' string, or Fizgig's {block: bool} dict); an EMPTY Custom trains the full model, as Fizgig
         does (it only warns)."""
@@ -102,17 +109,19 @@ class KleinDriver(FamilyDriver):
                 tokens = list(custom or [])
             if not tokens:
                 return None
-            valid = {f"double_blocks.{i}" for i in range(N_DOUBLE)} | {f"single_blocks.{i}" for i in range(N_SINGLE)}
-            bad = [t for t in tokens if t not in valid]
+            valid = {f"double_{i}" for i in range(N_DOUBLE)} | {f"single_{i}" for i in range(N_SINGLE)}
+            ids = {t: KleinDriver.block_id(t) for t in tokens}
+            bad = [t for t, b in ids.items() if b not in valid]
             if bad:
-                raise ValueError(f"Model area Custom: unknown block(s) {', '.join(bad)} - use double_blocks.0-7 and "
-                                 f"single_blocks.0-23")
-            return set(tokens)
+                raise ValueError(f"Model area Custom: unknown block(s) {', '.join(bad)} - use double_0-7 and "
+                                 f"single_0-23")
+            return set(ids.values())
         pats = AREA_PATTERNS.get(area)
         if pats is None:
             raise ValueError(f"unknown Model Area {area!r}; choose one of {', '.join(AREAS)}")
-        ids = [f"double_blocks.{i}" for i in range(N_DOUBLE)] + [f"single_blocks.{i}" for i in range(N_SINGLE)]
-        return {b for b in ids if any(re.fullmatch(p, f"{b}.x") for p in pats)}
+        # the patterns match module names (double_blocks.N.<module>), as Fizgig's include_patterns do
+        return {f"{k}_{i}" for k, n in (("double", N_DOUBLE), ("single", N_SINGLE)) for i in range(n)
+                if any(re.fullmatch(p, f"{k}_blocks.{i}.x") for p in pats)}
 
     def trainable_blocks(self):
         return self.resolve_blocks(self.target_layers, self.training_blocks)
@@ -239,16 +248,16 @@ class KleinDriver(FamilyDriver):
 
     # ---- LoRA and the block map -------------------------------------------------------------------
     def block_map(self, dit=None):
-        """8 double blocks and 24 single blocks, ids 'double_blocks.N' / 'single_blocks.N' (Fizgig's TRAINING_BLOCKS
-        keys). With `dit`, only modules it has."""
+        """8 double blocks and 24 single blocks, ids 'double_N' / 'single_N' (Fizgig 7.0.1's, the old Repair Studio's).
+        With `dit`, only modules it has."""
         names = {n for n, _ in dit.named_modules()} if dit is not None else None
 
         def keep(mods):
             return [m for m in mods if names is None or m in names]
         nd = len(dit.double_blocks) if dit is not None else N_DOUBLE
         ns = len(dit.single_blocks) if dit is not None else N_SINGLE
-        dbl = [Block(f"double_blocks.{i}", f"Double block {i}", keep([f"double_blocks.{i}.{m}" for m in _DOUBLE_MODULES]))
+        dbl = [Block(f"double_{i}", f"Double block {i}", keep([f"double_blocks.{i}.{m}" for m in _DOUBLE_MODULES]))
                for i in range(nd)]
-        sgl = [Block(f"single_blocks.{i}", f"Single block {i}", keep([f"single_blocks.{i}.{m}" for m in _SINGLE_MODULES]))
+        sgl = [Block(f"single_{i}", f"Single block {i}", keep([f"single_blocks.{i}.{m}" for m in _SINGLE_MODULES]))
                for i in range(ns)]
         return [BlockGroup("Double blocks", dbl), BlockGroup("Single blocks", sgl)]

@@ -473,7 +473,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                         f"render ({sample_steps} steps)")
     if network_type == "lokr" and "lokr" not in desc.network_types:
         raise RuntimeError(f"{desc.display_name} does not offer LoKR")
-    blocks = driver.trainable_blocks()
+    blocks = driver.trainable_blocks()          # a family's own block choice (Klein's Model Area)
     if train_blocks:                    # a subset of blocks (Fast Identity Mode)
         known = {b.id for g in driver.block_map(dit) for b in g.blocks}
         unknown = sorted(set(train_blocks) - known)
@@ -482,6 +482,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         blocks = set(train_blocks)
         logger.info(f"[blocks] the LoRA trains {len(blocks)} of {len(known)} blocks only: {', '.join(train_blocks)}")
     net.add_trainable(network_dim, network_alpha, blocks=blocks, kind=network_type, factor=lokr_factor)
+    trained_blocks = [b.id for g in driver.block_map(dit) for b in g.blocks if b.id in blocks] if blocks else []
     params = net.parameters()
     if not params:
         raise RuntimeError("the LoRA has no trainable parameters (no target modules matched)")
@@ -578,8 +579,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                    "ss_architecture": arch, "ss_epoch": str(epoch),
                    "ss_optimizer": opt_label, "ss_learning_rate": f"{learning_rate:g}",
                    "ss_training_adapter": os.path.basename(training_adapter) if training_adapter else "none"})
-        if train_blocks:
-            md["ss_train_blocks"] = ",".join(train_blocks)
+        if trained_blocks:
+            md["ss_train_blocks"] = ",".join(trained_blocks)
         md.update(driver.run_metadata())
         if context_lora_path:
             md.update({"ss_context_lora": os.path.basename(context_lora_path),

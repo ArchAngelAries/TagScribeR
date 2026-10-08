@@ -559,8 +559,10 @@ LR dial aren't available yet.</li>
 autoencoder, and the Qwen3-8B text encoder. <i>Get</i> opens each download page; the Klein and autoencoder repos are
 gated, so accept their terms on Hugging Face first.</li>
 <li><b>Model area</b> chooses which blocks the LoRA trains: <i>Full Model</i>, <i>Identity</i> (a subject's
-likeness), <i>Style</i> and <i>Style+Composition</i>, <i>Details</i>, or <i>Custom</i> (list the blocks yourself).
-The built-in presets set it for you.</li>
+likeness), <i>Style</i> and <i>Style+Composition</i>, <i>Details</i>, or <i>Custom</i> (list the blocks yourself, as
+<code>double_0</code>-<code>double_7</code> and <code>single_0</code>-<code>single_23</code>, Fizgig's names; the older
+<code>double_blocks.0</code> spelling still works). The built-in presets set it for you. The blocks a LoRA trained are
+written into its file (<code>ss_train_blocks</code>).</li>
 <li><b>Network type</b> can be LoKR as well as LoRA, and <b>EMA</b> is available (Off by default, as in Fizgig). The
 Optimizer list offers every optimizer TagScribeR has, as Fizgig does for Klein.</li>
 <li><b>Timestep sampling</b> defaults to <code>flux2_shift</code>, which adapts to the image size. The other modes

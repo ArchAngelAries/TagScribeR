@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 from training import params as P
@@ -188,8 +189,12 @@ def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
             out[key] = _legacy_compile(value)
         elif key == "TARGET_LAYERS":
             out[key] = LEGACY_AREAS.get(value, value)
-        elif key == "TRAINING_BLOCKS" and isinstance(value, dict):
-            out[key] = ", ".join(k for k, on in value.items() if on)       # Fizgig stores {block: ticked}
+        elif key == "TRAINING_BLOCKS" and isinstance(value, (dict, str)):
+            # Fizgig stores {block: ticked}; its older Training tab named Klein's blocks double_blocks.N, Fizgig 7.0.1
+            # (and TagScribeR) double_N
+            items = [k for k, on in value.items() if on] if isinstance(value, dict) else \
+                [t for t in value.replace(",", " ").split() if t]
+            out[key] = ", ".join(re.sub(r"^(double|single)_blocks[._](\d+)$", r"\1_\2", k.strip()) for k in items)
         elif key in ("MIN_TIMESTEP", "MAX_TIMESTEP") and str(value).strip() == "":
             out[key] = P.BY_KEY[key].default      # Fizgig: an empty noise-range box means the full range
         elif key in ("MIN_TIMESTEP", "MAX_TIMESTEP") and _is_number(value) and float(value) > 1.0:

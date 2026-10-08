@@ -3,7 +3,7 @@
 # Changes for TagScribeR: entry points are `python -m training.train` / `training.cache`; the Tkinter GUI's
 # legacy ARCHITECTURES adapter (architecture_entry) is dropped; model file paths live in TagScribeR settings;
 # `ModelFile.default_to` and `family_options` (SDXL: one checkpoint file holds the UNet, VAE and text encoders);
-# `auto_swap_order` (Klein block-swaps its fp8 base).
+# `auto_swap_order` (a family's own Auto swap base).
 """FamilyDescription: everything the trainer needs to know about one model family, in one object.
 
 A description holds the family's facts once (model files, latent rules, LoRA key format, presets, sampling
@@ -163,7 +163,7 @@ class FamilyDescription:
     # original trainer's order; bf16 (and TagScribeR's fp8) stay manual choices
     auto_precisions: tuple = ()
     # TagScribeR: the precisions Auto may block-swap when nothing fits whole (() = Fizgig's rule: int8, then bf16, of
-    # those Auto may choose). Klein swaps its fp8 base
+    # those Auto may choose)
     auto_swap_order: tuple = ()
     optimizers: tuple = ("adamw8bit", "adamw")
     network_types: tuple = ("lora",)

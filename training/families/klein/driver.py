@@ -44,6 +44,17 @@ ATTENTION_MODES = {"sdpa": "torch", "flash3": "flash3"}
 AREAS = ("Full Model", "Identity", "Style", "Style+Composition", "Details", "Custom")
 
 
+def is_fp8_file(path) -> bool:
+    """True when the DiT file stores weights in fp8 (BFL's / Comfy-Org's pre-quantised Klein files - BFL's base keeps
+    the attention weights bf16 and the MLPs fp8). Header only (Fizgig 7.0.1 klein/driver.py _is_fp8_file)."""
+    try:
+        from safetensors import safe_open
+        with safe_open(path, framework="pt") as f:
+            return any(f.get_slice(k).get_dtype().startswith("F8") for k in f.keys() if k.endswith(".weight"))
+    except Exception:
+        return False
+
+
 class KleinDriver(FamilyDriver):
 
     # Every cached caption has the same shape (512 tokens, no mask) and a bucket's latents share a size, so items stack
@@ -112,6 +123,13 @@ class KleinDriver(FamilyDriver):
         dit = load_klein_dit(path, device=device).eval().requires_grad_(False)
         dit.set_attn_mode(ATTENTION_MODES[self.attention_mechanism])
         return dit
+
+    def auto_uncompiled_precision(self, dit_path, precision):
+        # Fizgig, measured 3 Oct 2026: uncompiled, BFL's fp8 file as it is beats requantising it to INT8 (0.77 vs 1.14
+        # s/step on a 5090) at less memory (11.1 vs 12.8 GB) - compiled INT8 is the fastest
+        if precision != "int8" or not is_fp8_file(dit_path):
+            return None
+        return "fp8"
 
     def max_blocks_to_swap(self, dit=None):
         # Fizgig's swap formula (klein/model.py enable_block_swap) accepts 1-16 for 8 + 24 blocks; its GUI range is 0-16

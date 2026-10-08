@@ -52,7 +52,7 @@ def test_description_is_valid_and_registered(desc):
     assert "_" not in desc.arch_id
     assert (desc.latent_channels, desc.spatial_factor, desc.bucket_step) == (128, 16, 16)
     assert desc.precisions == ("bf16", "fp8", "int8", "nf4") and set(desc.train_memory) == {"fp8", "int8", "nf4"}
-    assert desc.auto_precisions == ("fp8", "nf4")                       # Fizgig: fp8 base, NF4 on small cards
+    assert desc.auto_precisions == ("int8", "nf4")                      # Fizgig 7.0.1: INT8, then NF4
     assert desc.network_types == ("lora", "lokr") and desc.ema_default == "Off"        # Fizgig 7.0.1
     assert "automagic3" in desc.optimizers and "lion8bit" in desc.optimizers
     assert desc.speed_loras == () and desc.preview_speed() is None
@@ -537,3 +537,31 @@ def test_flash3_fails_like_fizgig_with_no_flash_attn(driver):
     dit.set_attn_mode("torch")
     loss, _ = driver.training_loss(dit, torch.randn(1, 16, 6, 4), _cond(1), torch.Generator().manual_seed(1))
     assert torch.isfinite(loss)
+
+
+def test_auto_plan_follows_fizgig_7(desc, monkeypatch, tmp_path):
+    """Fizgig 7.0.1 families/klein.py: INT8 if it fits, else NF4, never an Auto block swap; uncompiled, an fp8 Base
+    file trains as it is (TagScribeR's fp8 choice)."""
+    import torch
+    from safetensors.torch import save_file
+    from training import quant
+    from training.families.klein.driver import is_fp8_file
+    monkeypatch.setattr(quant, "available", lambda p, device=None: (True, ""))
+    drv = desc.load_driver()
+    plan = lambda free, mp=0.25: quant.plan(desc, drv, "auto", -1, free_gb=free, megapixels=mp)[:2]  # noqa: E731
+    assert plan(16.0) == ("int8", 0)                     # 12.6 + 1.5
+    assert plan(12.0) == ("nf4", 0)
+    assert plan(18.0, mp=1.0) == ("nf4", 0)              # 17.1 + 1.5 > 18
+    assert plan(5.0) == ("nf4", 0)                       # nothing fits: never a swap (no measured saving)
+    assert quant.plan(desc, drv, "fp8", -1, free_gb=10.0, megapixels=0.25)[1] > 0   # a manual fp8 still swaps
+    fp8, bf = str(tmp_path / "fp8.safetensors"), str(tmp_path / "bf16.safetensors")
+    save_file({"a.weight": torch.zeros(2, 2, dtype=torch.float8_e4m3fn), "b.weight": torch.zeros(2, 2)}, fp8)
+    save_file({"a.weight": torch.zeros(2, 2, dtype=torch.bfloat16)}, bf)
+    assert is_fp8_file(fp8) and not is_fp8_file(bf)
+    assert drv.auto_uncompiled_precision(fp8, "int8") == "fp8"
+    assert drv.auto_uncompiled_precision(bf, "int8") is None and drv.auto_uncompiled_precision(fp8, "nf4") is None
+
+
+def test_fizgig_as_the_file_precision_imports(desc):
+    new, rep = presets.apply({"FAMILY_PRECISION": "As the file (bf16 or fp8)"}, P.defaults(), desc)
+    assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["fp8"] and not rep.refused and rep.notes

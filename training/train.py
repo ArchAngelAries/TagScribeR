@@ -364,6 +364,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                    if gradient_accumulation > 1 else "") + ")")
 
     # ---- Auto precision / swap: planned on an empty card -------------------------------------------
+    auto_precision = precision == "auto"
     if precision == "auto" or blocks_to_swap < 0:
         req = (precision, blocks_to_swap)
         res = dataset.config["resolution"]
@@ -397,6 +398,12 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                         else ("ENABLED" if do_compile else "off"), why)
         elif why:
             logger.info("[compile] %s", why)
+    if auto_precision and not do_compile and device.type != "cpu":
+        alt = driver.auto_uncompiled_precision(dit_path, precision)
+        if alt and alt != precision:
+            logger.info(f"[precision] Auto: {alt} instead of {precision} - this run is not compiled, and uncompiled "
+                        "that is the faster base for this file")
+            precision = alt
 
     # ---- previews: encode prompts once, keep the VAE ---------------------------------------------
     encoded = neg = vae = ref_imgs = ref_latents = None

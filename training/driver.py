@@ -7,7 +7,7 @@
 # `prepare_training` / `after_epoch` (a last model transform before the first step; Krea 2's attention-backend switch).
 # Brought level with Fizgig 7.0.1 (commit 1c8ec88), defaults unchanged in behaviour: `options` / `set_options`,
 # `batch_cond`, `step_policy`, `after_optimizer_step`, `run_metadata`, `frozen_file_added`, `park_for` / `unpark`,
-# `save_preview`, `plan_run`, `load_planned` (+ `loads_quantized`, `int8_fp32_scales`), `alias_flat`,
+# `save_preview`, `plan_run`, `auto_uncompiled_precision`, `load_planned` (+ `loads_quantized`, `int8_fp32_scales`), `alias_flat`,
 # `compile_targets` / `compile_blocks` / `compile_plan` (shared torch.compile, decided on the empty card),
 # `convert_lora_state_dict`. Not yet (they arrive with their features): sliders, fine-tune, clips, preview
 # checkpoints, legacy state order, `cache_stage`.
@@ -186,6 +186,11 @@ class FamilyDriver:
         """The family's own Auto plan, or None for the shared one (quant.plan over the description's train_memory).
         Called when the precision is "auto" or the swap is -1; `run` carries what the plan may weigh. Returns
         (precision, blocks_to_swap, why)."""
+        return None
+
+    def auto_uncompiled_precision(self, dit_path: str, precision: str) -> Optional[str]:
+        """A precision that beats Auto's pick when this run is not compiled, or None. Klein: its INT8 base is slower
+        than BFL's fp8 file uncompiled, so an fp8 file trains as it is."""
         return None
 
     def load_planned(self, path, device, precision: str, blocks_to_swap: int) -> Optional[tuple]:

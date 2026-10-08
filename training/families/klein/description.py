@@ -92,24 +92,21 @@ KLEIN_9B = FamilyDescription(
     ema_default="Off",                                       # Fizgig families/klein.py: available, off until an A/B
     implementation="https://github.com/black-forest-labs/flux2",     # Fizgig training/metadata.py IMPL_KLEIN
     precisions=("bf16", "fp8", "int8", "nf4"),
-    # Fizgig's Klein default is an fp8 base (FP8 + Scaled on, lora_trainer_gui.py PRESETS), with NF4 on small cards
-    # (_klein_small_card: under 15 GiB) and block swap on fp8.
-    auto_precisions=("fp8", "nf4"),
-    auto_swap_order=("fp8",),
+    # Fizgig 7.0.1 (families/klein.py): Auto picks INT8, then NF4, and never plans a block swap (no measured swap
+    # saving). When the run is not compiled and the DiT file is fp8, the file trains as it is (KleinDriver.
+    # auto_uncompiled_precision): uncompiled that is faster than INT8. Fizgig calls that choice "As the file (bf16 or
+    # fp8)" under bf16; TagScribeR names it fp8 and keeps it selectable.
+    auto_precisions=("int8", "nf4"),
     adaptive_lr_clip_signal=True,                            # Fizgig families/klein.py: Klein's grad-clip rule
-    # Fizgig measured Klein on an fp8 base (docs/KLEIN.md "VRAM"): the fp8 base stays resident at ~9.6 GB and "a 9B LoRA
-    # fits 16 GB (~14 GB observed)"; the NF4 base is ~5.6 GB and "a full LoRA trains in about 8.5 GB at 0.5 MP" (10-12 GB
-    # cards, no swap). Mapping:
-    #   nf4  8.5 GB at 0.5 MP - MEASURED (Fizgig). Other resolutions are not measured: the figure is used as is.
-    #   int8 14.0 GB at 0.5 MP - INFERRED, not measured: INT8 stores one byte per weight like the fp8 base, so the fp8
-    #        measurement is used; the 0.5 MP point is Fizgig's NF4 one, the fp8 resolution is not stated.
-    #   bf16 has NO entry: Fizgig never measured it (the 8.7B weights alone are ~17.4 GB), so Auto never picks it; it
-    #        stays selectable for 24 GB+ cards or with a manual block swap.
-    # Swap: GB saved per unit of "blocks to swap" is COMPUTED from the parameter counts (a double block is 436M weights,
-    #   a single 218M; one unit at the maximum of 16 swaps 6 double + 18 single blocks = 6.5B weights / 16 = 0.41B
-    #   weights = 0.41 GB at one byte per weight), never measured. NF4 cannot swap.
-    # fp8: ~14 GB observed (Fizgig docs/KLEIN.md, "a 9B LoRA fits 16 GB") - the measurement the int8 row borrows.
-    train_memory={"fp8": (((0.5, 14.0),), 0.41), "int8": (((0.5, 14.0),), 0.41), "nf4": (((0.5, 8.5),), 0.0)},
+    # Fizgig measured 3 Oct 2026 on a 5090, full model, rank 32, adamw8bit, gradient checkpointing, BFL's fp8 base file,
+    # peak reserved over the first epoch: INT8 12.6 GB at 0.25 MP / 17.1 GB at 1 MP; NF4 7.9 / 9.9 GB; the fp8 file as it
+    # is 11.1 GB at 0.25 MP (families/klein.py compile notes). Swapped-block savings not measured (0 = Auto plans no
+    # swap). TagScribeR's fp8 entry: the 0.25 MP point MEASURED, its 1 MP point INFERRED by carrying INT8's +4.5 GB, and
+    # 0.41 GB per unit of "blocks to swap" COMPUTED from the parameter counts (6 double + 18 single blocks at the
+    # maximum of 16 = 6.5B weights / 16 at one byte per weight), so a manual fp8 choice with Auto swap still swaps on a
+    # small card. bf16 has no entry (never measured; ~17.4 GB of weights), so Auto never picks it.
+    train_memory={"int8": (((0.25, 12.6), (1.0, 17.1)), 0.0), "nf4": (((0.25, 7.9), (1.0, 9.9)), 0.0),
+                  "fp8": (((0.25, 11.1), (1.0, 15.6)), 0.41)},
     # Fizgig 7.0.1's Train tab offers its whole optimizer catalog for every family (optimizers.available_optimizers);
     # Automagic v3 runs Klein's LoRA as one group (Klein declares no optimizer_families)
     optimizers=("adamw8bit", "adamw", "pagedadamw8bit", "ademamix8bit", "pagedademamix8bit", "lion8bit", "automagic3"),

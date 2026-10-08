@@ -569,7 +569,10 @@ are for experiments.</li>
 <li><b>Attention mechanism</b> (under Show all settings): <code>sdpa</code> runs on any GPU and is the default.
 <code>flash3</code> is listed because Fizgig lists it, but Fizgig has no working flash3 path, so choosing it stops the
 first training step with an error. Use sdpa.</li>
-<li>On cards under about 16 GB, Auto picks the 4-bit base (about 8.5 GB at 0.5 MP).</li>
+<li><b>Base precision: Auto</b> follows Fizgig: INT8 when it fits (about 12.6 GB at 0.25 MP, 17.1 GB at 1 MP), else
+4-bit (7.9 / 9.9 GB). Auto never block-swaps Klein. When the run is not compiled and your Base file is fp8, Auto
+trains the fp8 file as it is instead of INT8: uncompiled that is faster (Fizgig measured 0.77 vs 1.14 s/step) and
+smaller (11.1 GB). <b>fp8</b> is that same choice by hand (Fizgig calls it "As the file").</li>
 </ul>
 <h3>SDXL, Pony, Illustrious, NoobAI</h3>
 <ul>

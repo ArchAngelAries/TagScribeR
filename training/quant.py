@@ -235,7 +235,7 @@ def plan(desc, driver, precision="auto", blocks_to_swap=-1, free_gb=None, margin
         for p in order:
             if p in mem and mem[p][0] <= budget:
                 return p, 0 if blocks_to_swap < 0 else blocks_to_swap, f"{p} fits {free_gb:.1f} GB free"
-        swappable = [p for p in swap_order if p in mem]
+        swappable = [p for p in swap_order if p in mem and mem[p][1] > 0]    # no measured saving: no Auto swap
         if swappable and cap > 0:
             p = swappable[0]
             n = swap_for(p)

@@ -178,6 +178,12 @@ def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
                 ignored.append(key)
             else:
                 _migrate_minimax(key, value, preset, out, notes, ignored)
+        elif key == "FAMILY_PRECISION" and str(value or "").strip().lower().startswith("as the file"):
+            # Fizgig 7.0.1 Klein's "As the file (bf16 or fp8)": its recommended Base file is fp8, which TagScribeR's
+            # fp8 choice keeps exactly as stored (a bf16 file is quantised to fp8 instead - pick bf16 for that file)
+            out[key] = P.PRECISION_LABELS["fp8"]
+            notes.append("[preset] FAMILY_PRECISION: Fizgig's 'As the file' is TagScribeR's fp8 (the fp8 Base file "
+                         "as it is); with a bf16 Base file pick bf16")
         elif key == "COMPILE_BLOCKS":
             out[key] = _legacy_compile(value)
         elif key == "TARGET_LAYERS":

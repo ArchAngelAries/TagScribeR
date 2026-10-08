@@ -15,6 +15,7 @@
 * sampling: Euler over the empirical-mu schedule, CFG with a negative prompt
 * LoRA: the 112 Linears of the 8 double + 24 single blocks, in blocks selectable through Fizgig's Model Area
 """
+import logging
 import re
 
 import numpy as np
@@ -28,6 +29,7 @@ _DOUBLE_MODULES = ("img_attn.qkv", "img_attn.proj", "img_mlp.0", "img_mlp.2",
                    "txt_attn.qkv", "txt_attn.proj", "txt_mlp.0", "txt_mlp.2")
 _SINGLE_MODULES = ("linear1", "linear2")
 N_DOUBLE, N_SINGLE = 8, 24
+logger = logging.getLogger(__name__)
 # Below this much free VRAM the text encoder loads with INT8 language-model weights instead of bf16 (8B: ~16.4 GB bf16;
 # the same threshold the Qwen Image 2.1 encoder of the same size uses)
 TE_BF16_MIN_FREE_GB = 19.5
@@ -72,6 +74,7 @@ class KleinDriver(FamilyDriver):
     attention_mechanism = "sdpa"          # Fizgig ATTENTION_MECHANISM (lora_trainer_gui.py:10781): sdpa | flash3
 
     def configure(self, **options):
+        options.pop("compile_blocks", None)     # read by the training loop, not the driver
         for key, value in options.items():
             if not hasattr(type(self), key) or callable(getattr(type(self), key)):
                 raise ValueError(f"unknown Klein option {key!r}")
@@ -168,6 +171,39 @@ class KleinDriver(FamilyDriver):
 
     def unload_text_encoder(self, te):
         te.unload()
+
+    def compile_targets(self, dit):
+        return dit.double_blocks
+
+    def compile_blocks(self, dit, boundary="inside", blocks_to_swap=0, precision=""):
+        """Both block lists through the shared compile (training/compile.py), as Fizgig 7.0.1 klein/driver.py. Klein's
+        blocks checkpoint themselves; once a list is accepted for compiling, the shared wrapper does the checkpoint and
+        each block's own is switched off - a refused list keeps its own, so it never runs without one."""
+        from training.compile import compile_blocks
+        fp8 = precision == "fp8" or any(getattr(m, "_is_fp8", False) for m in dit.modules())
+        if boundary == "outside" and fp8:
+            # Fizgig, measured 3 Oct 2026: an fp8-resident base compiled with the checkpoint outside the graph stops at
+            # the first backward (the recompute sees different tensor metadata); inside trains
+            logger.info("[compile] fp8 base: compiling with the checkpoint inside the graph (outside does not work "
+                        "with fp8 weights)")
+            boundary = "inside"
+        n = 0
+        for blocks in (dit.double_blocks, dit.single_blocks):
+            originals = list(blocks)
+            got = compile_blocks(dit, blocks_to_swap, fp8_scaled=fp8, boundary=boundary, blocks=blocks,
+                                 fullgraph=self.description.compile_fullgraph)
+            if not got:
+                return n                    # refused (and logged): run eager, checkpointing as before
+            for b in originals:
+                b.gradient_checkpointing = False
+            n += got
+        return n
+
+    def convert_lora_state_dict(self, sd):
+        """Klein LoRA files from other trainers (Fizgig 7.0.1: kohya, OneTrainer's lora_transformer_, PEFT, diffusers
+        Flux with split q / k / v fused into Klein's qkv / linear1)."""
+        from training.families.klein.lora_convert import convert
+        return convert(sd)
 
     def enable_gradient_checkpointing(self, dit, on=True):
         dit.enable_gradient_checkpointing(on)

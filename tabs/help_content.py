@@ -575,6 +575,11 @@ first training step with an error. Use sdpa.</li>
 4-bit (7.9 / 9.9 GB). Auto never block-swaps Klein. When the run is not compiled and your Base file is fp8, Auto
 trains the fp8 file as it is instead of INT8: uncompiled that is faster (Fizgig measured 0.77 vs 1.14 s/step) and
 smaller (11.1 GB). <b>fp8</b> is that same choice by hand (Fizgig calls it "As the file").</li>
+<li><b>Compile blocks</b> works on Klein too (Fizgig measured 2.1x per step on INT8 with less memory, 1.4x on 4-bit,
+on NVIDIA). Auto compiles INT8 runs of 200+ steps and 4-bit runs of 400+ when the compiled run fits your free VRAM,
+never the fp8 file, and leaves it off on AMD and with block swap. Not run on real hardware in TagScribeR yet.</li>
+<li>A <b>Context LoRA</b> made for Klein by other trainers loads too, including diffusers-format files whose
+attention is split into q / k / v (they are fused into Klein's layers).</li>
 </ul>
 <h3>SDXL, Pony, Illustrious, NoobAI</h3>
 <ul>

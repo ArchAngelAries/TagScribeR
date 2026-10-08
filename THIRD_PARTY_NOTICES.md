@@ -34,6 +34,7 @@ uses:
 | `training/dataset.py` | `src/fizgig/dataset/image_dataset.py`, `config.py` (image-only subset) |
 | `training/ema.py`, `optimizers.py`, `metadata.py`, `progress.py`, `train_utils.py`, `loss_logger.py` | the same-named modules in `src/fizgig/training/` |
 | `training/compile.py` | `src/fizgig/families/compile.py`, `src/fizgig/krea2/trainer.py` (`_compile_blocks`), `src/fizgig/utils/capabilities.py` (compile rules and their measured constants) |
+| `training/families/klein/lora_convert.py` | `src/fizgig/networks/lora.py` (diffusers Flux / OneTrainer / PEFT LoRA names for Klein) |
 | `training/hf_cache.py` | `src/fizgig/utils/hf_cache.py` (cache-first Hugging Face loading) |
 | `training/modules/offloading.py`, `int8_train.py`, `nf4.py`, `sdpa.py`, `compile_util.py` | `src/fizgig/modules/` |
 | `training/modules/fp8.py` | `src/fizgig/krea2/fp8_optimization_utils.py`, `krea2/utils.py` (adapted by Fizgig from musubi-tuner) |

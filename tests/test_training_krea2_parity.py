@@ -510,7 +510,7 @@ def test_compile_blocks_param_and_presets(driver):
     assert p.default == "Auto" and p.options[:3] == ("Auto", "On", "Off") and p.family_only == "option"
     assert "AMD" in p.tip and "NVIDIA" in p.tip and "OFF" in p.tip
     assert P.family_shows(p, desc) and P.family_shows(p, registry.get("qwen_image21"))      # Fizgig 7.0.1
-    assert not P.family_shows(p, registry.get("klein9b"))
+    assert P.family_shows(p, registry.get("klein9b")) and not P.family_shows(p, registry.get("anima"))
     new, rep = presets.apply(dict(desc.presets[0][1]), P.defaults(), desc)
     assert new["COMPILE_BLOCKS"] == "Auto" and "COMPILE_BLOCKS" not in rep.ignored and rep.refused == []
     for old, want in (("auto", "Auto"), ("on", "On"), ("OFF", "Off"), ("outside", "Outside"), ("Auto", "Auto"),

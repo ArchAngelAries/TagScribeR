@@ -319,6 +319,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         raise RuntimeError(f"unknown or untrainable family {family!r}")
     validate_output_name(output_name)
     driver = desc.load_driver()
+    driver_options = dict(driver_options or {})
+    compile_mode = driver_options.pop("compile_blocks", None)     # Compile Blocks is the loop's (training/compile.py)
     if driver_options:                  # family extensions (e.g. SDXL min-SNR gamma): the Train tab's DRIVER_OPTIONS
         driver.configure(**driver_options)
     arch = desc.arch_id
@@ -387,7 +389,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     # run's length; On places the checkpoint where it fits at the largest bucket.
     do_compile = False
     res_max = max((w * h for w, h in dataset.buckets), default=0) / 1e6
-    cb = str((driver_options or {}).get("compile_blocks") or "off").strip().lower().split(" ")[0]
+    cb = str(compile_mode or "off").strip().lower().split(" ")[0]
     cb = {"1": "on", "true": "on", "yes": "on"}.get(cb, cb)
     if desc.compiles and cb != "off":
         do_compile, why = driver.compile_plan(cb, dataset.num_items * max_train_epochs, precision,

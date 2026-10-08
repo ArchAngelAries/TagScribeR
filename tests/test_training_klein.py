@@ -456,7 +456,7 @@ def test_train_kwargs_map_timesteps_area_and_preview(desc, tmp_path):
     assert (kw["min_timestep"], kw["max_timestep"]) == (0.0, 0.4) and kw["adaptive_lr"] is True
     assert (kw["adaptive_lr_min"], kw["adaptive_lr_max"]) == (1e-5, 4e-4) and kw["network_type"] == "lora"
     assert kw["optimizer_type"] == "adamw8bit" and kw["ema_decay"] == 0.0 and "speed_lora" not in kw
-    assert kw["driver_options"] == {"target_layers": "Style", "training_blocks": "", "timestep_sampling": "flux2_shift",
+    assert kw["driver_options"] == {"compile_blocks": "Auto", "target_layers": "Style", "training_blocks": "", "timestep_sampling": "flux2_shift",
                                     "discrete_flow_shift": 3.0, "sigmoid_scale": 1.0, "logit_mean": 0.0,
                                     "logit_std": 1.0, "preserve_distribution": False,
                                     "attention_mechanism": "sdpa"}
@@ -566,3 +566,85 @@ def test_auto_plan_follows_fizgig_7(desc, monkeypatch, tmp_path):
 def test_fizgig_as_the_file_precision_imports(desc):
     new, rep = presets.apply({"FAMILY_PRECISION": "As the file (bf16 or fp8)"}, P.defaults(), desc)
     assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["fp8"] and not rep.refused and rep.notes
+
+
+def test_diffusers_flux_lora_fuses_qkv_into_klein(driver, tmp_path):
+    """Fizgig 7.0.1 KleinDriver.convert_lora_state_dict: a diffusers-format Flux LoRA (split to_q / to_k / to_v, single
+    blocks' proj_mlp) attaches to Klein's fused qkv / linear1 and adds exactly the split adapters' delta."""
+    from safetensors.torch import save_file
+    dit = _dit()
+    qkv = dit.double_blocks[0].img_attn.qkv
+    lin1 = dit.single_blocks[0].linear1
+    h = qkv.in_features
+    torch.manual_seed(3)
+    sd, want_qkv, want_l1 = {}, [], []
+    for name in ("to_q", "to_k", "to_v"):
+        a, b = torch.randn(2, h), torch.randn(h, 2)
+        sd[f"transformer.transformer_blocks.0.attn.{name}.lora_A.weight"] = a
+        sd[f"transformer.transformer_blocks.0.attn.{name}.lora_B.weight"] = b
+        want_qkv.append(b @ a)
+    mlp_out = lin1.out_features - 3 * h
+    for name, out in (("attn.to_q", h), ("attn.to_k", h), ("attn.to_v", h), ("proj_mlp", mlp_out)):
+        a, b = torch.randn(2, h), torch.randn(out, 2)
+        sd[f"transformer.single_transformer_blocks.0.{name}.lora_A.weight"] = a
+        sd[f"transformer.single_transformer_blocks.0.{name}.lora_B.weight"] = b
+        want_l1.append(b @ a)
+    save_file(sd, str(tmp_path / "diffusers.safetensors"))
+    net = FamilyLoRA(dit, driver)
+    assert net.add_file(str(tmp_path / "diffusers.safetensors"), "context") == 2
+    x = torch.randn(1, h)
+    for w, want in ((dit.double_blocks[0].img_attn.qkv, torch.cat(want_qkv)),
+                    (dit.single_blocks[0].linear1, torch.cat(want_l1))):
+        got = w(x.to(torch.bfloat16)).float() - w.base(x.to(torch.bfloat16)).float()
+        assert torch.allclose(got, x @ want.T, atol=0.05 * float((x @ want.T).abs().max()))
+
+
+def test_klein_compile_rules(desc, monkeypatch):
+    """Fizgig 7.0.1 families/klein.py: payback 200 steps INT8 / 400 NF4, never fp8 by Auto; the measured compiled peaks
+    pick the boundary; an fp8 base compiles inside; a refused list keeps the blocks' own checkpointing."""
+    from training import compile as C
+    from training import quant
+    d = desc.load_driver()
+    monkeypatch.setattr(C, "compile_blocker", lambda swap: None)
+    monkeypatch.setattr(quant, "free_vram_gb", lambda: 16.0)
+    assert d.compile_plan("auto", 199, "int8", 0)[0] is False
+    assert d.compile_plan("auto", 200, "int8", 0, mp=0.25)[0] == "outside"      # 11.8 fits, inside's 20.7 not needed
+    assert d.compile_plan("auto", 400, "nf4", 0, mp=0.25)[0] == "inside"        # NF4's only measured boundary
+    assert d.compile_plan("auto", 10 ** 5, "fp8", 0)[0] is False
+    monkeypatch.setattr(quant, "free_vram_gb", lambda: 12.0)
+    assert d.compile_plan("auto", 10 ** 5, "int8", 0, mp=1.0)[0] is False      # 15.7 GB at 1 MP does not fit
+    dit = _dit()
+    dit.enable_gradient_checkpointing(True)
+    blocks = list(dit.double_blocks)
+    monkeypatch.setattr(C, "_triton_importable", lambda: False)
+    assert d.compile_blocks(dit, "outside", 0, "int8") == 0
+    assert list(dit.double_blocks) == blocks and all(b.gradient_checkpointing for b in blocks)
+
+
+def test_compiled_klein_blocks_equal_the_eager_ones(driver):
+    """The shared wrapper around both block lists (Klein's double blocks return two tensors) traces with dynamo's
+    eager backend and gives the eager loss and gradients, with the blocks' own checkpointing handed to the wrapper."""
+    from training.compile import CheckpointedBlock
+    dit = _dit()
+    dit.enable_gradient_checkpointing(True)
+    net = FamilyLoRA(dit, driver)
+    net.add_trainable(4, 4)
+    for p in net.parameters():
+        p.data.normal_(0, 0.05)
+    lat, cond = torch.randn(1, 16, 6, 4), _cond(1)
+
+    def run():
+        dit.train()
+        for p in net.parameters():
+            p.grad = None
+        loss, _ = driver.training_loss(dit, lat, cond, torch.Generator().manual_seed(0))
+        loss.backward()
+        return loss.item(), [p.grad.clone() for p in net.parameters()]
+    eager_loss, eager_grads = run()
+    for blocks in (dit.double_blocks, dit.single_blocks):
+        for i, b in enumerate(list(blocks)):
+            b.gradient_checkpointing = False
+            blocks[i] = CheckpointedBlock(torch.compile(b, fullgraph=False, backend="eager"), True)
+    loss, grads = run()
+    assert loss == pytest.approx(eager_loss, rel=1e-4)
+    assert all(torch.allclose(a, b, atol=1e-3) for a, b in zip(grads, eager_grads))

@@ -34,7 +34,7 @@ def _preset(rank, alpha, epochs, lo, hi, *, adaptive=True, lr=1e-4, scheduler="c
     }
 
 
-def _fizgig_preset(rank, alpha, lr=5e-5, epochs=20):
+def _fizgig_preset(rank, alpha, lr=5e-5, epochs=20, slider=False):
     # Fizgig 7.0.1 families/sdxl.py _preset: flat LR (SDXL's per-epoch loss swings with its uniform timesteps, so
     # Adaptive LR reacted to noise), fused AdamW (1493 -> 1046 ms/step against 8-bit AdamW, measured on a 5090), the
     # loss watch with per-image LR and auto-recaption on
@@ -46,8 +46,9 @@ def _fizgig_preset(rank, alpha, lr=5e-5, epochs=20):
         "OPTIMIZER_TYPE": "adamw", "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0,
         "DATASET_MEGAPIXELS": "1.0", "BLOCKS_SWAP": "Auto (detect from GPU)",
         "FAMILY_PRECISION": "Auto (fits your free VRAM)", "FAMILY_EMA": "0.98 (recommended)",
-        "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": True, "KREA2_AUTO_RECAPTION": True,
-        "KREA2_WARMUP_LOOK": False,
+        # the loss watch with per-image LR and auto-recaption on, except for sliders (Fizgig, 5 Oct 2026)
+        "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": not slider, "KREA2_AUTO_RECAPTION": not slider,
+        "KREA2_WARMUP_LOOK": False, "FAMILY_SLIDER": slider,
     }
 
 
@@ -58,10 +59,12 @@ def _presets(name):
     #  * Style: rank 16 / alpha 8, gentle adaptive range 5e-5..1e-4, 40 epochs, every epoch saved to scrub for the sweet spot.
     return (
         # Fizgig's (Peter, 5 Oct 2026): the first is a first visit's preset. alpha at half the rank ("SDXL LoRAs gain
-        # from the halved alpha"); 5e-5 "clearly better results than 1e-4 in his comparisons". The Slider and
-        # Fine-tune presets wait for those modes (port plan stage 5)
+        # from the halved alpha"); 5e-5 "clearly better results than 1e-4 in his comparisons". The Fine-tune presets
+        # wait for that mode (port plan stage 5)
         (f"✨ {name} Strong (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16)),
         (f"✨ {name} Standard (rank 16, alpha 8, 5e-5)", _fizgig_preset(16, 8)),
+        # Slider: the default's rank 32 / alpha 16 at 5e-5 (Fizgig, 5 Oct 2026; "not yet measured on SDXL")
+        (f"✨ {name} Slider (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16, epochs=30, slider=True)),
         # TagScribeR's earlier presets, community starting points (not measured)
         (f"✨ {name} Fast (rank 16, adaptive LR)", _preset(16, 16, 20, "5e-5", "2e-4")),
         (f"✨ {name} Cosine (rank 32, community)", _preset(32, 16, 30, "1e-4", "4e-4", adaptive=False,
@@ -129,6 +132,9 @@ def _variant(key, arch, display, *, repo, file, size_gb, ckpt_note, sampling, pr
         preview_steps=preview_steps, preview_cfg=preview_cfg, preview_width=1024, preview_height=1024,
         preview_negative="worst quality, low quality, lowres, bad anatomy, bad hands, jpeg artifacts, watermark, "
                          "signature, text",
+        # Slider LoRAs (prompt pairs or before/after photo pairs): epsilon prediction works as Concept Sliders' SDXL
+        # recipe does - the target is built from the UNet's own predictions (Fizgig 7.0.1)
+        slider_training=True,
         presets=_presets(display),
         helper_files=(("openai/clip-vit-large-patch14",
                        ("vocab.json", "merges.txt", "tokenizer_config.json", "special_tokens_map.json")),),

@@ -122,6 +122,33 @@ PARAMS: tuple[Param, ...] = (
     P("FAMILY_EDIT", "Edit LoRA (before/after pairs)", BOOL, False, "Training Parameters",
       "Train an edit (e.g. a colour grade) from pairs: the dataset folder holds the edited images, the originals "
       "folder holds the matching originals with the same file names.", family_only="edit"),
+    # Slider LoRAs (Fizgig 7.0.1's FAMILY_SLIDER_* keys): the LoRA's strength becomes a dial between two looks
+    P("FAMILY_SLIDER", "Slider LoRA (strength is a dial)", BOOL, False, "Training Parameters",
+      "Train a slider: at strength +1 the LoRA pushes one way, at -1 the other, 0 is the base model. From image pairs "
+      "(the dataset folder is the +1 end, the -1 end folder holds the same pictures changed the other way, same file "
+      "names) or from prompts (no dataset: the model renders practice pictures of a base prompt). A slider is always "
+      "a plain LoRA; Adaptive LR, EMA, the loss watch and gradient accumulation are off for it. Previews show the "
+      "dial at -1, 0 and +1 side by side.", family_only="slider"),
+    P("FAMILY_SLIDER_SOURCE", "Slider from", CHOICE, "pairs", "Training Parameters",
+      "pairs = image pairs (the dataset folder and the -1 end folder); prompts = a base prompt and what each end "
+      "adds (no dataset needed).", options=("pairs", "prompts"), strict=True, preset=False, family_only="slider"),
+    P("FAMILY_SLIDER_DIR", "Slider -1 end folder", DIR, "", "Training Parameters",
+      "Image-pair sliders: the folder with each dataset picture's -1 version, the same file name and the same crop. "
+      "The dataset folder is the +1 end.", preset=False, family_only="slider"),
+    P("FAMILY_SLIDER_BASE", "Slider base prompt", TEXT, "", "Training Parameters",
+      "Prompt sliders: what the picture is, e.g. 'a photo of a woman'. Previews show the dial on this prompt.",
+      preset=False, family_only="slider"),
+    P("FAMILY_SLIDER_POS", "+1 end adds", TEXT, "", "Training Parameters",
+      "Prompt sliders: what the +1 end adds to the base prompt, e.g. 'smiling'.", preset=False, family_only="slider"),
+    P("FAMILY_SLIDER_NEG", "-1 end adds", TEXT, "", "Training Parameters",
+      "Prompt sliders: what the -1 end adds to the base prompt, e.g. 'frowning'.", preset=False, family_only="slider"),
+    P("FAMILY_SLIDER_GUIDANCE", "Slider push strength", FLOAT, 0.0, "Training Parameters",
+      "Prompt sliders: how far each end is pushed past the plain prompt (0 = the family's default: 3 on Krea 2, 2 "
+      "elsewhere). Higher makes a stronger dial, too high turns the picture into something else.", minimum=0.0,
+      maximum=20.0, family_only="slider"),
+    P("FAMILY_SLIDER_ULTRA", "Slider Ultra mode", BOOL, False, "Training Parameters",
+      "Krea 2 sliders: train only the composition blocks (blocks 0-7 and the text-fusion blocks), so the slider "
+      "holds up at far higher strengths.", advanced=True, family_only="slider_ultra"),
     P("FAMILY_FAST_ID", "Fast Identity Mode", BOOL, False, "Training Parameters",
       "Train only the blocks measured to carry a character's identity (Qwen Image 2.1: blocks 10-14). About 1.5x "
       "faster per step, with likeness very close to a full-model LoRA. For characters and faces, not styles. Not "
@@ -480,6 +507,10 @@ def family_shows(param: Param, desc) -> bool:
         return bool(desc.train_preview_checkpoint)
     if f == "fast_id":
         return bool(desc.identity_blocks)
+    if f == "slider":
+        return bool(desc.slider_training)
+    if f == "slider_ultra":
+        return bool(desc.slider_training and desc.slider_ultra_blocks)
     if f == "speed":
         return bool(desc.preview_speed()) and not desc.samples_turbo_pace
     if f == "turbo_pace":

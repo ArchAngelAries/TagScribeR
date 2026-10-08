@@ -418,18 +418,27 @@ def test_step_scheduler_shapes():
     assert math.isclose(lrs[2], 1.0)
 
 
-def test_slider_and_finetune_presets_are_refused_not_run_as_loras():
-    """A Fizgig Slider or Fine-tune preset changes nothing here (those modes are not ported yet): applied, its
-    settings would silently train an ordinary LoRA."""
+def test_finetune_presets_are_refused_not_run_as_loras_and_sliders_apply():
+    """A Fizgig Fine-tune preset changes nothing here (that mode is not ported yet): applied, its settings would
+    silently train an ordinary LoRA. A Slider preset applies to a family with slider training, and is refused for one
+    without."""
+    import dataclasses
+
     from training import params as P
-    from training import presets
+    from training import presets, registry
     cur = P.defaults()
-    for key in ("FAMILY_SLIDER", "FAMILY_FT", "KREA2_FINETUNE", "MINIMAX_FINETUNE"):
+    for key in ("FAMILY_FT", "KREA2_FINETUNE", "MINIMAX_FINETUNE"):
         new, rep = presets.apply({key: True, "NETWORK_DIM": 4, "LEARNING_RATE": 2e-4}, cur)
         assert new == cur and rep.blocked and not rep.applied, key
         assert "cannot train yet" in rep.messages()[0]
-    new, rep = presets.apply({"FAMILY_SLIDER": False, "FAMILY_FT": False, "NETWORK_DIM": 4}, cur)   # Fizgig's LoRAs
+    new, rep = presets.apply({"FAMILY_FT": False, "FAMILY_SLIDER": False, "NETWORK_DIM": 4}, cur)   # Fizgig's LoRAs
     assert not rep.blocked and new["NETWORK_DIM"] == 4
+    slider = {"FAMILY_SLIDER": True, "NETWORK_DIM": 4, "LEARNING_RATE": 2e-4}
+    new, rep = presets.apply(slider, cur, registry.get("qwen_image21"))
+    assert not rep.blocked and new["FAMILY_SLIDER"] is True and new["NETWORK_DIM"] == 4
+    no_sliders = dataclasses.replace(registry.get("qwen_image21"), slider_training=False)
+    new, rep = presets.apply(slider, cur, no_sliders)
+    assert new == cur and rep.blocked == [("FAMILY_SLIDER", "slider training")]
 
 
 def test_frozen_loha_and_diffusers_dot_spelling(tiny, tmp_path):

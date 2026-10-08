@@ -61,8 +61,9 @@ def test_description_presets_and_registry(desc):
     assert (desc.preview_width, desc.preview_height) == (768, 768)
     names = [n for n, _ in desc.presets]
     assert names == ["✨ MiniMax H3 Fast (LoRA 8, 50 epochs)", "✨ MiniMax H3 (rank 16, 60 epochs)",
-                     "✨ MiniMax H3 Style (LoRA 8)"]
-    fast, base, style = (v for _, v in desc.presets)
+                     "✨ MiniMax H3 Style (LoRA 8)", "✨ MiniMax H3 Slider (rank 8, 2e-4)"]
+    fast, base, style, slider = (v for _, v in desc.presets)
+    assert slider["FAMILY_SLIDER"] is True and (slider["OPTIMIZER_TYPE"], slider["LEARNING_RATE"]) == ("adamw8bit", 2e-4)
     assert (fast["NETWORK_DIM"], fast["NETWORK_ALPHA"], fast["MAX_TRAIN_EPOCHS"], fast["LEARNING_RATE"]) == (8, 8, 50, 1e-6)
     assert fast["OPTIMIZER_TYPE"] == "automagic3" and fast["H3_LOWNOISE_PCT"] == "60"
     assert fast["H3_CAPTION_DROPOUT"] == "0.05 (default)" and fast["FAMILY_EMA"] == "0.98 (recommended)"
@@ -80,7 +81,8 @@ def test_preset_keys_resolve_without_refusals(desc):
         new, rep = presets.apply(values, P.defaults(), desc)
         assert rep.refused == [] and rep.blocked == [], (name, rep.refused)
         assert new["FAMILY_EMA"].startswith("0.98") and new["CAPTION_DROPOUT"] == 0.05
-        assert new["H3_ADAPTER"] == P.H3_ADAPTERS[0] and new["OPTIMIZER_TYPE"] == "automagic3"
+        assert new["H3_ADAPTER"] == P.H3_ADAPTERS[0]
+        assert new["OPTIMIZER_TYPE"] == ("adamw8bit" if values["FAMILY_SLIDER"] else "automagic3")
         assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["auto"] and new["H3_STRUCTURE"] == P.H3_STRUCTURES[0]
         assert float(new["H3_LOWNOISE_PCT"]) == 60.0 and new["H3_LIKENESS_MODE"] == "Default"
         assert float(new["H3_HIGHNOISE_LR_PCT"]) == 100.0 and new["H3_TRAIN_REFINER"] is False

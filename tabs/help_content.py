@@ -387,6 +387,22 @@ changed since the last run.</li>
 folder holds the edited ("after") images, the originals folder the matching "before" images with the same file names.
 The LoRA learns to turn one into the other, for example a colour grade. Previews apply the edit to the first original,
 or to the photo you set under Samples.</li>
+<li><b>Slider LoRA</b> (every family): the LoRA's strength becomes a dial. At +1 it pushes one way, at -1 the
+other, and 0 is the plain model. Two kinds (<i>Slider from</i>):
+<ul>
+<li><i>pairs</i>: the dataset folder is the +1 end; the <i>Slider -1 end folder</i> holds the same pictures changed
+the other way, with the same file names and the same framing (for example a photo and its darker version). The
+LoRA learns what differs between the two ends, not what they share. Partners may also be named
+<code>photo_anything.png</code> for <code>photo.png</code>.</li>
+<li><i>prompts</i>: no dataset. Fill in the base prompt (what the picture is) and what each end adds (for example
+"a photo of a woman", "smiling", "frowning"). The model first renders 16 practice pictures of the base prompt, then
+learns to push them toward one prompt at +1 and the other at -1. <i>Slider push strength</i> sets how far.</li>
+</ul>
+A slider is always a plain LoRA; Adaptive LR, EMA, the loss watch and gradient accumulation are off for it, and it
+trains at batch size 1. Previews show the dial at -1, 0 and +1 side by side. Krea 2, Qwen, SDXL, Anima and MiniMax H3 have a
+Slider preset (Fizgig's recipes: tried on Qwen, Krea 2 and MiniMax H3, starting points on SDXL and Anima). Krea 2 adds <i>Slider Ultra mode</i>
+(composition blocks only, for sliders that hold up at higher strengths). The file records that it is a slider
+(<code>ss_slider</code>).</li>
 <li>A <b>Context LoRA</b> (Show all settings) stays frozen and active while you train, so the new LoRA learns on top
 of it; it is never saved into the output. LoRA, LoKR and LoHa files load, in kohya, diffusers, OneTrainer or
 AI-Toolkit naming.</li>
@@ -418,8 +434,8 @@ switch your model. Preview settings and Resume aren't part of presets either.</l
 <li><b>Import…</b> adds a preset file. Fizgig preset files work as they are (same setting names).</li>
 <li>When a preset holds a value this family doesn't offer (an optimizer, a learning-rate bound, a precision), that
 setting is kept as it was and the console says so. Settings this version doesn't know are ignored.</li>
-<li>Fizgig's <b>Slider</b> and <b>Fine-tune</b> presets are refused with a message and change nothing: TagScribeR
-can't train sliders or full fine-tunes yet, and applied anyway they would train an ordinary LoRA.</li>
+<li>Fizgig's <b>Fine-tune</b> presets are refused with a message and change nothing: TagScribeR can't train full
+fine-tunes yet, and applied anyway they would train an ordinary LoRA. Its <b>Slider</b> presets work.</li>
 </ul>
 """),
     "train_lr": ("Adaptive learning rate", "Train", """
@@ -573,7 +589,8 @@ optimizers get Fizgig's H3 weight decay of 1e-4. The LoRA trains in bf16, as in 
 and they render in 6 steps with it at 75% (Samples: <i>Turbo steps</i> and <i>Turbo strength</i>; 0% turns it off).
 It is on only while previews render and is never saved into your LoRA. Its time-modulation rows, and those of an older
 H3 LoRA used as a Context LoRA, are applied at run time, as Fizgig does.</li>
-<li>Not available yet: HQQ 4-bit, the 66 GB bf16 DiT, clips, sound, distillation and sliders.</li>
+<li>Not available yet: HQQ 4-bit, the 66 GB bf16 DiT, clips, sound and distillation. Sliders from still pairs or
+prompts work (the Slider preset is Fizgig's).</li>
 </ul>
 <h3>FLUX.2 Klein Base 9B</h3>
 <ul>

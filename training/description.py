@@ -187,6 +187,12 @@ class FamilyDescription:
     family_options: tuple = ()
     edit_training: bool = False       # Edit LoRA from before/after pairs (the driver's supports_references)
     edit_note: str = ""               # the Edit LoRA section's "What you need" line: pair count and photo size
+    # Slider LoRAs (Fizgig 7.0.1): the LoRA's strength is a dial between two looks, trained from image pairs (the
+    # driver's training_loss diff_ref) or from prompts (noise_latents / predict). slider_guidance: a prompt slider's
+    # default push strength; slider_ultra_blocks: the block ids an "Ultra mode" slider trains (() = no Ultra mode)
+    slider_training: bool = False
+    slider_guidance: float = 2.0
+    slider_ultra_blocks: tuple = ()
 
     # sampling
     sampling: tuple = ()              # SamplingSettings without any speed LoRA (first = default)

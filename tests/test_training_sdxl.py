@@ -218,7 +218,7 @@ def test_descriptions_validate_and_are_distinct():
 
 def test_presets_resolve_without_refusals():
     for d in VARIANTS:
-        assert len(d.presets) == 5 and "Strong (rank 32, alpha 16, 5e-5)" in d.presets[0][0]     # Fizgig's first
+        assert len(d.presets) == 6 and "Slider" in d.presets[2][0] and "Strong (rank 32, alpha 16, 5e-5)" in d.presets[0][0]     # Fizgig's first
         first = d.presets[0][1]
         assert (first["NETWORK_DIM"], first["NETWORK_ALPHA"], first["LEARNING_RATE"], first["ADAPTIVE_LR"],
                 first["OPTIMIZER_TYPE"]) == (32, 16, 5e-5, False, "adamw")

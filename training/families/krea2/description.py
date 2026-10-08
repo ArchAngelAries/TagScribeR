@@ -164,6 +164,11 @@ KREA2 = FamilyDescription(
     preview_width=1024,                                      # audit 4.4: SAMPLE_WIDTH per-family default Krea 2 1024
     preview_height=1024,
 
+    slider_training=True,
+    slider_guidance=3.0,              # Fizgig's slider tests (1 Oct 2026): 3 on Krea 2, where Qwen's 2 pushes too little
+    # Ultra mode (Fizgig, 1 Oct 2026): blocks 0-7 and the four text-fusion blocks (Fizgig's txt_lw_0/1, txt_rf_0/1)
+    slider_ultra_blocks=tuple(f"block_{i}" for i in range(8)) + ("txtfusion_layerwise_0", "txtfusion_layerwise_1",
+                                                                 "txtfusion_refiner_0", "txtfusion_refiner_1"),
     presets=(
         # THE DEFAULT (the first visit applies it): rank 8 with Adaptive LR at an aggressive floor. Rank 8 is more than
         # enough for a character on a 12.9B model and lands the right result more reliably than 32 (Peter, 16 Sep 2026).
@@ -173,6 +178,18 @@ KREA2 = FamilyDescription(
         # ceiling 2e-4 because the watcher probes up on steady descent and style overbakes at 4e-4 (the start is 1e-4,
         # the LR the Krea 2 ecosystem defaults to). Every epoch is saved: scrub for the sweet spot.
         ("✨ Krea 2 Style (rank 16, gentle LR)", _preset(16, 64, True, "5e-5", "2e-4")),
+        # Slider (Fizgig 7.0.1 families/krea2.py, its keys and values verbatim): hot and short, as Qwen's (rank 4,
+        # 2e-4, 0.5 MP); a happy/sad prompt slider (16 practice pictures, guidance 2) was right at 20 epochs and had
+        # turned +1 into an illustration by 25. The loss watch and Adaptive LR stand down for sliders
+        ("✨ Krea 2 Slider (rank 4, 2e-4)", {
+            "NETWORK_DIM": 4, "NETWORK_ALPHA": 4, "NETWORK_TYPE": "LoRA (standard)", "LEARNING_RATE": 2e-4,
+            "MAX_TRAIN_EPOCHS": 20, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42, "FAMILY_SLIDER": True,
+            "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-4", "ADAPTIVE_LR_MAX": "4e-4",
+            "OPTIMIZER_TYPE": "adamw8bit", "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0,
+            "DATASET_MEGAPIXELS": "0.5", "BLOCKS_SWAP": "Auto (detect from GPU)",
+            "FAMILY_PRECISION": "Auto (fits your free VRAM)", "FAMILY_EMA": "0.98 (recommended)",
+            "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": True, "KREA2_AUTO_RECAPTION": False,
+            "KREA2_WARMUP_LOOK": False, "FAMILY_SLIDER_GUIDANCE": "3"}),
     ),
 
     # Fizgig's Krea 2 text-encoder tokenizer files (krea2/embedder.py QWEN3_VL_TOKENIZER_FILES), fetched with the models

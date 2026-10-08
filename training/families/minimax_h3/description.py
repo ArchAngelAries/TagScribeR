@@ -15,14 +15,14 @@ _REPO = "Comfy-Org/MiniMax-H3"
 _OSTRIS = "ostris/minimax_h3_training_adapter"
 
 
-def _preset(rank, epochs, clip_still=True, lr=1e-6, optimizer="automagic3"):
+def _preset(rank, epochs, clip_still=True, slider=False, lr=1e-6, optimizer="automagic3"):
     """Fizgig 7.0.1's H3 built-ins (families/minimax.py _preset), keys and values verbatim. H3_TREAD, H3_CLIP_STILL and
     H3_DISTILL switch on clip / distillation features this port does not have: they are carried (so the preset is
     Fizgig's) and ignored."""
     return {
         "NETWORK_DIM": rank, "NETWORK_ALPHA": rank, "NETWORK_TYPE": "LoRA (standard)", "LOKR_FACTOR": 8,
         "LEARNING_RATE": lr, "MAX_TRAIN_EPOCHS": epochs, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
-        "FAMILY_SLIDER": False, "FAMILY_SLIDER_GUIDANCE": "2",
+        "FAMILY_SLIDER": slider, "FAMILY_SLIDER_GUIDANCE": "2",
         "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-5", "ADAPTIVE_LR_MAX": "4e-4", "OPTIMIZER_TYPE": optimizer,
         "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0, "DATASET_MEGAPIXELS": "0.25",
         "FAMILY_PRECISION": "Auto (recommended)", "BLOCKS_SWAP": "Auto (detect from GPU)",
@@ -168,12 +168,16 @@ MINIMAX_H3 = FamilyDescription(
     preview_width=768,                                       # Fizgig 7.0.1 (the old Samples default)
     preview_height=768,
 
+    slider_training=True,                                    # stills: photo pairs or prompts (Fizgig 7.0.1)
     presets=(
-        # Fizgig 7.0.1's, in its order (the first is the default). Its fourth, the Slider preset, waits for slider
-        # training (port plan stage 5)
+        # Fizgig 7.0.1's, in its order (the first is the default)
         ("✨ MiniMax H3 Fast (LoRA 8, 50 epochs)", _preset(8, 50)),
         ("✨ MiniMax H3 (rank 16, 60 epochs)", _preset(16, 60)),
         ("✨ MiniMax H3 Style (LoRA 8)", _preset(8, 50, clip_still=False)),
+        # Slider (Fizgig, 3 Oct): rank 8 at 2e-4 for ~160 steps; a prompt smile slider at push 2 was clear by epoch 5
+        # of 10 (16 practice pictures an epoch)
+        ("✨ MiniMax H3 Slider (rank 8, 2e-4)", _preset(8, 16, clip_still=False, slider=True, lr=2e-4,
+                                                         optimizer="adamw8bit")),
     ),
     family_options=("H3_TRAIN_BASE", "H3_STRUCTURE", "H3_LOWNOISE_PCT", "H3_HIGHNOISE_LR_PCT", "H3_LIKENESS_MODE",
                     "H3_BLOCKS", "H3_ADAPTER", "H3_ADAPTER_RAMP", "H3_TRAIN_REFINER"),
@@ -185,7 +189,7 @@ MINIMAX_H3 = FamilyDescription(
 
     notes=(
         ("Image LoRA training only: video clips, voice, reference images (RefMods), multi-concept, distillation, "
-         "sliders, the rotation full fine-tune, the HQQ base and the bf16 DiT are not part of this port yet.",
+         "the rotation full fine-tune, the HQQ base and the bf16 DiT are not part of this port yet.",
          "docs/dev/PORT_PLAN.md"),
         ("Training target is x0 - noise on noised = (1 - sigma) x0 + sigma noise, t = 1 - sigma fed to the DiT (sign "
          "convention matched to ComfyUI). Training structure sets the clean-end share P and with it the schedule shift "

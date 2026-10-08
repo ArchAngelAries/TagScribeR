@@ -39,6 +39,7 @@ import sys
 import time
 
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 
 from training import quant
@@ -59,6 +60,94 @@ SPEED = "speed_lora"
 def _short_ema(ema_decay) -> bool:
     """EMA "Short run" (ema_decay "short"): the decay is sized to the run (Fizgig 7.0.1, H3's)."""
     return str(ema_decay).lower().startswith("short")
+
+
+# ---- sliders (Fizgig 7.0.1 families/train.py): a signed dial, trained at +1 and -1 ------------------------------
+class _SliderBank:
+    """Prompt-pair sliders train on no dataset: the base model renders a bank of practice latents from the neutral
+    prompt, and each step noises one of them (Fizgig _SliderBank). The TrainingDataset surface the loop uses."""
+
+    def __init__(self, n, res):
+        self.latents = [None] * max(1, int(n))
+        self.num_items = len(self.latents)
+        self.batch_size = 1
+        self.buckets = {(res, res): []}
+        self.config = {"resolution": [res, res], "datasets": []}
+        self.has_control = False
+        self._order = list(range(self.num_items))
+
+    def prepare_for_training(self):
+        return self.num_items
+
+    def items(self):
+        return {}
+
+    def __len__(self):
+        return self.num_items
+
+    def shuffle(self, seed):
+        self._order = random.Random(seed).sample(range(self.num_items), self.num_items)
+
+    def get_batch(self, idx, rng=None):
+        j = self._order[idx]
+        return {"latents": self.latents[j], "item_keys": [f"slider_practice_{j:02d}"]}
+
+
+# The dial is the point, so a slider preview shows it moving: one prompt, one seed, these strengths side by side.
+SLIDER_PREVIEW_MULTIPLIERS = (-1.0, 0.0, 1.0)
+
+
+def _slider_strip(frames, multipliers):
+    """The strengths side by side, each labelled (Fizgig _slider_strip)."""
+    from PIL import Image, ImageDraw, ImageFont
+    w, h = frames[0].size
+    gap, band = 8, 30
+    strip = Image.new("RGB", (w * len(frames) + gap * (len(frames) - 1), h + band), (16, 16, 16))
+    draw = ImageDraw.Draw(strip)
+    try:
+        font = ImageFont.load_default(size=max(14, w // 40))
+    except Exception:  # noqa: BLE001 - an older Pillow without sized default fonts
+        font = ImageFont.load_default()
+    for k, (im, m) in enumerate(zip(frames, multipliers)):
+        x = k * (w + gap)
+        strip.paste(im, (x, band))
+        draw.text((x + 8, 7), "strength 0 (slider off)" if m == 0 else f"strength {m:+g}", fill=(236, 236, 236),
+                  font=font)
+    return strip
+
+
+def _pair_slider_caption(dataset):
+    """The caption an image-pair slider's photos share (the most common one if they were edited apart)."""
+    from collections import Counter
+    counts = Counter()
+    for it in dataset.items().values():
+        text = str(getattr(it, "caption", "") or "").strip()
+        if text:
+            counts[text] += 1
+    return counts.most_common(1)[0][0] if counts else None
+
+
+def _prompt_slider_step(driver, dit, net, latents, enc, gen, *, guidance, min_t, max_t):
+    """Concept Sliders, textual form, on flow matching (Fizgig _prompt_slider_step). With the adapter at 0 the frozen
+    model predicts the neutral, positive and negative prompts at one noised practice latent; the adapter then trains
+    at +1 toward v_neutral + guidance * (v_pos - v_neg) and at -1 toward the mirror. Each pole is backpropagated before
+    the flip (checkpointed blocks recompute at the strength of the moment). Returns the detached mean loss and t."""
+    state = driver.noise_latents(latents, gen, min_t=min_t, max_t=max_t)
+    n_c, p_c, g_c = enc
+    try:
+        net.set_trainable_multiplier(0.0)
+        with torch.no_grad():
+            v_n = driver.predict(dit, state, n_c).float()
+            delta = float(guidance) * (driver.predict(dit, state, p_c).float() - driver.predict(dit, state, g_c).float())
+        total = 0.0
+        for m in (1.0, -1.0):
+            net.set_trainable_multiplier(m)
+            loss = F.mse_loss(driver.predict(dit, state, n_c).float(), v_n + m * delta)
+            (0.5 * loss).backward()
+            total += 0.5 * loss.item()
+    finally:
+        net.set_trainable_multiplier(1.0)
+    return total, state["t"]
 TRAINABLE_PREVIEW = "preview_lora"     # the epoch's LoRA, frozen on a preview checkpoint
 PAUSE_FILE = ".pause_requested"
 OVERRIDE_FILE = ".sample_override.json"
@@ -227,10 +316,11 @@ def _load_references(paths, width, height):
 
 
 def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_name, steps, cfg, neg, width,
-                     height, seed, ema=None, speed=None, lowmem=False, swapped=False, refs=None):
+                     height, seed, ema=None, speed=None, lowmem=False, swapped=False, refs=None, slider=False):
     """Previews on the RESIDENT training model: training adapter OFF (the deployment setup), the family's speed LoRA
     ON if one is loaded (it lives on CPU between previews), EMA weights swapped in. On small cards the model parks on
-    CPU for the decode. File names: <name>_e<epoch:06d>_<idx:02d>_<timestamp>_<seed>.png."""
+    CPU for the decode. A slider's preview is its dial at -1 / 0 / +1 side by side. File names:
+    <name>_e<epoch:06d>_<idx:02d>_<timestamp>_<seed>.png."""
     os.makedirs(out_dir, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     device = next(iter(dit.parameters())).device
@@ -256,17 +346,22 @@ def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_n
             driver.block_swap_mode(dit, inference=True)
         ref_kw = {"refs": [r.to(device) for r in refs]} if refs else {}
         lats = []
+        mults = SLIDER_PREVIEW_MULTIPLIERS if slider else (None,)
         for i, cond in enumerate(encoded):
             cond = {k: v.to(device) if hasattr(v, "to") else v for k, v in cond.items()}
-            if speed is not None:
-                # the speed LoRA's own CFG, unless the Samples tab asks for more (then the negative applies too)
-                _cfg = cfg if cfg and cfg > 1.0 else speed.cfg
-                lats.append(driver.generate(dit, cond, width, height, steps=steps, seed=seed + i, cfg=_cfg,
-                                            neg_cond=neg if _cfg > 1.0 else None,
-                                            sigmas=speed.sigmas, options=speed.options, **ref_kw))
-            else:
-                lats.append(driver.generate(dit, cond, width, height, steps=steps, seed=seed + i, cfg=cfg,
-                                            neg_cond=neg, **ref_kw))
+            for m in mults:
+                if m is not None:
+                    done.add("slider")
+                    net.set_trainable_multiplier(m)
+                if speed is not None:
+                    # the speed LoRA's own CFG, unless the Samples tab asks for more (then the negative applies too)
+                    _cfg = cfg if cfg and cfg > 1.0 else speed.cfg
+                    lats.append(driver.generate(dit, cond, width, height, steps=steps, seed=seed + i, cfg=_cfg,
+                                                neg_cond=neg if _cfg > 1.0 else None,
+                                                sigmas=speed.sigmas, options=speed.options, **ref_kw))
+                else:
+                    lats.append(driver.generate(dit, cond, width, height, steps=steps, seed=seed + i, cfg=cfg,
+                                                neg_cond=neg, **ref_kw))
         tok = driver.park_for(dit, device, None, "decode")   # None = the shared rule below
         if tok is not None:
             done.add("decode_park")
@@ -277,10 +372,19 @@ def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_n
             quant.move(dit, "cpu")
             _empty_cache()
             _preview_vram("model parked for the decode")
-        for i, lat in enumerate(lats):
+        per = len(mults)
+        for i in range(len(lats) // per):
             p = os.path.join(out_dir, f"{output_name}_e{epoch:06d}_{i:02d}_{ts}_{seed + i}.png")
-            paths += driver.save_preview(driver.decode(vae, lat, width, height), p)
+            frames = [driver.decode(vae, lat, width, height) for lat in lats[i * per:(i + 1) * per]]
+            if slider:
+                strip = driver.slider_preview(frames, SLIDER_PREVIEW_MULTIPLIERS)
+                paths += driver.save_preview(_slider_strip(frames, SLIDER_PREVIEW_MULTIPLIERS) if strip is None
+                                             else strip, p)
+            else:
+                paths += driver.save_preview(frames[0], p)
     finally:
+        if "slider" in done:
+            net.set_trainable_multiplier(1.0)  # a preview that failed mid-dial must not leave the LoRA scaled
         if "decode_park" in done:
             driver.unpark(dit, device, tok)
         if "lowmem_park" in done:
@@ -409,7 +513,9 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                  gradient_accumulation=1,
                  log_per_image_loss=False, per_image_lr=False, auto_recaption=False, warmup_look_outliers=False,
                  trigger_word=None, trigger_position="start", captioner=None, device=None, driver_options=None,
-                 train_blocks=None, preview_checkpoint=None, preview_checkpoint_cache="auto", preview_int8=False):
+                 train_blocks=None, preview_checkpoint=None, preview_checkpoint_cache="auto", preview_int8=False,
+                 slider_pairs=False, slider_diff_weight=1.0, slider_prompts=None, slider_guidance=None,
+                 slider_bank=16, slider_bank_res=768):
     desc = get_family(family)
     if desc is None or not desc.training_ready:
         raise RuntimeError(f"unknown or untrainable family {family!r}")
@@ -442,14 +548,64 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     torch.manual_seed(seed)
     os.makedirs(output_dir, exist_ok=True)
 
+    # ---- sliders: a signed dial, trained at +1 and -1 (Fizgig 7.0.1) -------------------------------------
+    slider = bool(slider_pairs or slider_prompts)
+    slider_guidance = desc.slider_guidance if slider_guidance is None else float(slider_guidance)
+    if slider:
+        if not desc.slider_training:
+            raise RuntimeError(f"{desc.display_name} does not offer slider training")
+        if slider_pairs and slider_prompts:
+            raise RuntimeError("[slider] image pairs and prompt pairs are two different sliders - pick one")
+        if slider_prompts and (len(slider_prompts) != 3 or not all(str(x).strip() for x in slider_prompts[1:])):
+            raise RuntimeError("[slider] prompt pairs need NEUTRAL POSITIVE NEGATIVE (the two poles non-empty)")
+        if network_type != "lora":
+            logger.info("[slider] network type %s -> LoRA: a slider is a plain LoRA whose strength is the dial",
+                        network_type)
+            network_type = "lora"
+        if adaptive_lr or ema_decay or log_per_image_loss or per_image_lr or auto_recaption or warmup_look_outliers:
+            logger.info("[slider] adaptive LR, weight averaging and the per-image loss watch are off: they assume "
+                        "one target per image, and a slider step has two")
+        adaptive_lr, ema_decay = False, 0.0
+        log_per_image_loss = per_image_lr = auto_recaption = warmup_look_outliers = False
+        if gradient_accumulation > 1:
+            logger.info("[grad_accum] off for sliders: each step already backpropagates both ends")
+        gradient_accumulation = 1
+        if slider_pairs:
+            logger.info("[slider] IMAGE-PAIR SLIDER: the adapter trains at +1 toward each image and at -1 toward "
+                        "its pair (difference weight %g)", float(slider_diff_weight))
+        else:
+            logger.info("[slider] PROMPT-PAIR SLIDER: base '%s' | +1 -> '%s' | -1 -> '%s' (guidance %g)",
+                        *slider_prompts, float(slider_guidance))
+            if not (te_path and vae_path):
+                raise RuntimeError("[slider] prompt pairs need the text encoder and VAE paths")
+            if str(slider_prompts[0]).strip():     # the dial is shown on the picture it was trained on
+                sample_prompts = [str(slider_prompts[0]).strip()]
+
     # ---- data ------------------------------------------------------------------------------------
     from training.dataset import TrainingDataset
-    dataset = TrainingDataset(dataset_config, arch, desc.spatial_factor, desc.bucket_step)
+    if slider_prompts:
+        dataset = _SliderBank(slider_bank, int(slider_bank_res))       # filled once the model is loaded
+    else:
+        if not dataset_config:
+            raise RuntimeError("a dataset is required (only a prompt-pair slider trains without one)")
+        dataset = TrainingDataset(dataset_config, arch, desc.spatial_factor, desc.bucket_step)
+    if slider and dataset.batch_size > 1:
+        raise RuntimeError("[slider] sliders train at batch size 1 (each step already trains both ends)")
     if dataset.batch_size > 1 and not driver.supports_batching:
         raise RuntimeError(f"{desc.display_name} trains at batch size 1 (conditioning lengths differ per image). "
                            f"Set Batch Size to 1 - Gradient Accumulation gives the same effective batch.")
     if dataset.prepare_for_training() == 0:
         raise RuntimeError("No training items - run the cache stages first (Enable Cache Preparation).")
+    if slider_pairs:
+        if not dataset.has_control:
+            raise RuntimeError("[slider] an image-pair slider needs the -1 end folder (every +1 photo's pair, matched "
+                               "by file name)")
+        shared = _pair_slider_caption(dataset)
+        if shared:                           # the dial is shown on what both ends of a pair have in common
+            sample_prompts = [shared]
+            logger.info("[slider] previews use the pairs' caption: '%s'", shared)
+    if slider:
+        driver.slider_setup(dataset)
     steps_per_epoch = len(dataset)
     opt_steps_per_epoch = math.ceil(steps_per_epoch / gradient_accumulation)
     if dataset.batch_size > 1 and (log_per_image_loss or per_image_lr or auto_recaption or warmup_look_outliers):
@@ -505,6 +661,17 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
 
     # ---- previews: encode prompts once, keep the VAE ---------------------------------------------
     encoded = neg = vae = ref_imgs = ref_latents = None
+    slider_enc = slider_neg = None
+    if slider_prompts:
+        te = driver.load_text_encoder(te_path, device)
+        slider_enc = driver.encode_text(te, [str(x) for x in slider_prompts])
+        if sample_cfg_scale > 1.0:
+            # the practice pictures render as previews do: the Samples tab's negative (else the family's default)
+            text = sample_negative if sample_negative is not None else (desc.preview_negative or "")
+            slider_neg = driver.encode_text(te, [text])[0]
+        driver.unload_text_encoder(te)
+        del te
+        _empty_cache()
     sample_dir = os.path.join(output_dir, "sample")
     if sample_reference and not driver.supports_references:
         logger.warning(f"[sample] {desc.display_name} has no edit previews - ignoring the reference photo")
@@ -572,7 +739,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                         f"render ({sample_steps} steps)")
     if network_type == "lokr" and "lokr" not in desc.network_types:
         raise RuntimeError(f"{desc.display_name} does not offer LoKR")
-    blocks = driver.trainable_blocks()          # a family's own block choice (Klein's Model Area)
+    # a family's own block choice (Klein's Model Area); a slider trains the full model, as in Fizgig 7.0.1
+    blocks = None if slider else driver.trainable_blocks()
     if train_blocks:                    # a subset of blocks (Fast Identity Mode)
         known = {b.id for g in driver.block_map(dit) for b in g.blocks}
         unknown = sorted(set(train_blocks) - known)
@@ -593,6 +761,54 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     driver.prepare_training(dit, net, precision=precision, blocks_to_swap=int(swapped or 0),
                             total_steps=dataset.num_items * max_train_epochs, megapixels=res_max,
                             batch_size=dataset.batch_size)
+    if slider_prompts:
+        # the practice bank: the base model's own renders of the neutral prompt (adapter at 0, training adapter off,
+        # the speed LoRA on when it is loaded), decoded and re-encoded into training latents (Fizgig 7.0.1)
+        import numpy as np
+        if vae is None:
+            vae = driver.load_vae(vae_path, device)
+        res = int(slider_bank_res)
+        n_c = {k: v.to(device) if hasattr(v, "to") else v for k, v in slider_enc[0].items()}
+        g_neg = ({k: v.to(device) if hasattr(v, "to") else v for k, v in slider_neg.items()}
+                 if slider_neg is not None else None)
+        net.set_trainable_multiplier(0.0)
+        net.set_enabled(ADAPTER, False)
+        use_speed = speed_lora is not None and speed_desc is not None and net.has(SPEED)
+        if use_speed:
+            net.move_adapter(SPEED, device)
+            net.set_enabled(SPEED, True)
+        was_training = dit.training
+        dit.eval()
+        if swapped:
+            driver.block_swap_mode(dit, inference=True)
+        try:
+            with torch.no_grad(), driver.still_renders():   # practice pictures are stills, whatever the previews are
+                for i in tqdm(range(dataset.num_items), desc="[slider] practice images"):
+                    if use_speed:
+                        st = speed_desc.settings
+                        lat = driver.generate(dit, n_c, res, res, steps=st.steps, seed=seed + 1000 + i, cfg=st.cfg,
+                                              sigmas=st.sigmas, options=st.options)
+                    else:
+                        lat = driver.generate(dit, n_c, res, res, steps=desc.preview_steps, seed=seed + 1000 + i,
+                                              cfg=sample_cfg_scale, **({"neg_cond": g_neg} if g_neg is not None
+                                                                       else {}))
+                    img = driver.decode(vae, lat, res, res)
+                    dataset.latents[i] = driver.encode_images(vae, [np.array(img)])[0][None].cpu()
+        finally:
+            if swapped:
+                driver.block_swap_mode(dit, inference=False)
+            dit.train(was_training)
+            if use_speed:
+                net.set_enabled(SPEED, False)
+                net.move_adapter(SPEED, "cpu")
+            net.set_enabled(ADAPTER, True)
+            net.set_trainable_multiplier(1.0)
+        _empty_cache()
+        logger.info("[slider] %d practice images rendered at %dx%d", dataset.num_items, res, res)
+        # the three prompts as training conditioning (batched, as batch_cond gives it)
+        slider_enc = [{k: (v[None] if hasattr(v, "dim") else v) for k, v in
+                       {k: v.to(device) if hasattr(v, "to") else v for k, v in c.items()}.items()}
+                      for c in slider_enc]
     if do_compile:                      # decided before the load, applied last
         driver.compile_blocks(dit, "outside" if do_compile == "outside" else "inside", int(swapped or 0), precision)
 
@@ -704,6 +920,14 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                    "ss_training_adapter": os.path.basename(training_adapter) if training_adapter else "none"})
         if trained_blocks:
             md["ss_train_blocks"] = ",".join(trained_blocks)
+        if slider:
+            # the deploy contract: strength is the dial (-1 one pole, +1 the other); tools read this (Fizgig 7.0.1)
+            md["ss_slider"] = "prompt_pairs" if slider_prompts else "image_pairs"
+            if slider_prompts:
+                md.update({"ss_slider_prompts": json.dumps([str(x) for x in slider_prompts]),
+                           "ss_slider_guidance": f"{float(slider_guidance):g}"})
+            else:
+                md["ss_slider_diff_weight"] = f"{float(slider_diff_weight):g}"
         md.update(driver.run_metadata())
         if context_lora_path:
             md.update({"ss_context_lora": os.path.basename(context_lora_path),
@@ -741,7 +965,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         if not sd:          # seed 0 = a fresh random seed every preview round
             sd = random.randint(1, 2 ** 31 - 1)
         try:
-            if ckpt_previews is not None:   # the checkpoint's own recipe (Distilled: 4 steps, no CFG)
+            if ckpt_previews is not None and not slider:   # the checkpoint's own recipe (Distilled: 4 steps, no CFG)
                 ck = desc.preview_checkpoint_sampling
                 paths = ckpt_previews.render(dit, net, ema, lambda m, fl, swp: _render_previews(
                     driver, m, fl, vae, conds, sample_dir, epoch, output_name=output_name, steps=ck.steps,
@@ -752,7 +976,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                                          steps=sample_steps, cfg=sample_cfg_scale, neg=neg, width=w, height=h,
                                          seed=sd, ema=ema,
                                          speed=speed_desc.settings if (speed_lora and speed_desc) else None,
-                                         lowmem=lowmem, swapped=bool(swapped), refs=ref_latents)
+                                         lowmem=lowmem, swapped=bool(swapped), refs=ref_latents, slider=slider)
         except Exception:
             previews_on[0] = False
             logger.exception(f"[sample] epoch {epoch}: preview failed - previews are off for the rest of this run; "
@@ -833,16 +1057,44 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 continue
             lr_acc.append(_lrm)
             latents = batch["latents"].to(device)
-            cond = driver.batch_cond(batch, device)
-            refs = [batch[k].to(device) for k in sorted((k for k in batch if k.startswith("latents_control_")),
-                                                        key=lambda k: int(k.rsplit("_", 1)[1]))]
-            loss, _info = driver.training_loss(dit, latents, cond, gen, min_t=min_timestep, max_t=max_timestep,
-                                               **({"refs": refs} if refs else {}))
+            if slider:
+                # both poles backpropagate before the strength flips: checkpointed blocks recompute their forward in
+                # backward, at whatever strength is set then (Fizgig 7.0.1)
+                if slider_prompts:
+                    _l, _t = _prompt_slider_step(driver, dit, net, latents, slider_enc, gen,
+                                                 guidance=slider_guidance, min_t=min_timestep, max_t=max_timestep)
+                    _info = {"t": _t}
+                else:
+                    cond = driver.batch_cond(batch, device)
+                    _neg = batch.get("latents_control_0")
+                    if _neg is None:
+                        raise RuntimeError("[slider] this item has no pair image - an image-pair slider needs one in "
+                                           "the -1 end folder for every training image, matched by file name")
+                    _neg = _neg.to(device)
+                    _l = 0.0
+                    try:
+                        for m, a, b in ((1.0, latents, _neg), (-1.0, _neg, latents)):
+                            net.set_trainable_multiplier(m)
+                            _pl, _info = driver.training_loss(dit, a, cond, gen, min_t=min_timestep,
+                                                              max_t=max_timestep, diff_ref=b,
+                                                              diff_weight=slider_diff_weight)
+                            (0.5 * _pl).backward()
+                            _l += 0.5 * _pl.item()
+                    finally:
+                        net.set_trainable_multiplier(1.0)
+                loss = torch.tensor(_l)
+            else:
+                cond = driver.batch_cond(batch, device)
+                refs = [batch[k].to(device) for k in sorted((k for k in batch if k.startswith("latents_control_")),
+                                                            key=lambda k: int(k.rsplit("_", 1)[1]))]
+                loss, _info = driver.training_loss(dit, latents, cond, gen, min_t=min_timestep, max_t=max_timestep,
+                                                   **({"refs": refs} if refs else {}))
             if "lr_mult" in _info and lr_acc:
                 lr_acc[-1] *= _info["lr_mult"]     # where the step landed (Fizgig: the H3 noise-band LR)
-            mult = watch.multiplier(batch)     # per-image LR (batch size 1): the raw loss is still what's recorded
-            scaled = loss * mult if mult != 1.0 else loss
-            (scaled / gradient_accumulation if gradient_accumulation > 1 else scaled).backward()
+            if not slider:
+                mult = watch.multiplier(batch)     # per-image LR (batch size 1): the raw loss is still what's recorded
+                scaled = loss * mult if mult != 1.0 else loss
+                (scaled / gradient_accumulation if gradient_accumulation > 1 else scaled).backward()
             pending += 1
             if pending >= gradient_accumulation or i == steps_per_epoch - 1:
                 optimizer_step()

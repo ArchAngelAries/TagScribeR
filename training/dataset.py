@@ -258,16 +258,23 @@ def latent_cache_matches_reso(cache_file: str, bucket_reso: Tuple[int, int], spa
     return None
 
 
+def partners(stem: str, names) -> list:
+    """The names in `names` that pair with an image whose file stem is `stem` (an edit's before-image, a slider's
+    other end): stem.<ext> or stem_<anything>.<ext>, ignoring case (Fizgig 7.0.1 families/launch.py pairs)."""
+    st = stem.casefold()
+    return [n for n in names if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS
+            and (n.casefold().startswith(st + ".") or n.casefold().startswith(st + "_"))]
+
+
 def _control_for(control_dir: str, stem: str) -> list:
-    """Edit pairs: the before-image(s) named like the after-image (any image extension)."""
+    """Edit pairs and image-pair sliders: the partner image(s) named like the image."""
     if not control_dir:
         return []
     try:
         names = sorted(os.listdir(control_dir))
     except OSError:
         return []
-    return [os.path.join(control_dir, n) for n in names
-            if os.path.splitext(n)[0] == stem and os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS]
+    return [os.path.join(control_dir, n) for n in partners(stem, names)]
 
 
 # ---- the dataset ---------------------------------------------------------------------------------------------

@@ -91,6 +91,18 @@ def model_path(desc, models: dict, role: str) -> str:
     return path
 
 
+def slider_on(desc, values, source=None) -> bool:
+    """Slider mode for a family that offers it; source "pairs" / "prompts" narrows it to one kind (Fizgig 7.0.1)."""
+    on = bool(desc.slider_training and values.get("FAMILY_SLIDER"))
+    if on and source:
+        on = (str(values.get("FAMILY_SLIDER_SOURCE") or "pairs").strip() or "pairs") == source
+    return on
+
+
+def edit_on(desc, values) -> bool:
+    return bool(desc.edit_training and values.get("FAMILY_EDIT"))
+
+
 def _choice_word(values, key) -> str:
     return P.first_token(values.get(key) or P.BY_KEY[key].default).lower()
 
@@ -182,17 +194,51 @@ def sample_prompts(values) -> list[str]:
 
 
 def edit_pairs(image_folder: str, originals: str) -> tuple[list, list, str | None]:
-    """(matched stems, after-images with no original, the first original's path) for an Edit LoRA dataset."""
-    def stems(folder):
+    """(matched stems, images with no partner, the first partner's path) for an Edit LoRA's or an image-pair slider's
+    two folders, matched as the dataset matches them (training.dataset.partners)."""
+    from training.dataset import partners
+    def names(folder):
         try:
-            return {os.path.splitext(n)[0]: os.path.join(folder, n) for n in os.listdir(folder)
-                    if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS}
+            return sorted(n for n in os.listdir(folder) if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS)
         except OSError:
-            return {}
-    after, before = stems(image_folder), stems(originals)
-    matched = sorted(set(after) & set(before))
-    missing = sorted(set(after) - set(before))
-    return matched, missing, (before[matched[0]] if matched else None)
+            return []
+    before = names(originals)
+    matched, missing, first = [], [], None
+    for n in names(image_folder):
+        stem = os.path.splitext(n)[0]
+        m = partners(stem, before)
+        if m:
+            matched.append(stem)
+            first = first or os.path.join(originals, m[0])
+        else:
+            missing.append(stem)
+    return matched, missing, first
+
+
+def pair_problems(image_folder: str, other: str) -> tuple[list, list]:
+    """(images matching more than one partner, pairs whose sizes differ) - a slider's two ends must be one partner
+    each, at the same framing (Fizgig 7.0.1 pair_problems)."""
+    from PIL import Image
+
+    from training.dataset import partners
+    try:
+        before = sorted(os.listdir(other))
+        after = sorted(n for n in os.listdir(image_folder) if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS)
+    except OSError:
+        return [], []
+    multiple, shapes = [], []
+    for n in after:
+        m = partners(os.path.splitext(n)[0], before)
+        if len(m) > 1:
+            multiple.append(n)
+        elif len(m) == 1:
+            try:
+                with Image.open(os.path.join(image_folder, n)) as a, Image.open(os.path.join(other, m[0])) as b:
+                    if a.size != b.size:
+                        shapes.append(n)
+            except OSError:
+                pass
+    return multiple, shapes
 
 
 def edit_instruction(values, image_folder: str) -> str:
@@ -238,25 +284,59 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
         validate_output_name(str(values.get("LORA_NAME") or ""))
     except ValueError as e:
         err(str(e))
-    if not image_folder or not os.path.isdir(image_folder):
+    prompt_slider = slider_on(desc, values, "prompts")
+    if prompt_slider:
+        for k, what in (("FAMILY_SLIDER_BASE", "what the picture is"), ("FAMILY_SLIDER_POS", "what the +1 end adds"),
+                        ("FAMILY_SLIDER_NEG", "what the -1 end adds")):
+            if not str(values.get(k) or "").strip():
+                err(f"Slider from prompts: fill in {what}.")
+        info("Slider from prompts: no dataset is used; the model renders its own practice pictures first.")
+    if edit_on(desc, values) and slider_on(desc, values):
+        err("Edit LoRA and Slider are both on - a run is one kind of LoRA: pick Edit or Slider.")
+    if prompt_slider:
+        image_folder = ""
+    elif not image_folder or not os.path.isdir(image_folder):
         err("Open a dataset folder first (the Train tab trains the folder open in the workspace).")
         return out
     ext = str(values.get("DATASET_CAPTION_EXT") or ".txt")
-    try:
-        names = os.listdir(image_folder)
-    except OSError as e:
-        err(f"Can't read the dataset folder: {e}")
-        return out
+    if not image_folder:
+        names = []
+    else:
+        try:
+            names = os.listdir(image_folder)
+        except OSError as e:
+            err(f"Can't read the dataset folder: {e}")
+            return out
     imgs = [n for n in names if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS]
     have = {os.path.splitext(n)[0] for n in names if n.lower().endswith(ext.lower())}
     missing = [n for n in imgs if os.path.splitext(n)[0] not in have]
-    if not imgs:
+    if prompt_slider:
+        pass
+    elif not imgs:
         err("The dataset folder has no images.")
     elif missing:
         err(f"{len(missing)} image(s) have no {ext} caption (e.g. {', '.join(missing[:3])}). Caption them (Gallery: "
             f"filter missing:caption) or move them out - Fizgig refuses to start in this case too.")
     else:
         info(f"{len(imgs)} captioned image(s).")
+    if slider_on(desc, values, "pairs"):
+        other = str(values.get("FAMILY_SLIDER_DIR") or "").strip()
+        if not other or not os.path.isdir(other):
+            err("Slider: set the -1 end folder (each picture's other end, the same file names).")
+        else:
+            matched, missing_p, _ = edit_pairs(image_folder, other)
+            multiple, shapes = pair_problems(image_folder, other)
+            if missing_p:
+                err(f"Slider: {len(missing_p)} +1 picture(s) have no -1 picture with the same file name in the -1 "
+                    f"end folder (e.g. {', '.join(missing_p[:3])}).")
+            if multiple:
+                err(f"Slider: {len(multiple)} +1 picture(s) match more than one -1 picture (e.g. "
+                    f"{', '.join(multiple[:3])}) - keep one per picture, with the same file name.")
+            if shapes:
+                err(f"Slider: {len(shapes)} picture(s) have a different size at the two ends (e.g. "
+                    f"{', '.join(shapes[:3])}) - use the same framing for both.")
+            if matched and not (missing_p or multiple or shapes):
+                info(f"Slider: {len(matched)} image pair(s).")
     adapter_key, base_key = training_adapter_key(desc, values), dit_key(desc, values)
     for f in desc.model_files:
         path = (models.get(f.pref_key) or "").strip()
@@ -379,8 +459,10 @@ def dataset_config(desc, values: dict, image_folder: str, cache_root_dir: Path |
     ds = {"image_directory": os.path.abspath(image_folder),
           "cache_directory": str(cache_dir_for(image_folder, cache_root_dir)),
           "num_repeats": max(1, int(values.get("DATASET_REPEATS") or 1))}
-    if values.get("FAMILY_EDIT") and desc.edit_training and values.get("FAMILY_EDIT_DIR"):
+    if edit_on(desc, values) and not slider_on(desc, values) and values.get("FAMILY_EDIT_DIR"):
         ds["control_directory"] = os.path.abspath(str(values["FAMILY_EDIT_DIR"]))
+    elif slider_on(desc, values, "pairs") and values.get("FAMILY_SLIDER_DIR"):
+        ds["control_directory"] = os.path.abspath(str(values["FAMILY_SLIDER_DIR"]))   # the -1 end
     return {"datasets": [ds], "resolution": [side, side],
             "caption_extension": str(values.get("DATASET_CAPTION_EXT") or ".txt"),
             "batch_size": max(1, int(values.get("DATASET_BATCH_SIZE") or 1)),
@@ -420,8 +502,25 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
         "vae_path": m("vae") or None, "te_path": m("text_encoder") or None,
         "resume_state_dir": resume or None,
     }
-    if desc.identity_blocks and values.get("FAMILY_FAST_ID") and not (values.get("FAMILY_EDIT") and desc.edit_training):
+    if desc.identity_blocks and values.get("FAMILY_FAST_ID") and not (edit_on(desc, values) or
+                                                                       slider_on(desc, values)):
         kw["train_blocks"] = list(desc.identity_blocks)          # Fast Identity Mode (Fizgig --train_blocks)
+    if slider_on(desc, values):                                  # Fizgig 7.0.1 launch.py's slider flags
+        if desc.slider_ultra_blocks and values.get("FAMILY_SLIDER_ULTRA"):
+            kw["train_blocks"] = list(desc.slider_ultra_blocks)
+        if slider_on(desc, values, "prompts"):
+            base = str(values.get("FAMILY_SLIDER_BASE") or "").strip()
+            g = _num(values, "FAMILY_SLIDER_GUIDANCE")
+            kw.update(slider_prompts=[base, f"{base} {str(values.get('FAMILY_SLIDER_POS') or '').strip()}".strip(),
+                                      f"{base} {str(values.get('FAMILY_SLIDER_NEG') or '').strip()}".strip()],
+                      slider_guidance=g if g > 0 else desc.slider_guidance)
+            # the practice pictures (and so the training) at Target megapixels, a square on the 16 px grid
+            mp = float(str(values.get("DATASET_MEGAPIXELS") or "0.25").split(" ")[0])
+            side = int((mp * 1_000_000) ** 0.5) // 16 * 16
+            if side >= 256:
+                kw["slider_bank_res"] = side
+        else:
+            kw["slider_pairs"] = True
     opts = driver_options(desc, values)
     if opts:
         kw["driver_options"] = opts
@@ -454,7 +553,7 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
     prompts: list[str] = []
     every = _num(values, "SAMPLE_EVERY_N_EPOCHS", int)
     if values.get("SAMPLE_ENABLED") and every > 0:
-        edit = bool(values.get("FAMILY_EDIT")) and desc.edit_training
+        edit = edit_on(desc, values) and not slider_on(desc, values)
         prompts = [edit_instruction(values, image_folder)] if edit else sample_prompts(values)
         prompts = [p for p in prompts if p]
         if prompts:
@@ -508,6 +607,7 @@ def build_run(desc, values: dict, image_folder: str, models: dict, *, captioner:
     """Write the frozen run folder and return the stages to launch. Call preflight() first."""
     run_dir = run_dir_for(values)
     run_dir.mkdir(parents=True, exist_ok=True)
+    image_folder = image_folder or ""                     # a prompt slider trains without a dataset folder
     ds = dataset_config(desc, values, image_folder, cache_root_dir)
     ds_path = run_dir / "dataset.json"
     ds_path.write_text(json.dumps(ds, indent=2), encoding="utf-8")
@@ -523,12 +623,12 @@ def build_run(desc, values: dict, image_folder: str, models: dict, *, captioner:
     clear_pause(run_dir)
     py = python or sys.executable
     stages = []
-    if enable_cache and not resume:
+    if enable_cache and not resume and not slider_on(desc, values, "prompts"):   # a prompt slider has no dataset
         for stage, role in (("latents", "vae"), ("text", "text_encoder")):
             stages.append((f"Caching {stage}", [py, "-m", "training.cache", "--family", desc.key, "--stage", stage,
                                                 "--dataset", str(ds_path), "--model",
-                                                model_path(desc, models, role),
-                                                "--skip_existing"]))
+                                                model_path(desc, models, role), "--skip_existing"]
+                           + (["--slider"] if slider_on(desc, values, "pairs") else [])))
     stages.append(("Training", [py, "-m", "training.train", "--config", str(cfg_path)]))
     return Run(desc.key, run_dir, kw["output_name"], stages, kw["max_train_epochs"], resume)
 

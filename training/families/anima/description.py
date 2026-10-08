@@ -64,7 +64,7 @@ _LORAS = "circlestone-labs/Anima-Official-LoRAs"
 _SHIFT = (("shift", 3.0),)
 
 
-def _fizgig_preset(rank, lr, epochs=30, mp="1.0"):
+def _fizgig_preset(rank, lr, epochs=30, mp="1.0", slider=False):
     # Fizgig 7.0.1 families/anima.py _preset: alpha = rank, flat LR, fused AdamW, per-image LR off, 1 MP. Its comment:
     # "community values (Oct 2026), higher than the card's light-touch 2e-5 ... Not yet measured in Fizgig"
     return {
@@ -75,7 +75,7 @@ def _fizgig_preset(rank, lr, epochs=30, mp="1.0"):
         "DATASET_MEGAPIXELS": mp, "BLOCKS_SWAP": "Auto (detect from GPU)",
         "FAMILY_PRECISION": "Auto (fits your free VRAM)", "FAMILY_EMA": "0.98 (recommended)",
         "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": False, "KREA2_AUTO_RECAPTION": False,
-        "KREA2_WARMUP_LOOK": False,
+        "KREA2_WARMUP_LOOK": False, "FAMILY_SLIDER": slider,
     }
 
 
@@ -210,13 +210,16 @@ ANIMA = FamilyDescription(
     preview_width=1024,
     preview_height=1024,
 
+    slider_training=True,                   # Fizgig 7.0.1: from photo pairs or prompts
     presets=(
         # Fizgig 7.0.1's (community values, not measured in Fizgig either): characters at rank 16 and 1e-4 for 50 epochs
         # (the guides aim for ~1,000-1,500 steps on 20-30 images), styles at 5e-5, the card's rank 32 at 2e-5. The
-        # first is a first visit's preset. Slider and Fine-tune presets wait for those modes (port plan stage 5)
+        # first is a first visit's preset. The Fine-tune presets wait for that mode (port plan stage 5)
         ("✨ Anima Character (rank 16, 1e-4)", _fizgig_preset(16, 1e-4, epochs=50)),
         ("✨ Anima Style (rank 16, 5e-5)", _fizgig_preset(16, 5e-5)),
         ("✨ Anima Official (rank 32, 2e-5)", _fizgig_preset(32, 2e-5)),
+        # Slider: Qwen's slider recipe (rank 4, 2e-4, 30 epochs); "not yet measured on Anima" (Fizgig)
+        ("✨ Anima Slider (rank 4, 2e-4)", _fizgig_preset(4, 2e-4, slider=True)),
         # TagScribeR's earlier presets: community starting points. The model author's own guidance: "a light touch" - rank 32
         # starts at LR 2e-5 (model card); sd-scripts' documented example is rank 8, LR 1e-4 at alpha 1 (a 1/8 scale -
         # these presets use alpha = rank, scale 1, so they start lower).
@@ -252,7 +255,7 @@ ANIMA = FamilyDescription(
          "model card"),
         ("Text encoder: Qwen3-0.6B in fp32, as ComfyUI and Fizgig run it (in bf16 the first token is 16% off); the T5 "
          "token vocabulary is the Anima repo's own tokenizer.json.", "Fizgig 7.0.1 anima/driver.py"),
-        ("Not part of this port: fp8 bases (refused), block swap, torch.compile, training the LLM adapter, sliders "
-         "and full fine-tune (port plan stage 5).", "docs/dev/PORT_PLAN.md"),
+        ("Not part of this port: fp8 bases (refused), block swap, torch.compile, training the LLM adapter and the "
+         "full fine-tune (port plan stage 5).", "docs/dev/PORT_PLAN.md"),
     ),
 )

@@ -455,3 +455,102 @@ def test_checkpoint_previews_load_reuse_and_restore(tmp_path):
     assert calls == ["park", "load", ("unpark", "token"), "park", ("unpark", "token")]   # loaded once, then reused
     assert seen[0] == 0.0 and seen[1] > 0                  # the reused checkpoint carries the new LoRA
     assert torch.equal(torch.get_rng_state(), rng) and not list(tmp_path.glob("*.safetensors"))
+
+
+# ---- sliders (Fizgig 7.0.1): image pairs and prompt pairs, through the run folder ----------------------------
+def test_image_pair_slider_run(setup, caplog):
+    import shutil as _sh
+    from PIL import Image
+    from safetensors import safe_open
+    desc, data, models, tmp = setup
+    other = tmp / "minus_end"
+    other.mkdir()
+    for n in sorted(os.listdir(data)):
+        if n.endswith(".png"):                       # the -1 end: the same pictures, darker, the same file names
+            im = Image.open(os.path.join(data, n))
+            im.point(lambda v: v // 2).save(other / n)
+        elif n.endswith(".txt"):
+            _sh.copy(os.path.join(data, n), other / n)
+    vals = _values(tmp, MAX_TRAIN_EPOCHS=1, FAMILY_SLIDER=True, FAMILY_SLIDER_DIR=str(other), LORA_NAME="pair_slider",
+                   NETWORK_TYPE="LoKR (Kronecker)", GRADIENT_ACCUMULATION=2, SAMPLE_AT_FIRST=False)
+    checks = pipeline.preflight(desc, vals, data, models)
+    assert not [c for c in checks if c.level == "error"], checks
+    assert any("image pair" in c.message for c in checks)
+    run = pipeline.build_run(desc, vals, data, models)
+    assert all("--slider" in argv for label, argv in run.stages if "Caching" in label)
+    with caplog.at_level("INFO"):
+        _run_stages(run)
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "IMAGE-PAIR SLIDER" in text and "network type lokr -> LoRA" in text and "adaptive LR, weight" in text
+    with safe_open(str(run.run_dir / "pair_slider.safetensors"), framework="pt") as f:
+        md = f.metadata()
+        keys = list(f.keys())
+    assert md["ss_slider"] == "image_pairs" and md["ss_slider_diff_weight"] == "1"
+    assert any(k.endswith("lora_down.weight") for k in keys)
+    strips = pipeline.samples(run.run_dir)
+    assert strips and Image.open(strips[0]).size[0] > 3 * 64      # the dial at -1, 0 and +1 side by side
+    # a missing partner stops the run before it starts
+    os.remove(other / "img00.png")
+    assert any(c.level == "error" and "no -1 picture" in c.message for c in pipeline.preflight(desc, vals, data,
+                                                                                                models))
+
+
+def test_prompt_slider_run_needs_no_dataset(setup, caplog):
+    from safetensors import safe_open
+    desc, data, models, tmp = setup
+    vals = _values(tmp, MAX_TRAIN_EPOCHS=1, FAMILY_SLIDER=True, FAMILY_SLIDER_SOURCE="prompts",
+                   FAMILY_SLIDER_BASE="a photo", FAMILY_SLIDER_POS="smiling", FAMILY_SLIDER_NEG="frowning",
+                   LORA_NAME="prompt_slider", SAMPLE_AT_FIRST=False, DATASET_MEGAPIXELS="0.1")
+    assert not [c for c in pipeline.preflight(desc, vals, "", models) if c.level == "error"]
+    vals2 = dict(vals, FAMILY_SLIDER_NEG="")
+    assert any("what the -1 end adds" in c.message for c in pipeline.preflight(desc, vals2, "", models))
+    run = pipeline.build_run(desc, vals, "", models)
+    assert [label for label, _ in run.stages] == ["Training"]      # no dataset, no cache stages
+    cfg = json.loads((run.run_dir / "train_config.json").read_text(encoding="utf-8"))["train"]
+    assert cfg["slider_prompts"] == ["a photo", "a photo smiling", "a photo frowning"]
+    assert cfg["slider_guidance"] == desc.slider_guidance and cfg["slider_bank_res"] == 304
+    with caplog.at_level("INFO"):
+        _run_stages(run, slider_bank=3, slider_bank_res=64)
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "PROMPT-PAIR SLIDER" in text and "3 practice images rendered at 64x64" in text
+    with safe_open(str(run.run_dir / "prompt_slider.safetensors"), framework="pt") as f:
+        md = f.metadata()
+    assert md["ss_slider"] == "prompt_pairs" and json.loads(md["ss_slider_prompts"])[2] == "a photo frowning"
+
+
+def test_prompt_slider_step_trains_both_poles(setup):
+    """Concept Sliders on flow matching: the target at +1 is v_n + g (v_pos - v_neg), at -1 its mirror; the adapter
+    multiplier is back at 1 afterwards."""
+    import torch.nn.functional as F
+    from tests.tiny_family import TinyDiT, TinyDriver
+    from training import train
+    from training.lora import FamilyLoRA
+    desc = setup[0]
+    drv = TinyDriver()
+    drv.description = desc
+    torch.manual_seed(0)
+    dit = TinyDiT().requires_grad_(False)
+    net = FamilyLoRA(dit, drv)
+    net.add_trainable(2, 2)
+    for p in net.parameters():
+        p.data.normal_(0, 0.1)
+    lat = torch.randn(1, 4, 8, 8)
+    from tests.tiny_family import DIM
+    enc = [{"hidden_states": torch.randn(1, 5, DIM)} for _ in range(3)]
+    loss, t = train._prompt_slider_step(drv, dit, net, lat, enc, torch.Generator().manual_seed(3), guidance=2.0,
+                                        min_t=0.0, max_t=1.0)
+    g = torch.Generator().manual_seed(3)
+    state = drv.noise_latents(lat, g)
+    net.set_trainable_multiplier(0.0)
+    with torch.no_grad():
+        v_n, v_p, v_g = (drv.predict(dit, state, c) for c in enc)
+    want = 0.0
+    for m in (1.0, -1.0):
+        net.set_trainable_multiplier(m)
+        with torch.no_grad():
+            want += 0.5 * F.mse_loss(drv.predict(dit, state, enc[0]), v_n + m * 2.0 * (v_p - v_g)).item()
+    net.set_trainable_multiplier(1.0)
+    assert loss == pytest.approx(want, rel=1e-5) and t == pytest.approx(state["t"])
+    assert all(p.grad is not None and p.grad.abs().sum() > 0 for p in net.parameters())
+    w = next(iter(net.wrapped.values()))
+    assert w.scales["lora"] == pytest.approx(1.0)

@@ -210,12 +210,13 @@ def run_latents(desc, driver, dataset, model_path, device, *, skip_existing=Fals
     return done
 
 
-def run_text(desc, driver, dataset, model_path, device, *, skip_existing=False, keep_cache=False):
+def run_text(desc, driver, dataset, model_path, device, *, skip_existing=False, keep_cache=False, slider=False):
+    """slider: the control folder is a slider's other pole - its captions are encoded plainly, not as edit pairs."""
     from training.dataset import empty_cache_path
     items = dataset.source_items()
     if not items:
         raise SystemExit("No captioned images found in the dataset folder(s).")
-    pairs = any(it.control_paths for it in items)
+    pairs = any(it.control_paths for it in items) and not slider
     te = driver.load_reference_text_encoder(model_path, device) if pairs else driver.load_text_encoder(model_path,
                                                                                                        device)
     progress = lambda n, total: print(f"[cache] text {n}/{total}", flush=True)  # noqa: E731
@@ -250,6 +251,9 @@ def main(argv=None):
     p.add_argument("--device", default=os.environ.get("TAGSCRIBER_TRAINING_DEVICE") or None)
     p.add_argument("--skip_existing", action="store_true")
     p.add_argument("--keep_cache", action="store_true")
+    p.add_argument("--slider", action="store_true",
+                   help="the control folder holds a slider's other pole: cache its latents, encode captions plainly "
+                        "(not as edit pairs)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     import json
@@ -265,13 +269,15 @@ def main(argv=None):
     with open(args.dataset, encoding="utf-8") as f:
         cfg = json.load(f)
     dataset = TrainingDataset(cfg, desc.arch_id, desc.spatial_factor, desc.bucket_step)
-    if dataset.has_control and not driver.supports_references:
+    if dataset.has_control and args.slider and not desc.slider_training:
+        raise SystemExit(f"{desc.display_name} has no slider training")
+    if dataset.has_control and not args.slider and not driver.supports_references:
         raise SystemExit(f"{desc.display_name} has no edit training: remove the originals folder from the run")
-    if dataset.has_control:           # edit training is one before-image per after-image
+    if dataset.has_control:           # edit training and sliders are one partner per image
         many = [it.item_key for it in dataset.source_items() if len(it.control_paths) > 1]
         if many:
-            raise SystemExit(f"{len(many)} after-image(s) match more than one before-image (e.g. "
-                             f"{', '.join(many[:3])}): keep one before-image per after-image, named the same")
+            raise SystemExit(f"{len(many)} image(s) match more than one partner image (e.g. {', '.join(many[:3])}): "
+                             f"keep one per image, named the same")
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     with torch.no_grad():
         if args.stage == "latents":
@@ -279,7 +285,7 @@ def main(argv=None):
                         keep_cache=args.keep_cache)
         else:
             run_text(desc, driver, dataset, args.model, device, skip_existing=args.skip_existing,
-                     keep_cache=args.keep_cache)
+                     keep_cache=args.keep_cache, slider=args.slider)
 
 
 if __name__ == "__main__":

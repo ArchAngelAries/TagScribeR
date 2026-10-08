@@ -157,6 +157,7 @@ KLEIN_9B = FamilyDescription(
     preview_width=768,                                       # ARCHITECTURES sample_width_default 768
     preview_height=768,
 
+    slider_training=True,
     presets=(
         # Fizgig BUILT_IN_PRESETS order and names, verbatim. The first is the first-visit default.
         ("✨ Old Reliable (rank 16, full model, single subject)", _preset(16, 1e-4, 55, "1e-4", "4e-4", "Full Model")),
@@ -190,7 +191,7 @@ KLEIN_9B = FamilyDescription(
          "Fizgig's attention dispatcher has no flash3 branch, so choosing it stops the first step with 'Unsupported "
          "attention mode: flash3' (here too).", f"{_GUI} 10781, Fizgig training/trainer.py 1962, modules/attention.py "
          "dispatch"),
-        ("Not part of this port yet: sliders, the full fine-tune, the workbench tools. Not in current Fizgig either: "
+        ("Not part of this port yet: the full fine-tune, the workbench tools. Not in current Fizgig either: "
          "accelerate, TensorBoard / wandb, LoRA dropout and LoRA+, the SD3 loss weightings.",
          "docs/dev/PORT_PLAN.md"),
     ),

@@ -279,10 +279,37 @@ class FamilyDriver:
     warmup_note = False               # say every 30 s of the first two epochs that slow early steps are normal
 
     def training_loss(self, dit, latents, cond: dict, generator, *, min_t: float = 0.0, max_t: float = 1.0,
-                      refs=None):
+                      refs=None, diff_ref=None, diff_weight: float = 0.0):
         """One training forward. latents (B, C, h, w) on device (B = 1 unless supports_batching), cond = the cached dict (batched), refs = the pair's
-        reference latents [(1, C, rh, rw), ...] (edit training) or None.
+        reference latents [(1, C, rh, rw), ...] (edit training) or None. diff_ref / diff_weight (image-pair sliders,
+        Fizgig 7.0.1): weight each token's error by how much latents and diff_ref differ there, so the slider learns
+        what changes between the poles and not what they share.
         Returns (loss tensor, info dict e.g. {"t": 0.63}). Owns the family's noise/target/timestep rules."""
+        raise NotImplementedError
+
+    # ---- sliders (descriptions with slider_training; Fizgig 7.0.1) -------------------------------------
+    def slider_setup(self, dataset) -> None:
+        """A slider run's data is known (an image-pair dataset, or a prompt slider's practice bank)."""
+
+    def still_renders(self):
+        """A context in which generate() renders stills, whatever the previews are set to (a prompt slider's practice
+        pictures). Families whose previews are always stills need nothing."""
+        import contextlib
+        return contextlib.nullcontext()
+
+    def slider_preview(self, frames, multipliers):
+        """One preview's decoded results at each strength -> what save_preview writes, or None for the shared
+        side-by-side strip."""
+        return None
+
+    def noise_latents(self, latents, generator, *, min_t: float = 0.0, max_t: float = 1.0) -> dict:
+        """A noised training input for latents (1, C, h, w), drawn by the family's own timestep rule (prompt
+        sliders). Opaque to the caller apart from "t"; handed back to predict()."""
+        raise NotImplementedError
+
+    def predict(self, dit, state: dict, cond: dict):
+        """The model's prediction at a noise_latents() state for this conditioning (batched dict), in the space of
+        the training target."""
         raise NotImplementedError
 
     # ---- sampling -------------------------------------------------------------------------------

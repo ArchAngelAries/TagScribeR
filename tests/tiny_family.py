@@ -110,14 +110,25 @@ class TinyDriver(FamilyDriver):
     def encode_text(self, te, captions):
         return [{"hidden_states": te.encode(c)} for c in captions]
 
-    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None):
+    def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
         x0 = latents.float()
         noise = torch.randn(x0.shape, generator=generator).to(x0.device)
         t = min_t + (max_t - min_t) * torch.sigmoid(torch.randn(1, generator=generator)).item()
-        xt = (1 - t) * x0 + t * noise
-        tt = torch.full((x0.shape[0],), t, device=x0.device)
-        pred = dit(xt, cond["hidden_states"].float(), tt)
-        return F.mse_loss(pred.float(), noise - x0), {"t": t}
+        return {"xt": (1 - t) * x0 + t * noise, "t": t, "target": noise - x0}
+
+    def predict(self, dit, state, cond):
+        xt = state["xt"]
+        return dit(xt, cond["hidden_states"].float(), torch.full((xt.shape[0],), state["t"], device=xt.device))
+
+    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None, diff_ref=None,
+                      diff_weight=0.0):
+        state = self.noise_latents(latents, generator, min_t=min_t, max_t=max_t)
+        err = (self.predict(dit, state, cond).float() - state["target"]) ** 2
+        if diff_ref is not None and diff_weight > 0.0:          # the image-pair slider's difference weighting
+            d = (latents.float() - diff_ref.float()).abs().mean(dim=1, keepdim=True)
+            r = (d / d.mean().clamp(min=1e-8)).clamp(max=8.0)
+            return (err * ((1.0 - diff_weight) + diff_weight * r)).mean(), {"t": state["t"]}
+        return err.mean(), {"t": state["t"]}
 
     def initial_noise(self, seed, width, height):
         g = torch.Generator().manual_seed(int(seed))
@@ -170,7 +181,7 @@ def _desc(key, arch, driver):
         driver=f"tests.tiny_family:{driver}", modelspec_arch="Tiny-Test", implementation="https://example.invalid",
         precisions=("bf16",), optimizers=("adamw", "adamw8bit"), network_types=("lora", "lokr"),
         ema_default="0.98", sampling=(SamplingSettings("tiny", steps=3, cfg=1.0, source="test"),),
-        preview_steps=3, preview_width=64, preview_height=64,
+        preview_steps=3, preview_width=64, preview_height=64, slider_training=True,
         presets=(("Tiny Fast (rank 4, adaptive)", _preset(4, adaptive=("2e-4", "4e-4"))),
                  ("Tiny Flat (rank 8)", _preset(8))))
 

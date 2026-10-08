@@ -2,7 +2,7 @@
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: import paths and driver path; the facts, measurements and presets are unchanged.
 # Brought level with Fizgig 7.0.1 (commit 1c8ec88): the identity block note, Fast Identity Mode (identity_blocks,
-# FAMILY_FAST_ID and its preset) and torch.compile. The Slider preset waits for slider training (port plan stage 5).
+# FAMILY_FAST_ID and its preset), torch.compile and the Slider preset.
 """Qwen Image 2.1: the first family described through FamilyDescription.
 
 Facts from the phase-0 research (26 Sep 2026; full notes in the Desktop fizgig_family_descriptions
@@ -194,6 +194,7 @@ QWEN_IMAGE_21 = FamilyDescription(
     preview_width=1024,
     preview_height=1024,
 
+    slider_training=True,
     presets=(
         # Peter, 27 Sep 2026, from a same-dataset comparison re-rendered identically (Desktop qwen_optimizer_ab/
         # rerender). All 0.5 MP: quicker than 1 MP and keeps more of Qwen's sharpness than 0.25 MP. The first entry
@@ -219,6 +220,10 @@ QWEN_IMAGE_21 = FamilyDescription(
         # Edit Strong: rank 16 for trickier edits, at Standard's halved range (rank 16 at Fast's overcooked).
         ("✨ Qwen 2.1 Edit Strong (rank 16, adaptive LR) - trickier edits",
          _preset(16, adaptive=("1e-4", "2e-4"), epochs=12, edit=True)),
+        # Slider (Fizgig, 29 Sep): sliders run hot and short (Concept Sliders / AI-Toolkit: rank 4, 2e-4, a few hundred
+        # steps). Measured on Qwen: a prompt smile slider was clear by 160 steps, a 40-pair warmth slider by 160.
+        ("✨ Qwen 2.1 Slider (rank 4, 2e-4)", {**_preset(4, lr=2e-4, epochs=30), "FAMILY_SLIDER": True,
+                                                 "FAMILY_SLIDER_GUIDANCE": "2"}),
     ),
     workbench=("repair", "explorer", "profiler", "extract", "royale"),
 

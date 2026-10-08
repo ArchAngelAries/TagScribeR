@@ -231,7 +231,7 @@ def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
 
 
 # Fizgig preset keys whose True turns the run into something other than a LoRA - not available here yet (port plan
-# stage 5: sliders and full fine-tune for every family)
+# stage 5: the full fine-tune); a slider preset is refused only for a family without slider training
 UNSUPPORTED_MODES = {"FAMILY_SLIDER": "slider training", "FAMILY_FT": "full fine-tuning",
                      "KREA2_FINETUNE": "full fine-tuning", "MINIMAX_FINETUNE": "full fine-tuning"}
 
@@ -240,9 +240,10 @@ def _on(value) -> bool:
     return value not in (False, "False", "false", 0, "0", "", None, "Off", "off")
 
 
-def unsupported_modes(preset: dict) -> list:
-    """(key, mode) for each training mode `preset` switches on that this app cannot train yet."""
-    return [(k, what) for k, what in UNSUPPORTED_MODES.items() if _on((preset or {}).get(k))]
+def unsupported_modes(preset: dict, desc=None) -> list:
+    """(key, mode) for each training mode `preset` switches on that this app (or this family) cannot train."""
+    return [(k, what) for k, what in UNSUPPORTED_MODES.items() if _on((preset or {}).get(k))
+            and not (k == "FAMILY_SLIDER" and (desc is None or desc.slider_training))]
 
 
 def apply(preset: dict, current: dict, desc=None) -> tuple[dict, P.ApplyReport]:
@@ -250,7 +251,7 @@ def apply(preset: dict, current: dict, desc=None) -> tuple[dict, P.ApplyReport]:
     a training mode this app does not have (unsupported_modes) changes nothing: report.blocked says why."""
     out = dict(current)
     rep = P.ApplyReport()
-    rep.blocked = unsupported_modes(preset)
+    rep.blocked = unsupported_modes(preset, desc)
     if rep.blocked:
         return out, rep
     preset, rep.notes, rep.ignored = migrate_legacy(preset)

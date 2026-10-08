@@ -111,6 +111,9 @@ KREA2 = FamilyDescription(
     # NF4 cannot swap. Batch: +2.4 GB per extra image (not modelled by the Auto plan: use batch 1 on a tight card).
     # fp8 (TagScribeR only): 18.7 GB at 0.25 MP and 0.42 GB per swapped block MEASURED by the original trainer
     #   (_FP8_PEAK_GB); its 1 MP point is INFERRED the way Fizgig infers bf16's, by carrying INT8's +2.9 GB.
+    # Fizgig 7.0.1 caches one caption per forward (krea2/driver.py encode_text); caches written in batches of 8 are
+    # re-encoded once
+    text_cache_rev="1",
     train_memory={"int8": (((0.25, 16.2), (1.0, 19.1)), 0.42), "nf4": (((0.25, 11.4), (1.0, 13.4)), 0.0),
                   "bf16": (((0.25, 26.0), (1.0, 28.9)), 0.84), "fp8": (((0.25, 18.7), (1.0, 21.6)), 0.42)},
     # Fizgig's Krea 2 list is its whole optimizer catalogue (optimizers.available_optimizers). Automagic v3 runs as
@@ -122,11 +125,12 @@ KREA2 = FamilyDescription(
     network_types=("lora", "lokr"),                          # _GUI: Network Type wired for krea2_train
 
     sampling=(
-        SamplingSettings("RAW (undistilled)", steps=28, cfg=5.5, sampler="euler", scheduler="simple",
+        SamplingSettings("RAW (undistilled)", steps=28, cfg=4.5, sampler="euler", scheduler="simple",
                          negative_prompt=True,
                          note="Euler on the flow-matching schedule shifted by exp(mu), mu from the image-token count "
                               "(0.5 at 256 tokens to 1.15 at 6400).",
-                         source="Fizgig krea2/sampling.py sample() defaults (steps 28, cfg 5.5) + timesteps()"),
+                         source="Fizgig families/krea2.py RAW recipe, v7.0.1 (steps 28, cfg 4.5) + krea2/sampling.py "
+                                "timesteps()"),
     ),
     speed_loras=(
         SpeedLoRA(
@@ -150,11 +154,12 @@ KREA2 = FamilyDescription(
         ),
     ),
     # Previews run on the live RAW training model with the Turbo LoRA at 1.0, 8 steps, CFG 1 (Fizgig's default
-    # "RAW + Turbo LoRA" engine, audit 8.3); without the file they render the RAW model at 28 steps / CFG 5.5.
+    # "RAW + Turbo LoRA" engine, audit 8.3); without the file they render the RAW model at 28 steps / CFG 4.5 (Fizgig
+    # 7.0.1's RAW recipe; its own no-Turbo preview default is 8 steps / CFG 1, which TagScribeR does not copy).
     preview_speed_lora="Krea 2 Turbo (rank 64 LoRA)",
     preview_speed_steps=8,
     preview_steps=28,
-    preview_cfg=5.5,
+    preview_cfg=4.5,
     preview_width=1024,                                      # audit 4.4: SAMPLE_WIDTH per-family default Krea 2 1024
     preview_height=1024,
 

@@ -3,7 +3,8 @@
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: Fizgig has no FamilyDriver for Krea 2 - this class puts its Krea 2 code behind the family
 # interface (loading, quantisation and the LoRA come from the generic layer; the objective, conditioning and sampler
-# are Fizgig's). The loss runs in fp32 around a bf16 forward instead of Fizgig's bf16 mixing arithmetic.
+# are Fizgig's). Brought level with Fizgig 7.0.1 krea2/driver.py (commit 1c8ec88): the loss in the original's bf16
+# dtype order under autocast, one caption per forward when caching, bf16 INT8 scales, other trainers' LoRA names.
 """Krea 2 driver for the training family layer (training/driver.py).
 
 * conditioning: Qwen3-VL-4B, 12 hidden-state layers -> {"hidden_states": (512, 12, 2560), "attention_mask": (512,)}
@@ -95,6 +96,10 @@ class Krea2Driver(FamilyDriver):
     # (Fizgig trains Krea 2 at dataset batch size > 1 the same way; its VRAM is +2.4 GB per extra image).
     supports_batching = True
 
+    # INT8 scales computed in bf16, exactly as the original trainer's apply_int8_training quantises Krea 2 (Fizgig
+    # 7.0.1 krea2/driver.py): a run starts from the same INT8 weights as a Fizgig Krea 2 run
+    int8_fp32_scales = False
+
     # ---- models ---------------------------------------------------------------------------------
     def load_dit(self, path, device):
         from training.families.krea2.model import load_krea2_dit
@@ -140,9 +145,13 @@ class Krea2Driver(FamilyDriver):
 
     @torch.no_grad()
     def encode_text(self, te, captions):
-        hiddens, mask = te.encode(list(captions))
-        return [{"hidden_states": h.to(torch.bfloat16).cpu(), "attention_mask": m.cpu()}
-                for h, m in zip(hiddens, mask)]
+        """One caption per forward, as Fizgig 7.0.1 (krea2/driver.py): a batched forward rounds a bf16 step or two
+        differently, so a caption's conditioning would depend on which captions shared its batch."""
+        out = []
+        for cap in captions:
+            hiddens, mask = te.encode([cap])
+            out.append({"hidden_states": hiddens[0].to(torch.bfloat16).cpu(), "attention_mask": mask[0].cpu()})
+        return out
 
     # ---- training -------------------------------------------------------------------------------
     def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None):
@@ -153,20 +162,24 @@ class Krea2Driver(FamilyDriver):
         device = latents.device
         bsz = latents.shape[0]
         patch = dit.config.patch
-        x0 = latents.float()
-        noise = torch.randn(x0.shape, generator=generator).to(device)
-        n_tokens = (x0.shape[-2] // patch) * (x0.shape[-1] // patch)
+        noise = torch.randn(latents.shape, generator=generator)                # CPU fp32, then t: Fizgig's RNG order
+        n_tokens = (latents.shape[-2] // patch) * (latents.shape[-1] // patch)
         t = S.sample_krea2_timesteps(bsz, n_tokens, "cpu", min_timestep=min_t, max_timestep=max_t, generator=generator)
-        # Fizgig hands the DiT (and mixes the noise with) t in bf16: both use the same rounded value here
-        t_bf = t.to(torch.bfloat16).to(device)
-        t4 = t_bf.float().view(bsz, 1, 1, 1)
+        # Fizgig 7.0.1 krea2/driver.py loss_at: the original compute_loss's arithmetic in its dtype order - latent,
+        # noise and t in bf16, the mix and the target in bf16, the DiT under bf16 autocast, the MSE in fp32
+        bf = torch.bfloat16
+        x0 = latents.to(dtype=bf)
+        noise = noise.to(device=device, dtype=bf)
+        t_bf = t.to(device).to(bf)
+        t4 = t_bf.view(bsz, 1, 1, 1)
         noised = (1.0 - t4) * x0 + t4 * noise
-        target = noise - x0                                                    # flow-matching velocity
-        txt, txtmask = S.gather_valid_text(cond["hidden_states"].to(device=device, dtype=torch.bfloat16),
+        target = S.patchify(noise - x0, patch)                                 # flow-matching velocity, bf16
+        txt, txtmask = S.gather_valid_text(cond["hidden_states"].to(device=device, dtype=bf),
                                            cond["attention_mask"].to(device))
-        img_tokens, pos, mask = S.prepare(noised.to(torch.bfloat16), txt.shape[1], patch, txtmask)
-        pred = dit(img=img_tokens, context=txt, t=t_bf, pos=pos, mask=mask)
-        loss = F.mse_loss(pred.float(), S.patchify(target, patch))
+        img_tokens, pos, mask = S.prepare(noised, txt.shape[1], patch, txtmask)
+        with torch.autocast(device_type=device.type, dtype=bf):
+            pred = dit(img=img_tokens, context=txt, t=t_bf, pos=pos, mask=mask)
+        loss = F.mse_loss(pred.float(), target.float())
         return loss, {"t": float(t_bf.float().mean())}
 
     # ---- sampling -------------------------------------------------------------------------------

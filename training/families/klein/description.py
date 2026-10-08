@@ -91,6 +91,7 @@ KLEIN_9B = FamilyDescription(
     # (_klein_small_card: under 15 GiB) and block swap on fp8.
     auto_precisions=("fp8", "nf4"),
     auto_swap_order=("fp8",),
+    adaptive_lr_clip_signal=True,                            # Fizgig families/klein.py: Klein's grad-clip rule
     # Fizgig measured Klein on an fp8 base (docs/KLEIN.md "VRAM"): the fp8 base stays resident at ~9.6 GB and "a 9B LoRA
     # fits 16 GB (~14 GB observed)"; the NF4 base is ~5.6 GB and "a full LoRA trains in about 8.5 GB at 0.5 MP" (10-12 GB
     # cards, no swap). Mapping:

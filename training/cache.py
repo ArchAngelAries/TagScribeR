@@ -73,6 +73,8 @@ def save_cond(desc, item, cond, refs="", path=None, caption=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     md = {"architecture": desc.arch_id, "caption1": item.caption if caption is None else caption,
           "format_version": FORMAT_VERSION}
+    if desc.text_cache_rev:
+        md["text_rev"] = desc.text_cache_rev
     if refs:
         md["reference_sizes"] = refs
     tmp = path + ".tmp"
@@ -80,15 +82,17 @@ def save_cond(desc, item, cond, refs="", path=None, caption=None):
     os.replace(tmp, path)          # the trainer may read this file mid-run (loss-watch caption fixes)
 
 
-def cached_matches(path, caption, refs=""):
-    """An existing text cache that still fits: same caption and same before-image sizes."""
+def cached_matches(path, caption, refs="", rev=""):
+    """An existing text cache that still fits: same caption, same before-image sizes and the family's current text
+    encoding revision (FamilyDescription.text_cache_rev)."""
     from safetensors import safe_open
     try:
         with safe_open(path, framework="pt") as f:
             md = f.metadata() or {}
     except Exception:
         return False
-    return md.get("caption1") == caption and md.get("reference_sizes", "") == refs
+    return (md.get("caption1") == caption and md.get("reference_sizes", "") == refs
+            and md.get("text_rev", "") == rev)
 
 
 def _has_controls(path):
@@ -123,7 +127,7 @@ def encode_captions(driver, te, desc, dataset, items, *, skip_existing=False, re
     todo = []
     for it, cap, path in jobs:
         refs = _ref_sizes(it) if references else ""
-        if skip_existing and os.path.exists(path) and cached_matches(path, cap, refs):
+        if skip_existing and os.path.exists(path) and cached_matches(path, cap, refs, desc.text_cache_rev):
             continue
         todo.append((it, cap, path, refs))
     written = 0
@@ -225,7 +229,7 @@ def run_text(desc, driver, dataset, model_path, device, *, skip_existing=False, 
             from types import SimpleNamespace
             for cdir in {it.cache_directory for it in items}:
                 path = empty_cache_path(cdir, desc.arch_id)
-                if not (skip_existing and os.path.exists(path) and cached_matches(path, "")):
+                if not (skip_existing and os.path.exists(path) and cached_matches(path, "", rev=desc.text_cache_rev)):
                     stub = SimpleNamespace(item_key="(empty caption)", caption="")
                     save_cond(desc, stub, driver.encode_text(te, [""])[0], path=path)
         elif dataset.caption_dropout:

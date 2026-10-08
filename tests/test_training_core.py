@@ -27,10 +27,10 @@ def _opt(net, lr):
     return torch.optim.SGD(net.parameters(), lr=lr)
 
 
-def _run(losses, growth=None, lo=1e-4, hi=4e-4, clip=None):
+def _run(losses, growth=None, lo=1e-4, hi=4e-4, clip=None, clip_signal=False):
     """Feed a loss curve through AdaptiveLR; growth[i] scales the weights before epoch i's boundary."""
     net = _Net()
-    a = AdaptiveLR(lo, hi)
+    a = AdaptiveLR(lo, hi, clip_signal=clip_signal)
     opt = _opt(net, AdaptiveLR.start_lr(lo, hi))
     actions, lrs = [], []
     for e, loss in enumerate(losses):
@@ -99,10 +99,20 @@ def test_second_stability_event_needs_two_red_epochs():
 
 
 def test_clip_ratio_signal_from_klein():
-    actions, *_ = _run([1.0, 0.9, 0.8], clip=[None, (6, 10), None])
+    actions, *_ = _run([1.0, 0.9, 0.8], clip=[None, (6, 10), None], clip_signal=True)
     assert actions[1] == "REDUCE+ROLLBACK"           # 60% of steps clipped > 50%
-    actions, *_ = _run([1.0, 0.9, 0.8], clip=[None, (4, 10), None])
+    actions, *_ = _run([1.0, 0.9, 0.8], clip=[None, (4, 10), None], clip_signal=True)
     assert actions[1] == "HOLD"                      # 40%: no stability signal
+    actions, *_ = _run([1.0, 0.9, 0.8], clip=[None, (6, 10), None])
+    assert actions[1] == "HOLD"                      # Fizgig 7.0.1: only Klein's description turns the signal on
+    actions, *_ = _run([1.0, 0.9, 0.8], clip=[(6, 10), (5, 10), None], clip_signal=True)
+    assert actions[1] == "REDUCE+ROLLBACK"           # Klein: epoch 1's clips carry in (11 of 20 > 50%; 5 of 10 is not)
+
+
+def test_clip_signal_is_klein_only():
+    from training.registry import get
+    assert get("klein9b").adaptive_lr_clip_signal
+    assert not any(get(k).adaptive_lr_clip_signal for k in ("krea2", "qwen_image21"))
 
 
 def test_state_round_trip():

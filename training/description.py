@@ -134,6 +134,12 @@ class FamilyDescription:
     # block)}; the peak may instead be ((megapixels, GB), ...) points, interpolated for the run's resolution.
     # {} = Auto just takes the first precision
     train_memory: dict = field(default_factory=dict)
+    # TagScribeR: bumped when the way a family ENCODES captions changes, so text caches written the old way are
+    # re-encoded once (the latents' counterpart is training/cache.py LATENT_REV). "" = never changed
+    text_cache_rev: str = ""
+    # Adaptive LR also treats a grad-clip ratio over 50% of an epoch's steps as a stability signal (Klein's rule,
+    # training/adaptive_lr.AdaptiveLR clip_signal)
+    adaptive_lr_clip_signal: bool = False
     # what Auto may choose, in order (() = every offered precision, most precise first). Krea 2: INT8, then NF4 - its
     # original trainer's order; bf16 (and TagScribeR's fp8) stay manual choices
     auto_precisions: tuple = ()

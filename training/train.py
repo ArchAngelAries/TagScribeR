@@ -3,7 +3,7 @@
 # Changes for TagScribeR (the gaps docs/FIZGIG_TRAINING_AUDIT.md section 2.5 lists, filled as the plan approved):
 #   * gradient accumulation (GRADIENT_ACCUMULATION, already in Fizgig's presets) and batch size > 1 for drivers with
 #     supports_batching (the loss watch needs batch 1 and stands down otherwise, as Fizgig's GUI does);
-#   * Klein's grad-clip-ratio signal fed to Adaptive LR;
+#   * Klein's grad-clip-ratio signal fed to Adaptive LR (only for a family with adaptive_lr_clip_signal, as Fizgig);
 #   * previews never end a run: a failure (usually OOM) disables them for the rest of it (Fizgig's Krea 2 policy),
 #     and each epoch checkpoint's thumbnail is refreshed with its own preview (Fizgig #122);
 #   * TagScribeR's dataset layer and captioners; a CPU device for smoke tests; `--config run.json`;
@@ -473,7 +473,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             g["lr"] = learning_rate
         logger.info(f"[adaptive_lr] ENABLED - start_lr={learning_rate:.3e} min_lr={adaptive_lr_min:.3e} "
                     f"max_lr={adaptive_lr_max:.3e} (the Learning Rate box is ignored)")
-    adaptive = AdaptiveLR(adaptive_lr_min, adaptive_lr_max) if adaptive_lr else None
+    adaptive = (AdaptiveLR(adaptive_lr_min, adaptive_lr_max, clip_signal=desc.adaptive_lr_clip_signal)
+                if adaptive_lr else None)
     ema = None
     if ema_decay and ema_decay > 0:
         from training.ema import EMAWeights

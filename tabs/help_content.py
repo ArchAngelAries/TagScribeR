@@ -508,7 +508,9 @@ bitsandbytes), then INT8 with block swap. On a machine that runs neither INT8 no
 4-bit are made from whichever file you picked. Choose <b>fp8</b> yourself to train on the fp8 weights exactly as they
 ship (TagScribeR keeps this choice; Fizgig dropped it).</li>
 <li>The <b>Turbo LoRA</b> is optional and only for previews: the RAW model plus the LoRA renders in 8 steps without a
-second model. Leave it empty to preview the RAW model at 28 steps.</li>
+second model. Leave it empty to preview the RAW model at 28 steps and CFG 4.5 (Fizgig's RAW recipe).</li>
+<li>Captions are encoded one at a time, as Fizgig does, so each caption's cache never depends on its neighbours.
+Krea 2 text caches made by older versions are re-encoded once on the next run (the image caches are kept).</li>
 <li>The text encoder file can be the fp8_scaled or the bf16 Qwen3-VL-4B. Each cached caption is about 30 MB, so
 leave room on the cache drive.</li>
 <li>Measured by Fizgig at 0.25 MP: INT8 about 16 GB, 4-bit about 11 GB, fp8 about 19 GB, bf16 about 26 GB (each

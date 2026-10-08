@@ -4,14 +4,18 @@
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: moved into its own module; note_clip() / clip_ratio carry Klein's signal (only counted when
 # gradient clipping is on, as in Klein). Decisions, constants, patience rules and log lines are Fizgig's.
+# Brought level with Fizgig 7.0.1 training/adaptive_lr.py (commit 1c8ec88): the clip signal is a per-family switch
+# (`clip_signal`, FamilyDescription.adaptive_lr_clip_signal, Klein only), and with it the weight-norm baseline starts
+# at the first comparison and the first epoch's clip counts carry into it (the old Klein trainer's rule). The log
+# line keeps its clip= field ("—" without the signal) for training/progress.py.
 """Adaptive learning rate: a bi-directional, epoch-level plateau tracker.
 
 The user sets Min LR and Max LR; the run starts at their geometric midpoint sqrt(min * max) and the Learning Rate
 box is ignored. At each epoch boundary:
 
 * epoch 1 ARMS the baseline (best loss, LoRA weight norm, a CPU snapshot of the weights + optimizer state);
-* a stability signal - more than half the steps clipped (grad norm > max_grad_norm), or the LoRA weight norm
-  growing more than 30% in one epoch - REDUCEs x0.5 and blends the weights 70/30 back toward the previous snapshot
+* a stability signal - more than half the steps clipped (grad norm > max_grad_norm; Klein only), or the LoRA weight
+  norm growing more than 30% in one epoch - REDUCEs x0.5 and blends the weights 70/30 back toward the previous snapshot
   with the optimizer state restored (kills bad Adam momentum). The first event acts at once, later ones need two
   red epochs in a row;
 * otherwise an improving loss PROBEs UP x1.25 after two improving epochs; a plateau REDUCEs x0.5 after
@@ -39,7 +43,11 @@ class AdaptiveLR:
     FACTOR_UP = 1.25
     FACTOR_DOWN = 0.5
 
-    def __init__(self, min_lr, max_lr):
+    def __init__(self, min_lr, max_lr, clip_signal=False):
+        """clip_signal: Klein's rules - a grad-clip ratio over 50% of the epoch's steps is a stability signal
+        (checked before the weight-norm growth; note_clip() counts the steps), and, as the old Klein trainer, the
+        weight-norm baseline starts at the first comparison and the first epoch's clip counts carry into it."""
+        self.clip_signal = bool(clip_signal)
         self.min_lr = float(min_lr)
         self.max_lr = float(max_lr)
         if self.min_lr <= 0 or self.max_lr < self.min_lr:
@@ -88,8 +96,11 @@ class AdaptiveLR:
 
     @property
     def clip_ratio(self):
-        """Fraction of this epoch's steps whose pre-clip gradient norm exceeded max_grad_norm (None: no clipping)."""
-        return self.clip_events / max(self.clip_steps, 1) if self.clip_steps else None
+        """Fraction of this epoch's steps whose pre-clip gradient norm exceeded max_grad_norm (None: no clipping, or
+        a family without the clip signal)."""
+        return self.clip_events / max(self.clip_steps, 1) if self.clip_steps and self.clip_signal else None
+
+    record_clip = note_clip                 # Fizgig's name
 
     # ---- helpers ------------------------------------------------------------------------------------
     @staticmethod
@@ -143,11 +154,11 @@ class AdaptiveLR:
         clip_str = f"{clip_ratio * 100:.0f}%" if clip_ratio is not None else "—"
         if epoch == 0:
             self.best_loss = current_loss
-            self.prev_weight_norm = self._weight_norm(network)
+            if not self.clip_signal:        # Klein's baseline starts at the first comparison
+                self.prev_weight_norm = self._weight_norm(network)
             logger.info(f"[adaptive_lr] epoch 1: loss={current_loss:.4f} "
                         f"lr={optimizer.param_groups[0]['lr']:.2e} clip={clip_str} | ARMED")
-            self._snapshot(network, optimizer)
-            self._reset_clip()
+            self._snapshot(network, optimizer)      # Klein's first-epoch clip counts carry into epoch 2
             self.last_action = "ARMED"
             return self.last_action
 

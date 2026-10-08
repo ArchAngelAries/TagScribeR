@@ -2,7 +2,8 @@
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: import paths, env var prefix TAGSCRIBER_; fp8 as a base precision (kept, or quantised to, one
 # byte per weight with a dequantising forward) and Auto's fallback when the machine runs neither INT8 nor NF4 (probed
-# by `available`); a family's own swap base (`auto_swap_order`); the quantised Linears come from the driver's
+# by `available`); a family's own swap base (`auto_swap_order`); since Fizgig 7.0.1 a driver may keep bf16 INT8 scales
+# (`int8_fp32_scales = False`, Krea 2); the quantised Linears come from the driver's
 # quant_target_names (the LoRA targets unless a family narrows them); a module flagged `_prequantized` (MiniMax H3's ConvRot
 # int8 Linear) is left alone for INT8 and read through its `dense_weight()` for NF4; otherwise unchanged.
 """Quantised frozen bases for described families: INT8 (W8A8) and 4-bit NF4, on the Linears of the driver's block map.
@@ -63,15 +64,17 @@ def quantize(dit, driver, precision, compute_device):
     if precision == "int8":
         from training.modules.int8_train import int8_train_forward
         from training.modules.nf4 import _dequantize_source_weight
+        fp32 = getattr(driver, "int8_fp32_scales", True)
         for _, m in targets:
             if getattr(m, "_prequantized", False):
                 continue                    # the family's own int8 storage (H3's ConvRot): already int8
-            w = _dequantize_source_weight(m).to(compute_device).float()
+            w = _dequantize_source_weight(m).to(compute_device)
+            w = w.float() if fp32 else w.contiguous()         # a driver may keep its original trainer's bf16 scales
             F8.detach(m)                    # an fp8 source: its scale and patched forward go with the old weight
             scale = w.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / 127.0
             m.weight.requires_grad_(False)
             m.weight.data = (w / scale).round_().clamp_(-127, 127).to(torch.int8).contiguous()
-            m.register_buffer("_int8_wscale", scale.reshape(1, -1), persistent=False)
+            m.register_buffer("_int8_wscale", scale.reshape(1, -1).to(torch.float32), persistent=False)
             m._is_int8 = True
             m._int8_grad_mode = "bf16"
             m.forward = int8_train_forward.__get__(m, type(m))

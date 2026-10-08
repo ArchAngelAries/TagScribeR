@@ -518,3 +518,55 @@ def test_diffusers_named_lora_loads_as_context(driver, tmp_path):
     assert net.add_file(str(tmp_path / "ot.safetensors"), "context") == 2
     assert "context" in dit.blocks[0].attn.wq.adapters and "context" in dit.blocks[1].mlp.down.adapters
     assert driver.alias_flat("blocks_0_attn_wq") is None                    # own names need no alias
+
+
+def test_loss_follows_fizgig_bf16_dtype_order(driver):
+    """Fizgig 7.0.1 krea2/driver.py loss_at, re-stated: latent, noise and t in bf16, the mix and the target in bf16,
+    the DiT under bf16 autocast, the MSE in fp32; noise drawn before t from the same generator."""
+    import torch.nn.functional as F
+    dit = _dit()
+    lat, cond = torch.randn(1, 16, 8, 8), _cond(1)
+    loss, info = driver.training_loss(dit, lat, cond, torch.Generator().manual_seed(7))
+    g = torch.Generator().manual_seed(7)
+    noise = torch.randn(lat.shape, generator=g)
+    t = S.sample_krea2_timesteps(1, 16, "cpu", generator=g)
+    bf = torch.bfloat16
+    x0, n, t_ = lat.to(bf), noise.to(bf), t.to(bf).view(1, 1, 1, 1)
+    target = S.patchify(n - x0, 2)
+    txt, txtmask = S.gather_valid_text(cond["hidden_states"].to(bf), cond["attention_mask"])
+    img, pos, mask = S.prepare((1.0 - t_) * x0 + t_ * n, txt.shape[1], 2, txtmask)
+    with torch.no_grad(), torch.autocast("cpu", dtype=bf):
+        pred = dit(img=img, context=txt, t=t.to(bf), pos=pos, mask=mask)
+    assert torch.equal(loss.detach(), F.mse_loss(pred.float(), target.float()))
+    assert info["t"] == float(t.to(bf).float())
+
+
+def test_int8_scales_in_bf16_and_one_caption_per_forward(driver):
+    from training import quant
+    assert driver.int8_fp32_scales is False
+    dit = _dit()
+    name = "blocks.0.attn.wq"
+    w = dict(dit.named_modules())[name].weight.detach().clone()          # bf16, as the loaded base
+    quant.quantize(dit, driver, "int8", "cpu")
+    m = dict(dit.named_modules())[name]
+    want = (w.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / 127.0).reshape(1, -1).float()
+    assert m._int8_wscale.dtype == torch.float32 and torch.equal(m._int8_wscale, want)   # computed in bf16
+    sizes = []
+
+    class _TE:
+        def encode(self, caps):
+            sizes.append(len(caps))
+            return torch.zeros(len(caps), 5, 2, 4), torch.ones(len(caps), 5, dtype=torch.bool)
+    assert len(driver.encode_text(_TE(), ["a", "b", "c"])) == 3 and sizes == [1, 1, 1]
+
+
+def test_text_cache_written_before_the_revision_is_re_encoded(desc, tmp_path):
+    from types import SimpleNamespace
+    from training import cache
+    assert desc.text_cache_rev
+    path = str(tmp_path / "x_krea2_te.safetensors")
+    item = SimpleNamespace(item_key="x", caption="a cat", text_encoder_output_cache_path=path)
+    cache.save_cond(desc, item, {"hidden_states": torch.zeros(2, 2)})
+    assert cache.cached_matches(path, "a cat", rev=desc.text_cache_rev)
+    assert not cache.cached_matches(path, "a cat")                        # a cache from before the mark
+    assert desc.sampling[0].cfg == 4.5 and desc.preview_cfg == 4.5        # Fizgig 7.0.1's RAW recipe

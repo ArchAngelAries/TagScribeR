@@ -140,6 +140,10 @@ class FamilyDescription:
     # Adaptive LR also treats a grad-clip ratio over 50% of an epoch's steps as a stability signal (Klein's rule,
     # training/adaptive_lr.AdaptiveLR clip_signal)
     adaptive_lr_clip_signal: bool = False
+    # optimizer settings a family's own trainer applied (only when Optimizer Args doesn't set them): an Adam-family
+    # weight decay, and the 8-bit Adam eps floor of 1e-6 (training/optimizers.create_optimizer eps_floor_8bit)
+    optimizer_weight_decay: Optional[float] = None
+    optimizer_eps_floor_8bit: bool = False
     # what Auto may choose, in order (() = every offered precision, most precise first). Krea 2: INT8, then NF4 - its
     # original trainer's order; bf16 (and TagScribeR's fp8) stay manual choices
     auto_precisions: tuple = ()

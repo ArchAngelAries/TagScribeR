@@ -484,6 +484,8 @@ needs bitsandbytes). fp8 checkpoints are loaded as they are.</li>
 uses as few as fit.</li>
 <li><b>Target megapixels</b> sets the training resolution. Higher is sharper but slower and needs more memory.</li>
 <li><b>Gradient accumulation</b> gives a bigger effective batch without more memory.</li>
+<li>With <b>Blocks to swap</b> on an INT8 base, the swapped blocks' weights wait in system RAM, so the whole INT8
+model never has to fit on the card first.</li>
 <li><b>AdamW 8-bit</b> and the 4-bit base need the <code>bitsandbytes</code> package, which the installer adds by
 default. If it is missing (an older install), run <code>update.bat</code>. Without it, runs fall back to AdamW with a
 warning.</li>

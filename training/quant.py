@@ -3,7 +3,8 @@
 # Changes for TagScribeR: import paths, env var prefix TAGSCRIBER_; fp8 as a base precision (kept, or quantised to, one
 # byte per weight with a dequantising forward) and Auto's fallback when the machine runs neither INT8 nor NF4 (probed
 # by `available`); a family's own swap base (`auto_swap_order`); since Fizgig 7.0.1 a driver may keep bf16 INT8 scales
-# (`int8_fp32_scales = False`, Krea 2); the quantised Linears come from the driver's
+# (`int8_fp32_scales = False`, Krea 2), a block-swapped INT8 base keeps its weights on the CPU (`store_device`), and
+# `driver.load_planned` / `loads_quantized` let a driver load its own base; the quantised Linears come from the driver's
 # quant_target_names (the LoRA targets unless a family narrows them); a module flagged `_prequantized` (MiniMax H3's ConvRot
 # int8 Linear) is left alone for INT8 and read through its `dense_weight()` for NF4; otherwise unchanged.
 """Quantised frozen bases for described families: INT8 (W8A8) and 4-bit NF4, on the Linears of the driver's block map.
@@ -36,8 +37,10 @@ def _targets(dit, driver):
 
 
 @torch.no_grad()
-def quantize(dit, driver, precision, compute_device):
-    """Quantise the block map's Linears in place. Returns the number quantised (0 for bf16).
+def quantize(dit, driver, precision, compute_device, store_device=None):
+    """Quantise the block map's Linears in place. Returns the number quantised (0 for bf16). INT8 weights are
+    quantised on `compute_device` and kept on `store_device` when given (the CPU, for a block-swapped base: the swap
+    streams them in, where a fully resident INT8 base would have to fit before swapping could start).
 
     The checkpoint may itself be fp8 (training/modules/fp8.py keeps such weights fp8 at load): "fp8" then leaves it
     exactly as stored, "int8" / "nf4" quantise the targets from the dequantised fp8 weights (Fizgig does the same:
@@ -73,7 +76,8 @@ def quantize(dit, driver, precision, compute_device):
             F8.detach(m)                    # an fp8 source: its scale and patched forward go with the old weight
             scale = w.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / 127.0
             m.weight.requires_grad_(False)
-            m.weight.data = (w / scale).round_().clamp_(-127, 127).to(torch.int8).contiguous()
+            q = (w / scale).round_().clamp_(-127, 127).to(torch.int8).contiguous()
+            m.weight.data = q if store_device is None else q.to(store_device)
             m.register_buffer("_int8_wscale", scale.reshape(1, -1).to(torch.float32), persistent=False)
             m._is_int8 = True
             m._int8_grad_mode = "bf16"
@@ -145,6 +149,9 @@ def load_base(driver, path, device, precision="bf16", blocks_to_swap=0, supports
     """The family's DiT at `precision`, optionally block-swapped. NF4 cannot swap (its weights are not .weight), so
     swap is dropped for it; a family whose driver has no block swap ignores the request. Returns (dit, swapped)."""
     swap = int(blocks_to_swap or 0)
+    own = driver.load_planned(path, device, precision, swap)
+    if own is not None:                 # the driver loads its own tiers
+        return own
     if swap and precision == "nf4":
         logger.info("[block swap] off: NF4 weights cannot stream (the 4-bit base is small enough not to need it)")
         swap = 0
@@ -156,8 +163,10 @@ def load_base(driver, path, device, precision="bf16", blocks_to_swap=0, supports
         elif swap > cap:
             logger.info(f"[block swap] {swap} requested, {cap} is the maximum")
             swap = cap
+    if getattr(driver, "loads_quantized", False):     # the file already is the base precision
+        return driver.load_dit(path, device), 0
     dit = driver.load_dit(path, "cpu" if (swap or precision not in ("bf16", "fp8")) else device)
-    quantize(dit, driver, precision, device)
+    quantize(dit, driver, precision, device, store_device="cpu" if swap else None)
     if swap:
         driver.enable_block_swap(dit, swap, device, supports_backward)
         logger.info(f"[block swap] {swap} blocks stream between CPU and GPU")

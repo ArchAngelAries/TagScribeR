@@ -258,8 +258,10 @@ def _preview(out_dir, fail=None, cfg=1.0, speed_cfg=1.0):
     from training import train
     net, ema = _Rec(fail), _Rec(fail)
     gen = []
+    from training.driver import FamilyDriver
     driver = SimpleNamespace(generate=lambda *a, **k: gen.append(k), decode=lambda *a: SimpleNamespace(save=lambda p: None),
-                             block_swap_mode=lambda *a, **k: None)
+                             block_swap_mode=lambda *a, **k: None, park_for=lambda *a: None, unpark=lambda *a: None,
+                             save_preview=lambda r, p: FamilyDriver.save_preview(None, r, p))
     dit = torch.nn.Linear(2, 2)
     speed = SimpleNamespace(cfg=speed_cfg, sigmas=None, options=())
     try:
@@ -282,3 +284,38 @@ def test_turbo_preview_honours_a_higher_cfg(tmp_path):
     assert gen[0]["cfg"] == 1.0 and gen[0]["neg_cond"] is None         # the speed LoRA's own CFG, no negative
     *_, gen = _preview(tmp_path, cfg=3.0, speed_cfg=1.0)
     assert gen[0]["cfg"] == 3.0 and gen[0]["neg_cond"] == {"n": 1}     # Fizgig 6.8.1: more CFG, with the negative
+
+
+def test_driver_hooks_reach_the_loop(setup, monkeypatch):
+    """Fizgig 7.0.1's driver hooks (training/driver.py) are called by the loop: step_policy, batch_cond,
+    after_optimizer_step, run_metadata, frozen_file_added, save_preview."""
+    from tests.tiny_family import TinyDriver
+    calls = {"policy": 0, "cond": 0, "after": 0, "saved": 0}
+    base_cond = TinyDriver.batch_cond
+
+    def policy(self, batch, epoch):
+        calls["policy"] += 1
+        return calls["policy"] % 4 == 0, 0.5           # every fourth step retired, the rest at half the LR
+
+    def cond(self, batch, device):
+        calls["cond"] += 1
+        return base_cond(self, batch, device)
+
+    def save(self, result, path):
+        calls["saved"] += 1
+        result.save(path)
+        return [path]
+    monkeypatch.setattr(TinyDriver, "step_policy", policy)
+    monkeypatch.setattr(TinyDriver, "batch_cond", cond)
+    monkeypatch.setattr(TinyDriver, "after_optimizer_step", lambda self: calls.__setitem__("after", calls["after"] + 1))
+    monkeypatch.setattr(TinyDriver, "run_metadata", lambda self: {"ss_family_option": "x"})
+    monkeypatch.setattr(TinyDriver, "save_preview", save)
+    desc, data, models, tmp = setup
+    vals = _values(tmp, MAX_TRAIN_EPOCHS=2, ADAPTIVE_LR=False, KREA2_LOSS_WATCH=False)
+    run = pipeline.build_run(desc, vals, data, models, trigger="tok")
+    _run_stages(run)
+    steps = calls["policy"]
+    assert steps == 8 and calls["cond"] == 6 and calls["after"] == 6 and calls["saved"] >= 3
+    from safetensors import safe_open
+    with safe_open(str(run.run_dir / "tiny_lora.safetensors"), framework="pt") as f:
+        assert f.metadata()["ss_family_option"] == "x"

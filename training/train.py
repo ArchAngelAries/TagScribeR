@@ -260,6 +260,10 @@ def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_n
             else:
                 lats.append(driver.generate(dit, cond, width, height, steps=steps, seed=seed + i, cfg=cfg,
                                             neg_cond=neg, **ref_kw))
+        tok = driver.park_for(dit, device, None, "decode")   # None = the shared rule below
+        if tok is not None:
+            done.add("decode_park")
+        park = park and tok is None
         if park:                            # never hold the training model and the VAE decode together
             done.add("lowmem_park")
             _preview_vram("before decode")
@@ -268,9 +272,10 @@ def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_n
             _preview_vram("model parked for the decode")
         for i, lat in enumerate(lats):
             p = os.path.join(out_dir, f"{output_name}_e{epoch:06d}_{i:02d}_{ts}_{seed + i}.png")
-            driver.decode(vae, lat, width, height).save(p)
-            paths.append(p)
+            paths += driver.save_preview(driver.decode(vae, lat, width, height), p)
     finally:
+        if "decode_park" in done:
+            driver.unpark(dit, device, tok)
         if "lowmem_park" in done:
             quant.move(dit, device)
             _preview_vram("after decode, model restored")
@@ -362,8 +367,14 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         req = (precision, blocks_to_swap)
         res = dataset.config["resolution"]
         mp = res[0] * res[1] / 1e6
+        own = None if device.type == "cpu" else driver.plan_run(precision, blocks_to_swap, run=dict(
+            dit_path=dit_path, network_type=network_type, network_dim=network_dim, lokr_factor=lokr_factor,
+            optimizer_type=optimizer_type, training_adapter=training_adapter, context_lora_path=context_lora_path,
+            ema_decay=ema_decay, batch_size=dataset.batch_size, megapixels=mp))
         if device.type == "cpu":
             precision, blocks_to_swap, why = (desc.precisions[0], 0, "CPU run: first precision, no swap")
+        elif own is not None:
+            precision, blocks_to_swap, why = own
         else:
             precision, blocks_to_swap, why = quant.plan(desc, driver, precision, blocks_to_swap, megapixels=mp)
         why += f" at {mp:.2f} MP"
@@ -409,16 +420,20 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         n = net.add_file(training_adapter, ADAPTER, training_adapter_strength)
         if n == 0:
             raise RuntimeError(f"Training adapter {training_adapter} matched no {desc.display_name} modules.")
+        driver.frozen_file_added(dit, training_adapter, training_adapter_strength, "adapter")
         logger.info(f"[adapter] training adapter ON ({n} modules, strength {training_adapter_strength:g}) - frozen, "
                     f"off in previews, not saved into the LoRA")
     elif desc.training_adapter:
         logger.warning("[adapter] no training adapter for this run")
     if context_lora_path:
         n = net.add_file(context_lora_path, CONTEXT, context_lora_strength)
+        driver.frozen_file_added(dit, context_lora_path, context_lora_strength, "context")
         logger.info(f"[context] {os.path.basename(context_lora_path)} frozen + active at {context_lora_strength:g} "
                     f"({n} modules)")
     if speed_lora and encoded is not None:
-        n = net.add_file(speed_lora, SPEED, speed_desc.strength if speed_lora_strength is None else speed_lora_strength)
+        _ss = speed_desc.strength if speed_lora_strength is None else speed_lora_strength
+        n = net.add_file(speed_lora, SPEED, _ss)
+        driver.frozen_file_added(dit, speed_lora, _ss, "speed")
         if n == 0:
             net.remove(SPEED)
             logger.warning(f"[sample] {os.path.basename(speed_lora)} matched no {desc.display_name} layers "
@@ -451,7 +466,11 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     from training.optimizers import create_optimizer, group_rates, owns_its_rate
     # the family may structure the optimizer's parameters (Krea 2: Automagic v3 per-family groups, Fizgig krea2/trainer.py)
     opt_params, optimizer_args, fam_counts = driver.optimizer_params(net, optimizer_type, learning_rate, optimizer_args)
-    optimizer, opt_label = create_optimizer(optimizer_type, opt_params, learning_rate, optimizer_args)
+    if (desc.optimizer_weight_decay is not None and "weight_decay" not in (optimizer_args or "")
+            and "adam" in str(optimizer_type or "").lower()):
+        optimizer_args = (f"{optimizer_args or ''} weight_decay={desc.optimizer_weight_decay:g}").strip()
+    optimizer, opt_label = create_optimizer(optimizer_type, opt_params, learning_rate, optimizer_args,
+                                            eps_floor_8bit=desc.optimizer_eps_floor_8bit)
     if fam_counts and len(optimizer.param_groups) > 1:
         logger.info("[optimizer] per-family rates: "
                     + ", ".join(f"{g['family']} ({fam_counts.get(g['family'], 0)} modules)"
@@ -526,6 +545,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                    "ss_architecture": arch, "ss_epoch": str(epoch),
                    "ss_optimizer": opt_label, "ss_learning_rate": f"{learning_rate:g}",
                    "ss_training_adapter": os.path.basename(training_adapter) if training_adapter else "none"})
+        md.update(driver.run_metadata())
         if context_lora_path:
             md.update({"ss_context_lora": os.path.basename(context_lora_path),
                        "ss_context_lora_strength": str(context_lora_strength)})
@@ -596,12 +616,24 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                     mininterval=1.0 if sys.stderr.isatty() else 2.0)
     dit.train()
 
+    lr_acc = []                         # the window's per-step LR multipliers (driver.step_policy / info["lr_mult"])
+
     def optimizer_step():
         if max_grad_norm:
             norm = torch.nn.utils.clip_grad_norm_(params, max_grad_norm)
             if adaptive is not None:
                 adaptive.note_clip(norm, max_grad_norm)
+        m = 1.0 if owns_its_rate(optimizer) else (sum(lr_acc) / len(lr_acc) if lr_acc else 1.0)
+        lr_acc.clear()
+        if m != 1.0:                    # the window's mean, composed into the LR for this step only (never the loss)
+            held = [g["lr"] for g in optimizer.param_groups]
+            for g in optimizer.param_groups:
+                g["lr"] = g["lr"] * m
         optimizer.step()
+        if m != 1.0:
+            for g, lr in zip(optimizer.param_groups, held):
+                g["lr"] = lr
+        driver.after_optimizer_step()
         if scheduler is not None:
             scheduler.step()
         if ema is not None:
@@ -627,12 +659,21 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 global_step += 1
                 progress.update(1)
                 continue
+            _skip, _lrm = driver.step_policy(batch, epoch + 1)
+            if _skip:                          # the family retires this item for now: no forward, no loss, no record
+                recorder.drop(step=i)
+                global_step += 1
+                progress.update(1)
+                continue
+            lr_acc.append(_lrm)
             latents = batch["latents"].to(device)
-            cond = {k[len("cond__"):]: v.to(device) for k, v in batch.items() if k.startswith("cond__")}
+            cond = driver.batch_cond(batch, device)
             refs = [batch[k].to(device) for k in sorted((k for k in batch if k.startswith("latents_control_")),
                                                         key=lambda k: int(k.rsplit("_", 1)[1]))]
             loss, _info = driver.training_loss(dit, latents, cond, gen, min_t=min_timestep, max_t=max_timestep,
                                                **({"refs": refs} if refs else {}))
+            if "lr_mult" in _info and lr_acc:
+                lr_acc[-1] *= _info["lr_mult"]     # where the step landed (Fizgig: the H3 noise-band LR)
             mult = watch.multiplier(batch)     # per-image LR (batch size 1): the raw loss is still what's recorded
             scaled = loss * mult if mult != 1.0 else loss
             (scaled / gradient_accumulation if gradient_accumulation > 1 else scaled).backward()

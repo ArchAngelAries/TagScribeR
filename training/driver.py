@@ -5,6 +5,11 @@
 # targets (lora_target_names may name Conv2d modules; training/lora.py wraps both) and `quant_target_names` (a family
 # whose LoRA covers more Linears than it quantises, e.g. Krea 2) `optimizer_params` (Krea 2's Automagic v3 groups) and
 # `prepare_training` / `after_epoch` (Krea 2's torch.compile and attention-backend switch).
+# Brought level with Fizgig 7.0.1 (commit 1c8ec88), defaults unchanged in behaviour: `options` / `set_options`,
+# `batch_cond`, `step_policy`, `after_optimizer_step`, `run_metadata`, `frozen_file_added`, `park_for` / `unpark`,
+# `save_preview`, `plan_run`, `load_planned` (+ `loads_quantized`, `int8_fp32_scales`), `alias_flat`,
+# `convert_lora_state_dict`. Not yet (they arrive with their features): sliders, fine-tune, clips, preview
+# checkpoints, legacy state order, `cache_stage`.
 """FamilyDriver: the one interface a new model family implements.
 
 The generic code - caching, training, previews, the LoRA layer and the Train tab - talks to a family ONLY through
@@ -48,6 +53,14 @@ class FamilyDriver:
         """Family-specific run options (train_family's `driver_options`, e.g. SDXL's min-SNR gamma), applied once
         right after the driver is created. The default ignores them; a family that offers options overrides this."""
 
+    # ---- family training options (Fizgig's --family_option KEY=VALUE) -----------------------------------------
+    options = {}
+
+    def set_options(self, options: dict) -> None:
+        """The run's family option pairs, before the dataset is built (an option may shape it). TagScribeR's typed
+        options from training/params.py DRIVER_OPTIONS go to configure() instead."""
+        self.options = dict(options)
+
     def optimizer_params(self, net, optimizer_type: str, lr: float, optimizer_args: str):
         """(params or param groups, optimizer args, {group: module count}) for create_optimizer. The default is the
         flat parameter list and the user's args. A family whose optimizer wants structure (Krea 2: Automagic v3 keeps
@@ -62,6 +75,57 @@ class FamilyDriver:
 
     def after_epoch(self, epoch: int, steps_remaining: int) -> None:
         """Called at every epoch boundary (Krea 2: the cuDNN attention switch). The default does nothing."""
+
+    def after_optimizer_step(self) -> None:
+        """Called after every optimizer step (Fizgig: the H3 adapter-relative LR ramp reads the adapter's new size)."""
+
+    def run_metadata(self) -> dict:
+        """Extra ss_* keys this run's family options put in every saved LoRA. Default: none."""
+        return {}
+
+    def step_policy(self, batch: dict, epoch: int) -> tuple:
+        """(skip, lr_multiplier) for this item's step in 1-based `epoch`: skip = no forward, no loss, no record; the
+        multiplier scales the optimizer LR for the step, averaged over an accumulation window. Default: (False, 1.0)."""
+        return False, 1.0
+
+    def batch_cond(self, batch: dict, device) -> dict:
+        """The conditioning dict training_loss gets for one loaded item: the cached `cond__` entries, batched. A
+        family that keeps its own cache layout maps its keys here."""
+        return {k[len("cond__"):]: v.to(device) for k, v in batch.items() if k.startswith("cond__")}
+
+    def frozen_file_added(self, dit, path: str, strength: float, role: str) -> None:
+        """A frozen LoRA file (role "adapter", "context" or "speed") has been added to the family LoRA. A family whose
+        LoRAs carry weights the family LoRA cannot wrap applies them here. Default: nothing."""
+
+    # ---- room beside the training model (preview decode) -----------------------------------------------
+    def park_for(self, dit, device, need_gb, purpose: str):
+        """Make `need_gb` free next to the resident training model (None = the driver's own figure for a preview
+        decode). None (the default) = the shared rule (small cards park the whole model on CPU for a decode);
+        anything else is a token for unpark, the driver having done (or decided against) its own park."""
+        return None
+
+    def unpark(self, dit, device, token) -> None:
+        """Undo park_for."""
+
+    def save_preview(self, result, path: str) -> list:
+        """Write one decoded preview at `path` and return the files written. Default: the PNG."""
+        result.save(path)
+        return [path]
+
+    # ---- the base model's plan and load (optional) ---------------------------------------------------
+    int8_fp32_scales = True           # False: INT8 scales computed in bf16 (Krea 2's original trainer)
+    loads_quantized = False           # True: the file already is the base precision - load it, no quantise, no swap
+
+    def plan_run(self, precision: str, blocks_to_swap: int, *, run: dict) -> Optional[tuple]:
+        """The family's own Auto plan, or None for the shared one (quant.plan over the description's train_memory).
+        Called when the precision is "auto" or the swap is -1; `run` carries what the plan may weigh. Returns
+        (precision, blocks_to_swap, why)."""
+        return None
+
+    def load_planned(self, path, device, precision: str, blocks_to_swap: int) -> Optional[tuple]:
+        """Load the base at `precision` with `blocks_to_swap` streamed, the driver's own way - (dit, swapped) - or
+        None for the shared load (quant.load_base: load_dit, quantise, enable_block_swap)."""
+        return None
 
     def trainable_blocks(self):
         """Block ids (driver.block_map) the trainable adapter covers; None = every target. A family with block

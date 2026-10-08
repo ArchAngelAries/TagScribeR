@@ -34,6 +34,22 @@ def pack_txt(x):
     return x, coords.unsqueeze(0).expand(x.shape[0], -1, -1).to(x.device)
 
 
+def pack_refs(refs):
+    """Reference ("before") latents [(B, C, h, w) or (C, h, w), ...] -> ((B, sum h*w, C) tokens, (B, sum h*w, 4) ids)
+    with time coordinates 10, 20, ... so the DiT tells them from the image being made (Fizgig klein/position.py
+    pack_control_latent), or (None, None)."""
+    if not refs:
+        return None, None
+    toks, ids = [], []
+    for i, r in enumerate(refs):
+        r = r[None] if r.dim() == 3 else r
+        b, _, h, w = r.shape
+        coords = torch.cartesian_prod(torch.tensor([10 + 10 * i]), torch.arange(h), torch.arange(w), torch.arange(1))
+        toks.append(r.flatten(2).transpose(1, 2))
+        ids.append(coords.unsqueeze(0).expand(b, -1, -1).to(r.device))
+    return torch.cat(toks, dim=1), torch.cat(ids, dim=1)
+
+
 def unpack_img(tokens, h, w):
     """(B, H*W, C) -> (B, C, H, W): the inverse of pack_img (Fizgig: rearrange 'b (h w) c -> b c h w')."""
     return tokens.transpose(1, 2).reshape(tokens.shape[0], tokens.shape[2], h, w)
@@ -182,7 +198,7 @@ def initial_noise(seed, width, height, channels=128):
 
 @torch.no_grad()
 def sample_latents(dit, ctx, neg_ctx, *, device, width, height, steps, cfg, seed, noise=None, on_step=None,
-                   channels=128):
+                   channels=128, refs=None):
     """Fizgig do_inference (Base model, no reference image): Euler over get_schedule; with a negative prompt and
     cfg > 1, classifier-free guidance pred = uncond + cfg * (cond - uncond) (two passes); latents stay bf16 through the
     loop and the DiT runs under bf16 autocast, as denoise() / denoise_cfg() do. ctx / neg_ctx (1, T, D).
@@ -194,15 +210,20 @@ def sample_latents(dit, ctx, neg_ctx, *, device, width, height, steps, cfg, seed
     if use_cfg:
         neg_ctx, neg_ids = pack_txt(neg_ctx.to(device=device, dtype=torch.bfloat16))
     timesteps = get_schedule(steps, x.shape[1])
+    n = x.shape[1]
+    ref_tok, ref_ids = pack_refs([r.to(device=device, dtype=torch.bfloat16) for r in refs] if refs else None)
     total = len(timesteps) - 1
     for i, (t_curr, t_prev) in enumerate(zip(timesteps[:-1], timesteps[1:])):
         if on_step is not None:
             on_step(i, total)
         t_vec = torch.full((x.shape[0],), t_curr, dtype=x.dtype, device=device)
+        xin, xin_ids = (torch.cat((x, ref_tok), 1), torch.cat((x_ids, ref_ids), 1)) if ref_tok is not None \
+            else (x, x_ids)
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-            pred = dit(x=x, x_ids=x_ids, timesteps=t_vec, ctx=ctx, ctx_ids=ctx_ids, guidance=None)
+            pred = dit(x=xin, x_ids=xin_ids, timesteps=t_vec, ctx=ctx, ctx_ids=ctx_ids, guidance=None)[:, :n]
             if use_cfg:
-                pred_uncond = dit(x=x, x_ids=x_ids, timesteps=t_vec, ctx=neg_ctx, ctx_ids=neg_ids, guidance=None)
+                pred_uncond = dit(x=xin, x_ids=xin_ids, timesteps=t_vec, ctx=neg_ctx, ctx_ids=neg_ids,
+                                  guidance=None)[:, :n]
                 pred = pred_uncond + cfg * (pred - pred_uncond)
         x = x + (t_prev - t_curr) * pred
     return unpack_img(x, height // 16, width // 16)

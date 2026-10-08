@@ -383,6 +383,10 @@ can't affect it.</li>
 <li>Training runs as separate processes, so the app stays responsive and a crash can't take it down.</li>
 <li>Stages: <b>caching latents</b> → <b>caching captions</b> → <b>training</b>. Caching only encodes what
 changed since the last run.</li>
+<li><b>Edit LoRA</b> (Qwen Image 2.1 and FLUX.2 Klein): tick it and pick the <i>Originals folder</i>. The dataset
+folder holds the edited ("after") images, the originals folder the matching "before" images with the same file names.
+The LoRA learns to turn one into the other, for example a colour grade. Previews apply the edit to the first original,
+or to the photo you set under Samples.</li>
 <li>A <b>Context LoRA</b> (Show all settings) stays frozen and active while you train, so the new LoRA learns on top
 of it; it is never saved into the output. LoRA, LoKR and LoHa files load, in kohya, diffusers, OneTrainer or
 AI-Toolkit naming.</li>
@@ -578,6 +582,8 @@ smaller (11.1 GB). <b>fp8</b> is that same choice by hand (Fizgig calls it "As t
 <li><b>Compile blocks</b> works on Klein too (Fizgig measured 2.1x per step on INT8 with less memory, 1.4x on 4-bit,
 on NVIDIA). Auto compiles INT8 runs of 200+ steps and 4-bit runs of 400+ when the compiled run fits your free VRAM,
 never the fp8 file, and leaves it off on AMD and with block swap. Not run on real hardware in TagScribeR yet.</li>
+<li><b>Edit LoRAs</b> work on Klein too: the "before" images reach the model next to the image being made (Klein's
+text encoder never sees them). About 40 pairs is a good start, 20 at least.</li>
 <li>A <b>Context LoRA</b> made for Klein by other trainers loads too, including diffusers-format files whose
 attention is split into q / k / v (they are fused into Klein's layers).</li>
 </ul>

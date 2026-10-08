@@ -118,6 +118,9 @@ KLEIN_9B = FamilyDescription(
     #   NF4   eager 0.96 / 7.9    inside 0.67 / 7.3                          (1 MP: eager 2.02 / 9.9, inside 1.49 / 9.3)
     #   fp8 file  eager 0.77 / 11.1   inside 0.69 / 11.9   outside fails (the driver compiles it inside)
     # First epoch while compiling: INT8 outside 4.2 s/step, NF4 inside 5.5 -> pays back after ~130 / ~380 steps.
+    edit_training=True,               # Fizgig 7.0.1: Klein is an edit model, references ride after the image tokens
+    edit_note=("Pairs of an original and its edited version, the same crop and shape - about 40 pairs is a good "
+               "start (20 at least). Each photo 1 MP or larger."),
     compiles=True,
     compile_fullgraph=False,
     compile_boundary="outside",

@@ -648,3 +648,29 @@ def test_compiled_klein_blocks_equal_the_eager_ones(driver):
     loss, grads = run()
     assert loss == pytest.approx(eager_loss, rel=1e-4)
     assert all(torch.allclose(a, b, atol=1e-3) for a, b in zip(grads, eager_grads))
+
+
+def test_edit_references_ride_after_the_image_tokens(desc, driver, tmp_path):
+    """Fizgig 7.0.1: Klein trains Edit LoRAs - reference latents packed after the image tokens at time offsets 10, 20,
+    ...; the loss and previews read only the image tokens; the text encoder never sees the references."""
+    from training.families.klein import sampling as Ks
+    tok, ids = Ks.pack_refs([torch.zeros(1, 16, 2, 3), torch.zeros(16, 4, 2)])
+    assert tok.shape == (1, 2 * 3 + 4 * 2, 16) and ids[0, 0, 0] == 10 and ids[0, -1, 0] == 20
+    assert Ks.pack_refs(None) == (None, None)
+    assert driver.supports_references and desc.edit_training
+    dit = _dit()
+    net = FamilyLoRA(dit, driver)
+    net.add_trainable(4, 4)
+    lat, cond, ref = torch.randn(1, 16, 6, 4), _cond(1), torch.randn(1, 16, 6, 4)
+    plain = driver.training_loss(dit, lat, cond, torch.Generator().manual_seed(2))[0]
+    loss, _ = driver.training_loss(dit, lat, cond, torch.Generator().manual_seed(2), refs=[ref])
+    assert torch.isfinite(loss) and loss.item() != plain.item()           # the reference reaches the DiT
+    loss.backward()
+    assert all(p.grad is not None for p in net.parameters())
+    with torch.no_grad():
+        out = driver.generate(dit, {"text_embed": _cond(1)["text_embed"][0]}, 64, 96, steps=2, seed=1, refs=[ref])
+    assert out.shape == (1, 16, 6, 4)
+    vals = {**P.defaults(), "FAMILY_EDIT": True, "FAMILY_EDIT_DIR": str(tmp_path)}
+    assert P.family_shows(P.BY_KEY["FAMILY_EDIT"], desc)
+    ds = pipeline.dataset_config(desc, vals, str(tmp_path), None)
+    assert ds["datasets"][0]["control_directory"] == str(tmp_path.resolve())

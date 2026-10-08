@@ -5,7 +5,8 @@
 # Changes for TagScribeR: Fizgig has no FamilyDriver for Klein - this class puts its KleinTrainer code behind the family
 # interface (loading, quantisation and the LoRA come from the generic layer; the objective, conditioning, timesteps and
 # sampler are Fizgig's). The loss runs in fp32 around a bf16 forward (autocast, as accelerate's bf16 mixed precision
-# does) and the noise and timesteps come from the loop's seeded CPU generator.
+# does) and the noise and timesteps come from the loop's seeded CPU generator. Brought level with Fizgig 7.0.1
+# klein/driver.py (commit 1c8ec88): Edit LoRAs (references), compile, other trainers' LoRA layouts, the fp8-file Auto rule.
 """Klein driver for the training family layer (training/driver.py).
 
 * conditioning: Qwen3-8B layers 9 / 18 / 27 -> {"text_embed": (512, 12288)} at a FIXED shape (no mask), so items stack
@@ -13,6 +14,7 @@
 * training: flow matching, x_t = (1 - t) x0 + t noise, target = noise - x0, default timestep mode flux2_shift
   (sampling.sample_timesteps); the DiT sees packed tokens + 4D position ids and t (+ 0.001 except in sigma mode)
 * sampling: Euler over the empirical-mu schedule, CFG with a negative prompt
+* edit: reference latents ride after the image tokens at time offsets 10, 20, ... (Fizgig 7.0.1 pack_control_latent)
 * LoRA: the 112 Linears of the 8 double + 24 single blocks, in blocks selectable through Fizgig's Model Area
 """
 import logging
@@ -222,6 +224,16 @@ class KleinDriver(FamilyDriver):
         """Fizgig cache_text.py: (512, 12288) per caption, bf16."""
         return [{"text_embed": h.to(torch.bfloat16).cpu()} for h in te.encode(list(captions))]
 
+    # ---- edit training (Fizgig 7.0.1: references reach the DiT as latents only) -------------------------------
+    supports_references = True
+
+    def load_reference_text_encoder(self, path, device):
+        return self.load_text_encoder(path, device)
+
+    def encode_text_with_references(self, te, captions, references):
+        """Klein's text encoder never sees the references: they reach the DiT as latents only."""
+        return self.encode_text(te, captions)
+
     # ---- training -------------------------------------------------------------------------------
     @staticmethod
     def _autocast(device):
@@ -230,8 +242,6 @@ class KleinDriver(FamilyDriver):
     def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None):
         """Fizgig get_noisy_model_input_and_timesteps + call_dit + the MSE of the train loop. latents (B, 128, h, w);
         cond: text_embed (B, 512, 12288) as cached."""
-        if refs:
-            raise RuntimeError("Klein has no edit / reference training in this port")
         device = latents.device
         bsz, _, h, w = latents.shape
         x0 = latents.float()
@@ -244,13 +254,17 @@ class KleinDriver(FamilyDriver):
         noised = (1.0 - t4) * x0 + t4 * noise
         target = noise - x0                                                    # flow-matching velocity
         tokens, x_ids = S.pack_img(noised.to(torch.bfloat16))
+        n = tokens.shape[1]
+        ref_tok, ref_ids = S.pack_refs([r.to(device=device, dtype=torch.bfloat16) for r in refs] if refs else None)
+        if ref_tok is not None:             # Fizgig 7.0.1: an edit's references ride after the image tokens
+            tokens, x_ids = torch.cat((tokens, ref_tok), 1), torch.cat((x_ids, ref_ids), 1)
         txt = cond["text_embed"].to(device=device, dtype=torch.bfloat16)
         if txt.dim() == 2:
             txt = txt[None]
         ctx, ctx_ids = S.pack_txt(txt)
         with self._autocast(device):
             pred = dit(x=tokens, x_ids=x_ids, timesteps=t_model.to(device), ctx=ctx, ctx_ids=ctx_ids, guidance=None)
-        loss = F.mse_loss(S.unpack_img(pred.float(), h, w), target)
+        loss = F.mse_loss(S.unpack_img(pred[:, :n].float(), h, w), target)
         return loss, {"t": float(t.mean())}
 
     # ---- sampling -------------------------------------------------------------------------------
@@ -271,7 +285,7 @@ class KleinDriver(FamilyDriver):
         return S.sample_latents(dit, self._text(cond, device), neg, device=device,
                                 width=S.roundup(width, 16, "width"), height=S.roundup(height, 16, "height"),
                                 steps=steps, cfg=cfg, seed=seed, noise=noise, on_step=on_step,
-                                channels=getattr(dit, "in_channels", 128))
+                                channels=getattr(dit, "in_channels", 128), refs=refs)
 
     @torch.no_grad()
     def decode(self, vae, latents, width, height):

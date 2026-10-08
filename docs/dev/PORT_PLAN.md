@@ -1,6 +1,6 @@
 # Port plan: bringing TagScribeR's training level with current Fizgig
 
-Status on 2026-10-07. Development notes, not user documentation. Read `CLAUDE.md` first for the standing rules.
+Status on 2026-10-08. Development notes, not user documentation. Read `CLAUDE.md` first for the standing rules.
 
 ## Where things stand
 
@@ -22,6 +22,21 @@ Status on 2026-10-07. Development notes, not user documentation. Read `CLAUDE.md
 - Branch `wip/h3-stills` holds two unreviewed commits for stage 4 (the H3 "Medium to High Noise LR" dial and H3
   Turbo-LoRA previews). The audit says both still match upstream with changes: re-key to `H3_HIGHNOISE_LR_PCT`, clamp
   instead of raising, `FAMILY_TURBO_STEPS` / `FAMILY_TURBO_PACE`, and the general frozen-file AdaLN hook.
+
+## Stage 1 status (2026-10-08)
+
+Done on branch `port/stage1-bt67en`, unit-tested only (tiny random models, CPU; no GPU, no real weights, inductor not
+run): Krea 2 memory figures and `auto_precisions`; the loop fixes; cache-first tokenizer loading; Slider / Fine-tune
+presets refused; LoRA reader (`alias_flat`, LoHa, `lora.down`, `unet.`); loss-watch exclusions per family; Krea 2
+numerics of decision 2 (bf16 INT8 scales, bf16 loss order under autocast, one caption per forward with a text-cache
+revision, clip signal Klein only, RAW CFG 4.5); driver hooks (`batch_cond`, `step_policy`, `after_optimizer_step`,
+`run_metadata`, `frozen_file_added`, `park_for`, `save_preview`, `plan_run`, `load_planned`, INT8 `store_device`);
+Qwen Fast Identity Mode and torch.compile with compile shared by every family (`training/compile.py`, decided on the
+empty card). **Needs one real Krea 2 run by the owner** (short, 0.25 MP, sample-at-first) before it is called
+verified.
+
+Left for later stages on purpose: the Krea 2 and Qwen Slider presets (sliders are stage 5); hooks of features not
+ported yet (sliders, fine-tune, clips, preview checkpoints, legacy state order, `cache_stage`).
 
 ## Decisions the owner has made
 
@@ -86,6 +101,13 @@ each to `requirements.txt` and the installer in the stage that first needs it.
   PyTorch's allocator held 17.5 GB reserved with 12.9 GB in use during Krea 2 training (cache growth across bucket
   shapes); previews at 1024 x 1024 cost about 2.5 minutes per epoch; INT8 was not faster than fp8 in a bare matmul
   benchmark on the AMD card, though it is the measured fast path on NVIDIA.
+- **Open questions from stage 1** (ask, do not decide): (a) Krea 2 preview start noise - Fizgig draws it on the GPU in
+  bf16 and runs previews under autocast, TagScribeR on the CPU in fp32 (same seed, different picture); mirror it?
+  (b) Auto when even maximum swap is short: TagScribeR keeps INT8 + maximum swap (about 5 GB on Krea 2), Fizgig falls
+  to NF4 (11.4 GB) - keep TagScribeR's? (c) the fused bf16 add for frozen adapters (Fizgig families/lora.py:127-133:
+  Turbo / context LoRA previews round once, as the old loaders) - port it? It changes preview pixels slightly. (d)
+  Fizgig's no-Turbo Krea 2 preview default is 8 steps / CFG 1; TagScribeR keeps 28 steps (now CFG 4.5) - keep? (e)
+  fp8's 1 MP memory point is inferred (INT8's +2.9 GB carried over, as Fizgig does for bf16) - fine until measured?
 - **Open questions for the owner** raised by the audits (ask, do not decide): unlimited prompt chunks versus the
   fixed 225 tokens for SDXL, and zeros for an empty caption; whether the 5.5 MB H3 time-embedding grid asset stays
   in the repo; whether a bad Turbo LoRA file should be a warning instead of a stopped run; which Krea 2 extras

@@ -14,6 +14,9 @@ Fizgig preset JSON files apply here unchanged (same keys and value formats). Fiz
 expresses differently are migrated first (migrate_legacy): KREA2_EMA -> FAMILY_EMA, QUANT_4BIT_MODE -> FAMILY_PRECISION
 (fp8 maps to the fp8 base), blank noise-range boxes -> the defaults; torch.compile and the
 fine-tune keys do nothing here and are ignored.
+
+A Fizgig preset that switches on a training mode TagScribeR does not have yet (a slider LoRA, a full fine-tune) is
+refused as a whole (UNSUPPORTED_MODES): applied without it, its settings would run as an ordinary LoRA.
 """
 from __future__ import annotations
 
@@ -190,10 +193,29 @@ def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
     return out, notes, ignored
 
 
+# Fizgig preset keys whose True turns the run into something other than a LoRA - not available here yet (port plan
+# stage 5: sliders and full fine-tune for every family)
+UNSUPPORTED_MODES = {"FAMILY_SLIDER": "slider training", "FAMILY_FT": "full fine-tuning",
+                     "KREA2_FINETUNE": "full fine-tuning", "MINIMAX_FINETUNE": "full fine-tuning"}
+
+
+def _on(value) -> bool:
+    return value not in (False, "False", "false", 0, "0", "", None, "Off", "off")
+
+
+def unsupported_modes(preset: dict) -> list:
+    """(key, mode) for each training mode `preset` switches on that this app cannot train yet."""
+    return [(k, what) for k, what in UNSUPPORTED_MODES.items() if _on((preset or {}).get(k))]
+
+
 def apply(preset: dict, current: dict, desc=None) -> tuple[dict, P.ApplyReport]:
-    """`current` updated with `preset` under Fizgig's validation rules. Returns (new values, report)."""
+    """`current` updated with `preset` under Fizgig's validation rules. Returns (new values, report). A preset for
+    a training mode this app does not have (unsupported_modes) changes nothing: report.blocked says why."""
     out = dict(current)
     rep = P.ApplyReport()
+    rep.blocked = unsupported_modes(preset)
+    if rep.blocked:
+        return out, rep
     preset, rep.notes, rep.ignored = migrate_legacy(preset)
     for key, value in (preset or {}).items():
         if key.startswith("__"):

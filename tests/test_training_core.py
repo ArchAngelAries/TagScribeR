@@ -405,3 +405,17 @@ def test_step_scheduler_shapes():
     assert lrs[0] == pytest.approx(0.5) and lrs[1] == pytest.approx(1.0)
     assert lrs[-1] < 0.1
     assert math.isclose(lrs[2], 1.0)
+
+
+def test_slider_and_finetune_presets_are_refused_not_run_as_loras():
+    """A Fizgig Slider or Fine-tune preset changes nothing here (those modes are not ported yet): applied, its
+    settings would silently train an ordinary LoRA."""
+    from training import params as P
+    from training import presets
+    cur = P.defaults()
+    for key in ("FAMILY_SLIDER", "FAMILY_FT", "KREA2_FINETUNE", "MINIMAX_FINETUNE"):
+        new, rep = presets.apply({key: True, "NETWORK_DIM": 4, "LEARNING_RATE": 2e-4}, cur)
+        assert new == cur and rep.blocked and not rep.applied, key
+        assert "cannot train yet" in rep.messages()[0]
+    new, rep = presets.apply({"FAMILY_SLIDER": False, "FAMILY_FT": False, "NETWORK_DIM": 4}, cur)   # Fizgig's LoRAs
+    assert not rep.blocked and new["NETWORK_DIM"] == 4

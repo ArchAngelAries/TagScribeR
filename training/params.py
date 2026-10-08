@@ -419,7 +419,10 @@ class ApplyReport:
     refused: list = field(default_factory=list)      # (key, value, reason) - shown as console / status lines
     ignored: list = field(default_factory=list)      # unknown keys (forward / backward compatibility)
     notes: list = field(default_factory=list)        # info lines, e.g. a legacy key that was mapped (not a refusal)
+    # (key, what it switches on) for a training mode this app does not have yet: the whole preset was refused
+    blocked: list = field(default_factory=list)
 
     def messages(self) -> list:
-        return [f"[preset] {k}: saved value {v!r} isn't offered here - keeping the current one ({why})"
+        return [f"[preset] refused: {k} switches on {what}, which TagScribeR cannot train yet - nothing was changed "
+                f"(it would otherwise run as an ordinary LoRA)" for k, what in self.blocked] + [f"[preset] {k}: saved value {v!r} isn't offered here - keeping the current one ({why})"
                 for k, v, why in self.refused] + list(self.notes)

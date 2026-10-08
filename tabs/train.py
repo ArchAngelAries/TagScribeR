@@ -479,9 +479,14 @@ class TrainTab(QWidget):
             QMessageBox.warning(self, "Preset", str(e))
             return
         new, rep = presets.apply(data, self.collect(), self.desc)
-        self._apply_values(new)
         for m in rep.messages():
             self._console(m)
+        if rep.blocked:
+            QMessageBox.warning(self, "Preset", f"'{name}' is a Fizgig preset for "
+                                f"{' and '.join(sorted({w for _, w in rep.blocked}))}, which TagScribeR cannot train "
+                                "yet.\n\nNothing was changed: applied anyway, it would train an ordinary LoRA.")
+            return
+        self._apply_values(new)
         if not quiet:
             self._console(f"[preset] applied '{name}' ({len(rep.applied)} setting(s))")
             if rep.refused:
@@ -959,6 +964,9 @@ class TrainTab(QWidget):
                 self._console(f"[queue] skipped {it.get('LORA_NAME')}: family or dataset folder missing")
                 continue
             values, rep = presets.apply(it, P.defaults(), fam)
+            if rep.blocked:
+                self._console(f"[queue] skipped {it.get('LORA_NAME')}: " + " ".join(rep.messages()))
+                continue
             values.update({k: v for k, v in it.items() if k in P.BY_KEY and not P.BY_KEY[k].preset})
             self._console(f"[queue] starting {values.get('LORA_NAME')}")
             if self._launch(fam, values, folder):

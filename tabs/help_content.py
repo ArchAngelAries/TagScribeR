@@ -409,6 +409,8 @@ switch your model. Preview settings and Resume aren't part of presets either.</l
 <li><b>Import…</b> adds a preset file. Fizgig preset files work as they are (same setting names).</li>
 <li>When a preset holds a value this family doesn't offer (an optimizer, a learning-rate bound, a precision), that
 setting is kept as it was and the console says so. Settings this version doesn't know are ignored.</li>
+<li>Fizgig's <b>Slider</b> and <b>Fine-tune</b> presets are refused with a message and change nothing: TagScribeR
+can't train sliders or full fine-tunes yet, and applied anyway they would train an ordinary LoRA.</li>
 </ul>
 """),
     "train_lr": ("Adaptive learning rate", "Train", """

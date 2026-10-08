@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, 
                                QListView, QMenu, QPushButton, QSlider, QToolButton, QVBoxLayout, QWidget)
 
 from core.query import compile_query
-from tabs.common import confirm
+from tabs.common import ClickToDeselect, confirm
 from tabs.workspace.context import WorkspaceContext
 from tabs.workspace.delegate import CardDelegate
 from tabs.workspace.model import ENTRY_ROLE, KEY_ROLE, SORT_MODES, FilterProxy
@@ -160,6 +160,7 @@ class DatasetBrowser(QWidget):
             lambda cur, _prev: cur.isValid() and self.current_changed.emit(cur.data(KEY_ROLE)))
         self.view.setStyleSheet("QListView { background-color: #1f1f1f; border: none; }")
         self.view.viewport().installEventFilter(self)
+        self._deselect = ClickToDeselect(self.view)        # click a selected image again to deselect it
         lay.addWidget(self.view, 1)
         self.lbl_status = QLabel("Open a folder to start.")
         self.lbl_status.setStyleSheet("color: #9a9a9a; padding: 2px;")

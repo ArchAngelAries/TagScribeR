@@ -5,9 +5,10 @@ import logging
 import traceback
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
+from PySide6.QtCore import (QEvent, QItemSelection, QItemSelectionModel, QObject, QPersistentModelIndex, QRunnable,
+                            Qt, QThreadPool, QTimer, Signal, Slot)
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFrame, QLabel, QMessageBox, QPlainTextEdit,
+from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFrame, QLabel, QMessageBox, QPlainTextEdit,
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from core.image_utils import load_thumbnail
@@ -203,6 +204,51 @@ class QuickTagList(QWidget):
         a = menu.addAction(f"Remove {n} quick tag(s)" if n > 1 else "Remove quick tag", self._remove_selected)
         a.setEnabled(n > 0)
         menu.exec(self.list.viewport().mapToGlobal(pos))
+
+
+class ClickToDeselect(QObject):
+    """A plain click on a selected item of an item view deselects that item and keeps the rest of the selection (Qt
+    would keep it selected, or select only it). A click on an unselected item, Ctrl / Shift clicks, dragging and
+    double-clicking behave as Qt's. Acts on the release, after Qt's own handling."""
+
+    def __init__(self, view):
+        super().__init__(view)
+        self.view = view
+        self._armed = None                  # (the clicked index, press position, the selection at the press)
+        view.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        t = event.type()
+        if t == QEvent.MouseButtonPress:
+            self._armed = None
+            if event.button() == Qt.LeftButton and not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
+                pos = event.position().toPoint()
+                idx = self.view.indexAt(pos)
+                sm = self.view.selectionModel()
+                if idx.isValid() and sm is not None and sm.isSelected(idx):
+                    self._armed = (QPersistentModelIndex(idx), pos,
+                                   [QPersistentModelIndex(i) for i in sm.selectedIndexes()])
+        elif t == QEvent.MouseButtonRelease and self._armed is not None:
+            idx, pos, before = self._armed
+            self._armed = None
+            moved = (event.position().toPoint() - pos).manhattanLength() >= QApplication.startDragDistance()
+            if not moved and QPersistentModelIndex(self.view.indexAt(event.position().toPoint())) == idx:
+                QTimer.singleShot(0, lambda: self._deselect(idx, before))
+        elif t == QEvent.MouseButtonDblClick:
+            self._armed = None
+        return False
+
+    def _deselect(self, idx, before):
+        """The selection as it was at the press, without the clicked item."""
+        sm = self.view.selectionModel()
+        if sm is None:
+            return
+        keep = QItemSelection()
+        for i in before:
+            if i.isValid() and i != idx:
+                keep.select(sm.model().index(i.row(), i.column(), i.parent()),
+                            sm.model().index(i.row(), i.column(), i.parent()))
+        sm.select(keep, QItemSelectionModel.ClearAndSelect)
 
 
 def hint_label(text: str) -> QLabel:

@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, Q
                                QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
 from core.config import settings
-from tabs.common import CollapsibleSection, confirm, hint_label
+from tabs.common import ClickToDeselect, CollapsibleSection, confirm, hint_label
 from tabs import memory_bar
 from tabs.train_dialogs import LossChart, ProblemImagesDialog, SampleOverrideDialog
 from tabs.workspace.context import workspace
@@ -631,7 +631,9 @@ class TrainTab(QWidget):
         self.samples.setViewMode(QListWidget.IconMode)
         self.samples.setIconSize(QSize(192, 192))
         self.samples.setResizeMode(QListWidget.Adjust)
-        self.samples.setToolTip("Preview images by epoch (newest first). Double-click to open.")
+        self.samples.setToolTip("Preview images by epoch (newest first). Double-click to open; click a selected "
+                                "image again to deselect it.")
+        self._samples_deselect = ClickToDeselect(self.samples)
         self.samples.itemDoubleClicked.connect(lambda it: QDesktopServices.openUrl(QUrl.fromLocalFile(
             it.data(Qt.UserRole))))
         tabs.addTab(self.samples, "Samples")

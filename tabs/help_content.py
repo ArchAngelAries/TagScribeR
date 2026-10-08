@@ -11,6 +11,7 @@ HOTKEYS: list[tuple[str, str, str]] = [
     ("Global", "F1", "Help for the current tab"),
     ("Global", "Ctrl+K  (or Ctrl+Shift+P)", "Command palette — type to find and run any action, filter or help topic"),
     ("Image grid", "Click / Ctrl+Click / Shift+Click", "Select / add to selection / select a range"),
+    ("Image grid", "Click a selected image", "Deselect it (the rest stay selected)"),
     ("Image grid", "Arrow keys", "Move between images"),
     ("Image grid", "Ctrl+A", "Select all shown images"),
     ("Image grid", "Ctrl+O", "Open a folder (opens in every tab)"),
@@ -89,7 +90,8 @@ The Image Editor saves copies by default and asks before changing originals.</li
 <h2>Gallery</h2>
 <p>The Gallery is your dataset workspace: browse, filter, inspect and edit captions for thousands of images.</p>
 <h3>Selecting</h3>
-<p>Click to select, Ctrl+Click to add, Shift+Click for a range, Ctrl+A for everything shown. Right-click for
+<p>Click to select, Ctrl+Click to add, Shift+Click for a range, Ctrl+A for everything shown. Click a selected image
+again to deselect it; the rest of the selection stays. Right-click for
 image actions (open, show in folder, copy/paste caption, copy to collection, Recycle Bin, smart selections).</p>
 <h3>Thumbnail size</h3>
 <p>Use the <b>Size</b> slider, <b>Ctrl + mouse wheel</b> over the grid, or <b>Ctrl+= / Ctrl+-</b> (Ctrl+0 resets).

@@ -53,12 +53,9 @@ def load_tokenizer(checkpoint_path: Optional[str] = None):
         d = os.path.join(os.path.dirname(os.path.abspath(checkpoint_path)), TOKENIZER_DIRNAME)
         if os.path.isfile(os.path.join(d, "vocab.json")) and os.path.isfile(os.path.join(d, "merges.txt")):
             return CLIPTokenizer.from_pretrained(d)
+    from training.hf_cache import from_pretrained_cache_first
     try:
-        return CLIPTokenizer.from_pretrained(TOKENIZER_REPO, local_files_only=True)
-    except Exception:
-        pass
-    try:
-        return CLIPTokenizer.from_pretrained(TOKENIZER_REPO)
+        return from_pretrained_cache_first(CLIPTokenizer, TOKENIZER_REPO)
     except Exception as e:
         raise RuntimeError(
             f"The CLIP tokenizer files are not available offline. Download vocab.json and merges.txt from "

@@ -253,7 +253,8 @@ def load_h3_text_encoder(path: str, device="cuda", compute_dtype=torch.bfloat16,
             if buf is not None and buf.is_meta:
                 mod.register_buffer(bname, torch.zeros(buf.shape, dtype=buf.dtype, device=place))
     model.requires_grad_(False)
-    tok = AutoTokenizer.from_pretrained(tokenizer_source(path))
+    from training.hf_cache import from_pretrained_cache_first
+    tok = from_pretrained_cache_first(AutoTokenizer, tokenizer_source(path))   # offline once cached (Fizgig #174)
     if [t for t in _H3_SPECIAL_TOKENS if tok.convert_tokens_to_ids(t) is None]:
         tok.add_tokens(list(_H3_SPECIAL_TOKENS), special_tokens=True)
     return H3TextEncoder(model, tok, device=dev, compute_dtype=compute_dtype, cpu_embed=cpu_embed, stream=stream)

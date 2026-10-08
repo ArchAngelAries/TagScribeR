@@ -71,12 +71,13 @@ class AnimaTextEncoder:
         from transformers import AutoTokenizer, Qwen3Config, Qwen3Model
 
         from training.families.qwen_image21.embedder import load_split_weights
+        from training.hf_cache import from_pretrained_cache_first
         sources = {"qwen": tokenizer_source(model_path, "qwen3_tokenizer", QWEN3_REPO, "tokenizer_config.json"),
                    "t5": tokenizer_source(model_path, "t5_tokenizer", T5_REPO, "tokenizer_config.json")}
         toks = {}
         for name, src in sources.items():
             try:
-                toks[name] = AutoTokenizer.from_pretrained(src)
+                toks[name] = from_pretrained_cache_first(AutoTokenizer, src)    # offline once cached (Fizgig #174)
             except Exception as e:
                 repo, files, folder = ((QWEN3_REPO, QWEN3_TOKENIZER_FILES, "qwen3_tokenizer") if name == "qwen"
                                        else (T5_REPO, T5_TOKENIZER_FILES, "t5_tokenizer"))

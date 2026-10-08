@@ -1,0 +1,56 @@
+# Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/utils/hf_cache.py (commit 1c8ec88)
+# Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
+# Changes for TagScribeR: none beyond this header (used by every training family's tokenizer / processor loader).
+"""Cache-first HuggingFace loading — offline once warm.
+
+`from_pretrained(repo_id)` phones the Hub for an etag check on EVERY call, even when the files
+are fully cached — so a machine with flaky or no internet can't start training (or mid-run
+auto-recaption) despite having every byte on disk (issue #26). Asking for the cache first makes
+the network a first-run-only event: hit the local cache, and only fall back to the Hub when
+something is genuinely missing. Also shaves the round-trip off every warm start.
+
+`local_files_only=True` alone is not enough for a large-vocabulary tokenizer (every Qwen one): since
+transformers 4.57 its loader asks the Hub whether the repo is a Mistral model (`model_info`) unless the
+source is a local directory — so a cached Qwen tokenizer still failed offline (#174). The cached
+snapshot's own folder is a local directory, so it is loaded from there first.
+"""
+from __future__ import annotations
+
+import logging
+import os
+
+logger = logging.getLogger(__name__)
+
+
+def cached_snapshot_dir(repo_id: str):
+    """The local folder of `repo_id`'s cached snapshot (no network), or None when nothing is cached or
+    `repo_id` is already a local path."""
+    if os.path.isdir(repo_id):
+        return None
+    try:
+        from huggingface_hub import snapshot_download
+        path = snapshot_download(repo_id, local_files_only=True)
+    except Exception:
+        return None
+    return path if path and os.path.isdir(path) else None
+
+
+def from_pretrained_cache_first(cls, repo_id: str, **kwargs):
+    """`cls.from_pretrained(repo_id)`, trying the local cache before touching the network.
+
+    Works for tokenizers, processors and configs alike; `repo_id` may also be a local
+    directory (local_files_only is a no-op there). A partial or missing cache falls through
+    to the normal network path, so first runs behave exactly as before.
+    """
+    local = cached_snapshot_dir(repo_id)
+    if local is not None:
+        try:
+            return cls.from_pretrained(local, local_files_only=True, **kwargs)
+        except Exception:
+            pass                       # an incomplete snapshot: the repo-id paths below say what is missing
+    try:
+        return cls.from_pretrained(repo_id, local_files_only=True, **kwargs)
+    except Exception:
+        logger.info(f"{cls.__name__}: {repo_id} not in the local cache — fetching from the Hub "
+                    "(one-time; later runs load offline)")
+        return cls.from_pretrained(repo_id, **kwargs)

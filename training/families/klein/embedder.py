@@ -96,13 +96,11 @@ class KleinTextEncoder:
 
         from training.families.krea2.embedder import dequantize_prequantized
         from training.families.qwen_image21.embedder import _disable_broken_hf_transfer, _int8_weights, load_split_weights
+        from training.hf_cache import from_pretrained_cache_first
         _disable_broken_hf_transfer()
         source = tokenizer_source(model_path)
         try:
-            try:
-                tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True)   # cache first (Fizgig)
-            except Exception:
-                tokenizer = AutoTokenizer.from_pretrained(source)
+            tokenizer = from_pretrained_cache_first(AutoTokenizer, source)     # offline once cached (Fizgig #174)
         except Exception as e:
             raise RuntimeError(
                 f"Couldn't load the Qwen3 tokenizer from {source} ({type(e).__name__}: {e}). Offline: download "

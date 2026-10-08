@@ -128,8 +128,9 @@ class Qwen21TextEncoder:
         _disable_broken_hf_transfer()
         # Default: the official repo's processor/ files (a few MB, cached by huggingface_hub; the fetcher
         # warms the cache so this works offline).
+        from training.hf_cache import from_pretrained_cache_first
         self.tokenizer = (AutoTokenizer.from_pretrained(tokenizer_dir) if tokenizer_dir else
-                          AutoTokenizer.from_pretrained(TOKENIZER_REPO, subfolder="processor"))
+                          from_pretrained_cache_first(AutoTokenizer, TOKENIZER_REPO, subfolder="processor"))
         config = Qwen3VLConfig.from_dict(_text_encoder_config(config_path))
         with init_empty_weights():
             model = Qwen3VLForConditionalGeneration._from_config(config)
@@ -183,7 +184,8 @@ class Qwen21TextEncoder:
             raise RuntimeError("this Qwen3-VL encoder was loaded without its vision tower (vision=False)")
         from transformers import Qwen3VLProcessor
         if getattr(self, "_processor", None) is None:
-            self._processor = Qwen3VLProcessor.from_pretrained(TOKENIZER_REPO, subfolder="processor")
+            from training.hf_cache import from_pretrained_cache_first
+            self._processor = from_pretrained_cache_first(Qwen3VLProcessor, TOKENIZER_REPO, subfolder="processor")
         refs = " ".join(f"<image{i + 1}><|vision_start|><|image_pad|><|vision_end|>" for i in range(len(images)))
         text = TEMPLATE_T2I.format(refs + (prompt if prompt else " "))
         inputs = self._processor(text=[text], images=list(images), return_tensors="pt",

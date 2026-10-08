@@ -33,6 +33,7 @@ uses:
 | `training/adaptive_lr.py` | `src/fizgig/krea2/trainer.py` (`AdaptiveLR`) + the clip-ratio signal of `src/fizgig/training/trainer.py` |
 | `training/dataset.py` | `src/fizgig/dataset/image_dataset.py`, `config.py` (image-only subset) |
 | `training/ema.py`, `optimizers.py`, `metadata.py`, `progress.py`, `train_utils.py`, `loss_logger.py` | the same-named modules in `src/fizgig/training/` |
+| `training/hf_cache.py` | `src/fizgig/utils/hf_cache.py` (cache-first Hugging Face loading) |
 | `training/modules/offloading.py`, `int8_train.py`, `nf4.py`, `sdpa.py`, `compile_util.py` | `src/fizgig/modules/` |
 | `training/modules/fp8.py` | `src/fizgig/krea2/fp8_optimization_utils.py`, `krea2/utils.py` (adapted by Fizgig from musubi-tuner) |
 | `training/families/qwen_image21/` | `src/fizgig/families/qwen_image.py` and `src/fizgig/qwen_image21/` |

@@ -381,6 +381,8 @@ can't affect it.</li>
 <li>Training runs as separate processes, so the app stays responsive and a crash can't take it down.</li>
 <li>Stages: <b>caching latents</b> → <b>caching captions</b> → <b>training</b>. Caching only encodes what
 changed since the last run.</li>
+<li>Tokenizers are read from the local Hugging Face cache first, so once the model downloader has fetched them, a
+run starts without an internet connection.</li>
 </ul>
 <h3>Pause, Stop, Resume, Queue</h3>
 <ul>

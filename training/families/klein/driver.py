@@ -7,6 +7,8 @@
 # sampler are Fizgig's). The loss runs in fp32 around a bf16 forward (autocast, as accelerate's bf16 mixed precision
 # does) and the noise and timesteps come from the loop's seeded CPU generator. Brought level with Fizgig 7.0.1
 # klein/driver.py (commit 1c8ec88): Edit LoRAs (references), compile, other trainers' LoRA layouts, the fp8-file Auto rule.
+# Slider hooks from Fizgig 7.0.1 klein/driver.py (loss_at's diff_ref weighting, noise_latents, predict), on this
+# port's own timestep modes.
 """Klein driver for the training family layer (training/driver.py).
 
 * conditioning: Qwen3-8B layers 9 / 18 / 27 -> {"text_embed": (512, 12288)} at a FIXED shape (no mask), so items stack
@@ -15,6 +17,8 @@
   (sampling.sample_timesteps); the DiT sees packed tokens + 4D position ids and t (+ 0.001 except in sigma mode)
 * sampling: Euler over the empirical-mu schedule, CFG with a negative prompt
 * edit: reference latents ride after the image tokens at time offsets 10, 20, ... (Fizgig 7.0.1 pack_control_latent)
+* sliders: image pairs weight each latent token's error by how much the poles differ there; prompt pairs go
+  through noise_latents / predict
 * LoRA: the 112 Linears of the 8 double + 24 single blocks, in blocks selectable through Fizgig's Model Area
 """
 import logging
@@ -308,20 +312,24 @@ class KleinDriver(FamilyDriver):
     def _autocast(device):
         return torch.autocast(device_type=device.type, dtype=torch.bfloat16)
 
-    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None):
-        """Fizgig get_noisy_model_input_and_timesteps + call_dit + the MSE of the train loop. latents (B, 128, h, w);
-        cond: text_embed (B, 512, 12288) as cached."""
-        device = latents.device
+    def _draw(self, latents, generator, min_t, max_t):
+        """Fizgig get_noisy_model_input_and_timesteps: the noise, then t by the run's timestep mode (Fizgig 7.0.1
+        klein/driver.py draws in the same order). -> (x0, noise, t, t_model, x_t), x0 / x_t in fp32."""
         bsz, _, h, w = latents.shape
         x0 = latents.float()
-        noise = torch.randn(x0.shape, generator=generator).to(device)
+        noise = torch.randn(x0.shape, generator=generator).to(latents.device)
         t, t_model = S.sample_timesteps(
             self.timestep_sampling, bsz, h, w, generator, min_t=min_t, max_t=max_t, sigmoid_scale=self.sigmoid_scale,
             shift=self.discrete_flow_shift, logit_mean=self.logit_mean, logit_std=self.logit_std,
             preserve=self.preserve_distribution)
-        t4 = t.view(-1, 1, 1, 1).to(device)
-        noised = (1.0 - t4) * x0 + t4 * noise
-        target = noise - x0                                                    # flow-matching velocity
+        t4 = t.view(-1, 1, 1, 1).to(latents.device)
+        return x0, noise, t, t_model, (1.0 - t4) * x0 + t4 * noise
+
+    def _forward(self, dit, noised, t_model, cond, refs=None):
+        """Fizgig call_dit (7.0.1 klein/driver.py _forward): pack, the references after the image tokens, bf16
+        autocast, the image tokens back to (B, 128, h, w) in fp32."""
+        device = noised.device
+        h, w = noised.shape[-2:]
         tokens, x_ids = S.pack_img(noised.to(torch.bfloat16))
         n = tokens.shape[1]
         ref_tok, ref_ids = S.pack_refs([r.to(device=device, dtype=torch.bfloat16) for r in refs] if refs else None)
@@ -333,8 +341,38 @@ class KleinDriver(FamilyDriver):
         ctx, ctx_ids = S.pack_txt(txt)
         with self._autocast(device):
             pred = dit(x=tokens, x_ids=x_ids, timesteps=t_model.to(device), ctx=ctx, ctx_ids=ctx_ids, guidance=None)
-        loss = F.mse_loss(S.unpack_img(pred[:, :n].float(), h, w), target)
+        return S.unpack_img(pred[:, :n].float(), h, w)
+
+    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None, diff_ref=None,
+                      diff_weight=0.0):
+        """Fizgig get_noisy_model_input_and_timesteps + call_dit + the MSE of the train loop. latents (B, 128, h, w);
+        cond: text_embed (B, 512, 12288) as cached. diff_ref / diff_weight: an image-pair slider's other pole."""
+        x0, noise, t, t_model, noised = self._draw(latents, generator, min_t, max_t)
+        target = noise - x0                                                    # flow-matching velocity
+        pred = self._forward(dit, noised, t_model, cond, refs)
+        if diff_ref is not None and diff_weight > 0.0:
+            # Fizgig 7.0.1 klein/driver.py loss_at: slider disentanglement, per latent token (Krea 2's formula)
+            d = (latents.float() - diff_ref.to(latents.device).float()).abs().mean(dim=1).flatten(1)   # (B, N)
+            dm = d.mean(dim=1, keepdim=True)
+            r = (d / dm.clamp_min(1e-8)).clamp(max=8.0)
+            wt = (1.0 - float(diff_weight)) + float(diff_weight) * r
+            wt = wt / wt.mean(dim=1, keepdim=True).clamp_min(1e-8)
+            wt = torch.where(dm > 1e-6, wt, torch.ones_like(wt))     # identical pair: uniform, never all-zero
+            se = (pred - target).pow(2).mean(dim=1).flatten(1)
+            loss = (se * wt).mean()
+        else:
+            loss = F.mse_loss(pred, target)
         return loss, {"t": float(t.mean())}
+
+    # ---- prompt-pair sliders (Fizgig 7.0.1 klein/driver.py noise_latents / predict) -----------------------------
+    def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
+        """A noised practice latent drawn as training_loss draws one (the run's timestep mode included)."""
+        _x0, _noise, t, t_model, noised = self._draw(latents, generator, min_t, max_t)
+        return {"xt": noised, "t_model": t_model, "t": float(t.mean())}
+
+    def predict(self, dit, state, cond):
+        """The DiT's velocity (B, 128, h, w) at a noise_latents() state (text conditioning only, no references)."""
+        return self._forward(dit, state["xt"], state["t_model"], cond)
 
     # ---- sampling -------------------------------------------------------------------------------
     @torch.no_grad()

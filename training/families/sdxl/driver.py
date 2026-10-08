@@ -1,6 +1,8 @@
 # SDXL-architecture driver for TagScribeR's family layer (original code - Fizgig has no SDXL; the loop, cached text
 # conditioning, timestep-window semantics and the driver contract are Fizgig's, the model facts come from diffusers /
 # kohya sd-scripts / ComfyUI as cited in unet.py, text.py, vae.py and sampling.py).
+# Slider hooks (training_loss diff_ref / diff_weight, noise_latents, predict) ported from Fizgig 7.0.1
+# sdxl/driver.py, on this port's own draw order and schedule.
 """SDXL, Pony, Illustrious and NoobAI-XL (epsilon and v-prediction) behind the family interface.
 
 * model file: ONE single-file .safetensors checkpoint holding the UNet, both CLIPs and the VAE (the VAE row may point at
@@ -106,11 +108,11 @@ class SDXLDriver(FamilyDriver):
         return [{"crossattn": c.to(torch.bfloat16).cpu(), "pooled": p.float().cpu()} for c, p in zip(cross, pooled)]
 
     # ---- training -------------------------------------------------------------------------------
-    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None):
-        if refs:
-            raise RuntimeError("SDXL has no edit / reference training in this port")
+    def _draw(self, latents, generator, min_t, max_t):
+        """A noised training input: the noise (plus the offset noise when set), then a uniform DDPM step inside
+        [min_t, max_t]. Fizgig 7.0.1 sdxl/driver.py noise_latents draws the step FIRST; this port keeps its own
+        order, so training_loss and the sliders share one draw."""
         device = latents.device
-        dtype = next(dit.parameters()).dtype
         x0 = latents.float()
         b = x0.shape[0]
         noise = torch.randn(x0.shape, generator=generator)
@@ -119,15 +121,50 @@ class SDXLDriver(FamilyDriver):
         noise = noise.to(device)
         t = S.draw_timesteps(b, min_t, max_t, generator)
         ac = S.alphas_cumprod(self.zero_terminal_snr).float()[t].to(device)
-        noisy = S.add_noise(x0, noise, ac)
-        target = S.target_for(self.prediction, x0, noise, ac)
-        ids = S.time_ids(x0.shape[-2] * 8, x0.shape[-1] * 8, b, device, dtype)
-        pred = dit(noisy.to(dtype), t.to(device), encoder_hidden_states=cond["crossattn"].to(device, dtype),
-                   added_cond_kwargs={"text_embeds": cond["pooled"].to(device, dtype), "time_ids": ids}).sample
-        per = F.mse_loss(pred.float(), target, reduction="none").mean(dim=(1, 2, 3))
+        return {"xt": S.add_noise(x0, noise, ac), "steps": t, "ac": ac, "x0": x0, "noise": noise,
+                "t": float(t.float().div(S.TRAIN_STEPS).mean())}
+
+    def _unet(self, dit, noisy, steps, cond):
+        """The UNet's output (epsilon, or v for a v-pred checkpoint), with SDXL's size conditioning from the latent."""
+        device = noisy.device
+        dtype = next(dit.parameters()).dtype
+        c, p = self._cond(cond, device, dtype)
+        ids = S.time_ids(noisy.shape[-2] * 8, noisy.shape[-1] * 8, noisy.shape[0], device, dtype)
+        return dit(noisy.to(dtype), steps.to(device), encoder_hidden_states=c,
+                   added_cond_kwargs={"text_embeds": p, "time_ids": ids}).sample
+
+    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None, diff_ref=None,
+                      diff_weight=0.0):
+        if refs:
+            raise RuntimeError("SDXL has no edit / reference training in this port")
+        st = self._draw(latents, generator, min_t, max_t)
+        x0, ac = st["x0"], st["ac"]
+        target = S.target_for(self.prediction, x0, st["noise"], ac)
+        pred = self._unet(dit, st["xt"], st["steps"], cond)
+        if diff_ref is not None and diff_weight > 0.0:
+            # Fizgig 7.0.1 sdxl/driver.py training_loss, image-pair sliders: latent cells where the two poles differ
+            # count more (Krea 2 / Qwen's formula); per sample here, so Min-SNR still weighs each sample
+            d = (x0 - diff_ref.to(x0.device).float()).abs().mean(dim=1).flatten(1)          # (B, h*w)
+            dm = d.mean(dim=1, keepdim=True)
+            r = (d / dm.clamp_min(1e-8)).clamp(max=8.0)
+            wgt = (1.0 - float(diff_weight)) + float(diff_weight) * r
+            wgt = wgt / wgt.mean(dim=1, keepdim=True).clamp_min(1e-8)
+            wgt = torch.where(dm > 1e-6, wgt, torch.ones_like(wgt))   # identical pair: uniform, never all-zero
+            per = ((pred.float() - target).pow(2).mean(dim=1).flatten(1) * wgt).mean(dim=1)
+        else:
+            per = F.mse_loss(pred.float(), target, reduction="none").mean(dim=(1, 2, 3))
         if self.min_snr_gamma:
             per = per * S.min_snr_weights(ac, self.min_snr_gamma, self.prediction)
-        return per.mean(), {"t": float(t.float().div(S.TRAIN_STEPS).mean())}
+        return per.mean(), {"t": st["t"]}
+
+    # ---- prompt-pair sliders (Fizgig 7.0.1 sdxl/driver.py noise_latents / predict) ------------------------------
+    def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
+        """A noised practice latent, drawn exactly as training_loss draws one (see _draw for the order)."""
+        return self._draw(latents, generator, min_t, max_t)
+
+    def predict(self, dit, state, cond):
+        """The UNet's output (epsilon, or v for a v-pred checkpoint) at a noise_latents() state."""
+        return self._unet(dit, state["xt"], state["steps"], cond)
 
     # ---- sampling -------------------------------------------------------------------------------
     def initial_noise(self, seed, width, height):

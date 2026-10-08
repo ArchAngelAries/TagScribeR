@@ -6,6 +6,8 @@
 # are Fizgig's). Brought level with Fizgig 7.0.1 krea2/driver.py (commit 1c8ec88): the loss in the original's bf16
 # dtype order under autocast, one caption per forward when caching, bf16 INT8 scales, other trainers' LoRA names;
 # compile decided by the shared loop on the empty card (compile_plan, Krea 2's own rule) and applied after the LoRA.
+# Slider hooks from Fizgig 7.0.1 krea2/driver.py (loss_at's diff_ref weighting, noise_latents, predict); noise_latents
+# returns "t" as a float (the bf16 tensor rides as "tt").
 """Krea 2 driver for the training family layer (training/driver.py).
 
 * conditioning: Qwen3-VL-4B, 12 hidden-state layers -> {"hidden_states": (512, 12, 2560), "attention_mask": (512,)}
@@ -14,6 +16,8 @@
 * latents: Qwen-Image VAE (16 ch, /8), normalised with the VAE's latents_mean / std, (16, h, w)
 * training: flow matching, x_t = (1 - t) x0 + t noise, target = noise - x0, logit-normal t with the resolution-
   dependent shift and an optional [min_t, max_t] window (sampling.sample_krea2_timesteps)
+* sliders: image pairs weight each token's error by how much the poles differ there (training_loss diff_ref); prompt
+  pairs go through noise_latents / predict
 * sampling: Euler with the shifted schedule, optional CFG; the Turbo LoRA's schedule pins mu = 1.15
 * LoRA: every Linear of the DiT (264); only the 28 main blocks' Linears are quantised (INT8 / NF4)
 """
@@ -160,33 +164,75 @@ class Krea2Driver(FamilyDriver):
         return out
 
     # ---- training -------------------------------------------------------------------------------
-    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None):
-        """Fizgig krea2/trainer.py compute_loss. latents (B, 16, h, w); cond: hidden_states (B, 512, 12, 2560) and
-        attention_mask (B, 512) as cached."""
-        if refs:
-            raise RuntimeError("Krea 2 has no edit / reference training in this port")
-        device = latents.device
+    _PATCH = 2              # Krea 2's DiT patch (Fizgig noise_latents hard-codes it too: it gets no model)
+
+    @staticmethod
+    def _draw(latents, generator, patch, min_t, max_t):
+        """The noise (CPU fp32), then t: Fizgig's RNG order (krea2/driver.py training_loss / noise_latents)."""
         bsz = latents.shape[0]
-        patch = dit.config.patch
-        noise = torch.randn(latents.shape, generator=generator)                # CPU fp32, then t: Fizgig's RNG order
+        noise = torch.randn(latents.shape, generator=generator)
         n_tokens = (latents.shape[-2] // patch) * (latents.shape[-1] // patch)
         t = S.sample_krea2_timesteps(bsz, n_tokens, "cpu", min_timestep=min_t, max_timestep=max_t, generator=generator)
-        # Fizgig 7.0.1 krea2/driver.py loss_at: the original compute_loss's arithmetic in its dtype order - latent,
-        # noise and t in bf16, the mix and the target in bf16, the DiT under bf16 autocast, the MSE in fp32
+        return noise, t
+
+    @staticmethod
+    def _mix(latents, noise, t):
+        """The original compute_loss's mix in its dtype order: latent, noise and t in bf16. -> (x0, noise, t, x_t)."""
         bf = torch.bfloat16
         x0 = latents.to(dtype=bf)
-        noise = noise.to(device=device, dtype=bf)
-        t_bf = t.to(device).to(bf)
-        t4 = t_bf.view(bsz, 1, 1, 1)
-        noised = (1.0 - t4) * x0 + t4 * noise
+        noise = noise.to(device=latents.device, dtype=bf)
+        t_bf = t.to(latents.device).to(bf)
+        t4 = t_bf.view(-1, 1, 1, 1)
+        return x0, noise, t_bf, (1.0 - t4) * x0 + t4 * noise
+
+    def _forward(self, dit, noised, t_bf, cond):
+        """The DiT's velocity tokens (B, N, 16 * patch^2) for a noised latent at t (B,), under bf16 autocast (Fizgig
+        7.0.1 krea2/driver.py _forward)."""
+        device = noised.device
+        txt, txtmask = self._text(cond, device)
+        img_tokens, pos, mask = S.prepare(noised, txt.shape[1], dit.config.patch, txtmask)
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            return dit(img=img_tokens, context=txt, t=t_bf, pos=pos, mask=mask)
+
+    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None, diff_ref=None,
+                      diff_weight=0.0):
+        """Fizgig krea2/trainer.py compute_loss. latents (B, 16, h, w); cond: hidden_states (B, 512, 12, 2560) and
+        attention_mask (B, 512) as cached. diff_ref / diff_weight: an image-pair slider's other pole (loss_at)."""
+        if refs:
+            raise RuntimeError("Krea 2 has no edit / reference training in this port")
+        patch = dit.config.patch
+        noise, t = self._draw(latents, generator, patch, min_t, max_t)
+        # Fizgig 7.0.1 krea2/driver.py loss_at: the original compute_loss's arithmetic in its dtype order - latent,
+        # noise and t in bf16, the mix and the target in bf16, the DiT under bf16 autocast, the MSE in fp32
+        x0, noise, t_bf, noised = self._mix(latents, noise, t)
         target = S.patchify(noise - x0, patch)                                 # flow-matching velocity, bf16
-        txt, txtmask = S.gather_valid_text(cond["hidden_states"].to(device=device, dtype=bf),
-                                           cond["attention_mask"].to(device))
-        img_tokens, pos, mask = S.prepare(noised, txt.shape[1], patch, txtmask)
-        with torch.autocast(device_type=device.type, dtype=bf):
-            pred = dit(img=img_tokens, context=txt, t=t_bf, pos=pos, mask=mask)
-        loss = F.mse_loss(pred.float(), target.float())
+        pred = self._forward(dit, noised, t_bf, cond)
+        if diff_ref is not None and diff_weight > 0.0:
+            # Fizgig 7.0.1 krea2/driver.py loss_at, image-pair sliders: each token's error weighted by how much the
+            # two poles differ there (r = d / mean d, capped at 8, mixed in by diff_weight, renormalised to mean 1)
+            d = S.patchify((x0 - diff_ref.to(device=x0.device, dtype=torch.bfloat16)).abs(), patch)
+            d = d.float().mean(dim=-1)
+            dm = d.mean(dim=1, keepdim=True)
+            r = (d / dm.clamp_min(1e-8)).clamp(max=8.0)
+            w = (1.0 - float(diff_weight)) + float(diff_weight) * r
+            w = w / w.mean(dim=1, keepdim=True).clamp_min(1e-8)
+            w = torch.where(dm > 1e-6, w, torch.ones_like(w))      # identical pair: uniform, never all-zero
+            se = (pred.float() - target.float()).pow(2).mean(dim=-1)
+            loss = (se * w).mean()
+        else:
+            loss = F.mse_loss(pred.float(), target.float())
         return loss, {"t": float(t_bf.float().mean())}
+
+    # ---- prompt-pair sliders (Fizgig 7.0.1 krea2/driver.py noise_latents / predict) -----------------------------
+    def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
+        """A noised practice latent drawn as training_loss draws one (noise, then t), mixed in bf16."""
+        noise, t = self._draw(latents, generator, self._PATCH, min_t, max_t)
+        _x0, _noise, t_bf, noised = self._mix(latents, noise, t)
+        return {"xt": noised, "tt": t_bf, "t": float(t_bf.float().mean())}
+
+    def predict(self, dit, state, cond):
+        """The DiT's velocity tokens at a noise_latents() state (the space of training_loss's patchified target)."""
+        return self._forward(dit, state["xt"], state["tt"], cond)
 
     # ---- sampling -------------------------------------------------------------------------------
     @torch.no_grad()

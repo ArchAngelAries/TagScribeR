@@ -5,6 +5,8 @@
 # Changes for TagScribeR: still images only. Fizgig builds the LoRA on all 50 blocks and freezes the out-of-window ones
 # per step; here only the window's modules exist (the others would hold zero-initialised, never-updated adapters, so
 # training is identical and the file smaller). The options arrive as configure() keywords (training/params.py H3_*).
+# Slider hooks from Fizgig 7.0.1 minimax/driver.py (_slider_loss, noise_latents, predict), on this port's own
+# draw order (noise, sigma, seeded audio noise) and still-image path.
 """MiniMax H3 driver for the training family layer (training/driver.py).
 
 * conditioning: Qwen3-VL-32B layer-50 hidden states, (L, 5120) bf16, variable length (batch size 1)
@@ -265,17 +267,14 @@ class MiniMaxH3Driver(FamilyDriver):
         return [{"hidden_states": h.to(torch.bfloat16).cpu()} for h in te.encode_batch(list(captions))]
 
     # ---- training -------------------------------------------------------------------------------
-    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None):
-        """Fizgig minimax/trainer.py compute_loss (image path). latents (1, 24, h, w); cond: hidden_states (1, L, 5120).
+    _patch = (1, 2, 2)                   # the DiT's patch and audio row width, read in prepare_training / training_loss
+    _audio_dim = 32                      # (noise_latents gets no model; these are MiniMaxH3Config's defaults)
 
-        noised = (1 - sigma) x0 + sigma noise;  t = 1 - sigma goes to the DiT;  the head predicts x0 - noise, so the
-        target is x0 - noise (sign convention matched to ComfyUI)."""
-        if refs:
-            raise RuntimeError("MiniMax H3 has no reference / edit training in this port")
-        if (min_t > 0.0 or max_t < 1.0) and not self._warned_range:
-            self._warned_range = True
-            logger.warning("[h3] the noise range boxes do nothing for MiniMax H3: it trains on its own schedule (set "
-                           "by Training structure).")
+    def _draw(self, latents, generator, min_t=0.0, max_t=1.0):
+        """compute_loss's training input in this port's draw order: the latent cropped to the patch grid, the noise,
+        the sigma, then the silence rows' audio noise. Fizgig 7.0.1 minimax/driver.py _noised draws the sigma first
+        and lets the model draw the audio noise from the global RNG; this port keeps its own order (and the seeded
+        audio noise), so training_loss and the sliders share one draw. -> state dict."""
         if latents.shape[0] != 1:
             raise ValueError("MiniMax H3 image training is batch size 1")
         device = latents.device
@@ -283,25 +282,86 @@ class MiniMaxH3Driver(FamilyDriver):
         x0 = latents.to(dt).float()                    # Fizgig hands the trainer the cache cast to the training dtype
         if x0.dim() == 4:
             x0 = x0.unsqueeze(2)                       # (1, 24, 1, h, w)
-        _pt, ph, pw = dit.patch_size
+        _pt, ph, pw = self._patch
         hh, ww = (x0.shape[-2] // ph) * ph, (x0.shape[-1] // pw) * pw
         if (hh, ww) != tuple(x0.shape[-2:]):           # an odd latent grid: drop <= 1 row / column so patchify is exact
             x0 = x0[..., :hh, :ww].contiguous()
         noise = torch.randn(x0.shape, generator=generator).to(device)
         sigma = S.sample_sigmas(1, self.shift, generator)
+        if min_t > 0.0 or max_t < 1.0:
+            sigma = min_t + (max_t - min_t) * sigma        # the noise range boxes: Fizgig 7.0.1 rescales into them
         s = sigma.reshape(1, 1, 1, 1, 1).to(device)
-        noised = (1.0 - s) * x0 + s * noise
-        t = (1.0 - sigma).to(device)
-        text = cond["hidden_states"].to(device=device, dtype=dt)
-        a_noise = torch.randn(2 * 2, dit.config.audio_latents_dim, generator=generator).to(device)
-        pred = dit(noised.to(dt), t, text, audio_noise=a_noise)
+        a_noise = torch.randn(2 * 2, self._audio_dim, generator=generator).to(device)
+        return {"x0": x0, "noise": noise, "sigma": sigma, "xt": (1.0 - s) * x0 + s * noise,
+                "tt": (1.0 - sigma).to(device), "a_noise": a_noise, "t": float(sigma[0])}
+
+    def _forward(self, dit, state, cond):
+        """The DiT's raw output (= x0 - noise) at a drawn state, t = 1 - sigma, the silence rows riding along."""
+        dt = self.compute_dtype
+        text = self._text(cond, state["xt"].device)
+        return dit(state["xt"].to(dt), state["tt"], text, audio_noise=state["a_noise"])
+
+    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None, diff_ref=None,
+                      diff_weight=0.0):
+        """Fizgig minimax/trainer.py compute_loss (image path). latents (1, 24, h, w); cond: hidden_states (1, L, 5120).
+
+        noised = (1 - sigma) x0 + sigma noise;  t = 1 - sigma goes to the DiT;  the head predicts x0 - noise, so the
+        target is x0 - noise (sign convention matched to ComfyUI). diff_ref / diff_weight: an image-pair slider's
+        other pole (Fizgig 7.0.1 minimax/driver.py _slider_loss)."""
+        if refs:
+            raise RuntimeError("MiniMax H3 has no reference / edit training in this port")
+        if (min_t > 0.0 or max_t < 1.0) and not self._warned_range:
+            self._warned_range = True
+            logger.info(f"[h3] noise range {min_t:g}-{max_t:g}: the Training structure's schedule is squeezed into it "
+                        f"(Fizgig 7.0.1)")
+        self._patch = tuple(dit.patch_size)
+        self._audio_dim = int(dit.config.audio_latents_dim)
+        st = self._draw(latents, generator, min_t, max_t)
+        x0, noise, sigma = st["x0"], st["noise"], st["sigma"]
+        pred = self._forward(dit, st, cond)
+        if diff_ref is not None and diff_weight > 0.0:
+            return self._slider_loss(pred, x0, noise, diff_ref, diff_weight), {"t": st["t"]}
         loss = F.mse_loss(pred.float(), (x0 - noise).float())
-        info = {"t": float(sigma[0])}
+        info = {"t": st["t"]}
         if self.highnoise_lr != 1.0:
             # Fizgig's noise-band LR: a step drawn in the noisy half trains at this share of the rate (the loop averages
             # the multiplier over an accumulation window and ignores it under Automagic v3)
             info["lr_mult"] = self.highnoise_lr if float(sigma[0]) >= S.LOWNOISE_SIGMA else 1.0
         return loss, info
+
+    def _slider_loss(self, pred, x0, noise, diff_ref, diff_weight):
+        """Fizgig 7.0.1 minimax/driver.py _slider_loss: the plain flow loss with each patch token weighted by how much
+        the two poles differ there (the Krea 2 / Qwen formula on the patch means, one global mean); poles of different
+        sizes weigh every token the same. Like Fizgig's, no noise-band LR multiplier on a slider step."""
+        _pt, ph, pw = self._patch
+        target = (x0 - noise).float()
+        pred = pred.float()
+        ref = diff_ref if diff_ref.dim() == 5 else diff_ref.unsqueeze(2)
+        # the ref through the same training-dtype cast as x0, so an identical pair differs by exactly zero
+        ref = ref[..., :x0.shape[-2], :x0.shape[-1]].to(x0.device).to(self.compute_dtype).float()
+        if ref.shape != x0.shape:            # poles of different sizes: even weights
+            return (pred - target).pow(2).mean()
+        d = (x0 - ref).abs().mean(dim=1)                                       # (1, T, H, W)
+        b, t_, h, w = d.shape
+        d = F.interpolate(F.avg_pool2d(d.reshape(b * t_, 1, h, w), (ph, pw)), scale_factor=(ph, pw),
+                          mode="nearest").reshape(b, t_, h, w)                 # one value per patch token
+        dm = d.mean()
+        if float(dm) > 1e-6:
+            wt = (1.0 - float(diff_weight)) + float(diff_weight) * (d / dm).clamp(max=8.0)
+            wt = wt / wt.mean().clamp_min(1e-8)
+        else:
+            wt = torch.ones_like(d)                                            # identical pair: uniform
+        se = (pred - target).pow(2).mean(dim=1)
+        return (se * wt).mean()
+
+    # ---- prompt-pair sliders (Fizgig 7.0.1 minimax/driver.py noise_latents / predict) ---------------------------
+    def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
+        """A noised practice latent drawn as training_loss draws one (the noise range boxes squeeze the schedule)."""
+        return self._draw(latents, generator, min_t, max_t)
+
+    def predict(self, dit, state, cond):
+        """The DiT's raw output (= x0 - noise, the training target's space) at a noise_latents() state."""
+        return self._forward(dit, state, cond)
 
     # ---- sampling -------------------------------------------------------------------------------
     @torch.no_grad()
@@ -382,6 +442,8 @@ class MiniMaxH3Driver(FamilyDriver):
 
     # ---- the adapter-relative LR ramp (Fizgig option adapter_ramp) -------------------------------------
     def prepare_training(self, dit, net, **_run) -> None:
+        self._patch = tuple(dit.patch_size)            # noise_latents' crop and audio rows (a prompt slider never
+        self._audio_dim = int(dit.config.audio_latents_dim)     # calls training_loss before them)
         self._ramp = _AdapterRamp(net, self.adapter_ramp) if self.adapter_ramp > 0 else None
         if self._ramp is not None:
             logger.info(f"[ramp] adapter-relative LR ON - each step held at {100 * self.adapter_ramp:.3f}% of the "

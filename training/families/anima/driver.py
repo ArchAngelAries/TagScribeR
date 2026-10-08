@@ -1,6 +1,8 @@
 # Behaviour (loop, loss, previews, caching, presets) follows Fizgig (https://github.com/shootthesound/Fizgig, Apache-2.0,
 # Copyright 2026 Peter Neill; see THIRD_PARTY_NOTICES.md) through the generic training layer; Fizgig has NO Anima code,
 # so the model facts come from kohya sd-scripts and diffusion-pipe's Anima support (see description.py).
+# Slider hooks (training_loss diff_ref / diff_weight, noise_latents, predict) ported from Fizgig 7.0.1
+# anima/driver.py, on this port's own draw order and timestep sampler.
 """Anima driver for the training family layer (training/driver.py).
 
 * conditioning (cached per caption, fixed shape): {"prompt_embeds": (512, 1024) bf16 Qwen3-0.6B states, "attn_mask":
@@ -68,22 +70,58 @@ class AnimaDriver(FamilyDriver):
                 for e, qm, ti, tm in zip(embeds, qmask, t5_ids, t5_mask)]
 
     # ---- training -------------------------------------------------------------------------------
-    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None):
-        """latents (B, 16, h, w); cond as cached, batched. Rectified flow: velocity target = noise - x0."""
-        if refs:
-            raise RuntimeError("Anima has no edit / reference training in this port")
-        device = latents.device
+    @staticmethod
+    def _draw(latents, generator, min_t, max_t):
+        """The noise, then t (this port's order; Fizgig 7.0.1 anima/driver.py draws t first). -> (x0, noise, t, x_t)."""
         bsz = latents.shape[0]
         x0 = latents.float()
-        noise = torch.randn(x0.shape, generator=generator).to(device)
-        t = S.sample_training_timesteps(bsz, min_t, max_t, generator).to(device)
+        noise = torch.randn(x0.shape, generator=generator).to(latents.device)
+        t = S.sample_training_timesteps(bsz, min_t, max_t, generator).to(latents.device)
         t4 = t.view(bsz, 1, 1, 1)
-        noised = (1.0 - t4) * x0 + t4 * noise
+        return x0, noise, t, (1.0 - t4) * x0 + t4 * noise
+
+    @staticmethod
+    def _velocity(dit, noised, t, cond):
+        """The DiT's velocity (B, 16, h, w) for a noised latent at t (B,) in [0, 1] (Fizgig 7.0.1 anima/driver.py
+        _velocity; the adapter runs inside the DiT forward here)."""
+        emb, t5_ids, t5_mask, qmask = S._batched(cond, noised.device, dit.dtype)
+        return dit(noised.to(dit.dtype).unsqueeze(2), t, emb, t5_ids, t5_mask, qmask).squeeze(2)
+
+    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None, diff_ref=None,
+                      diff_weight=0.0):
+        """latents (B, 16, h, w); cond as cached, batched. Rectified flow: velocity target = noise - x0. diff_ref /
+        diff_weight: an image-pair slider's other pole."""
+        if refs:
+            raise RuntimeError("Anima has no edit / reference training in this port")
+        x0, noise, t, noised = self._draw(latents, generator, min_t, max_t)
         target = noise - x0
-        emb, t5_ids, t5_mask, qmask = S._batched(cond, device, dit.dtype)
-        pred = dit(noised.to(dit.dtype).unsqueeze(2), t, emb, t5_ids, t5_mask, qmask).squeeze(2)
-        loss = F.mse_loss(pred.float(), target)
+        pred = self._velocity(dit, noised, t, cond)
+        if diff_ref is not None and diff_weight > 0.0:
+            # Fizgig 7.0.1 anima/driver.py training_loss, slider pairs: positions where the two poles differ count
+            # more (Krea 2's formula, as Qwen and SDXL)
+            ref = diff_ref.to(x0.device).float()
+            ref = ref.squeeze(2) if ref.dim() == 5 else ref
+            d = (x0 - ref).abs().mean(dim=1).flatten(1)                                 # (B, h*w)
+            dm = d.mean(dim=1, keepdim=True)
+            r = (d / dm.clamp_min(1e-8)).clamp(max=8.0)
+            w = (1.0 - float(diff_weight)) + float(diff_weight) * r
+            w = w / w.mean(dim=1, keepdim=True).clamp_min(1e-8)
+            w = torch.where(dm > 1e-6, w, torch.ones_like(w))      # identical pair: uniform, never all-zero
+            se = (pred.float() - target).pow(2).mean(dim=1).flatten(1)
+            loss = (se * w).mean()
+        else:
+            loss = F.mse_loss(pred.float(), target)
         return loss, {"t": float(t.mean())}
+
+    # ---- prompt-pair sliders (Fizgig 7.0.1 anima/driver.py noise_latents / predict) -----------------------------
+    def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
+        """A noised practice latent drawn as training_loss draws one (see _draw for the order)."""
+        _x0, _noise, t, noised = self._draw(latents, generator, min_t, max_t)
+        return {"xt": noised, "tt": t, "t": float(t.mean())}
+
+    def predict(self, dit, state, cond):
+        """The DiT's velocity (B, 16, h, w) at a noise_latents() state."""
+        return self._velocity(dit, state["xt"], state["tt"], cond)
 
     # ---- sampling -------------------------------------------------------------------------------
     @torch.no_grad()

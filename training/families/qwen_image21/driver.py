@@ -1,6 +1,7 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/qwen_image21/driver.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: import paths; otherwise unchanged. Fizgig 7.0.1's compile_targets added.
+# Changes for TagScribeR: import paths; otherwise unchanged. Fizgig 7.0.1's compile_targets and slider hooks
+# (training_loss diff_ref / diff_weight, noise_latents, predict) added.
 """Qwen Image 2.1 driver for the training family layer (training/driver.py).
 
 Everything Qwen-specific the generic cache/train/preview code needs, behind the FamilyDriver interface:
@@ -112,7 +113,8 @@ class QwenImage21Driver(FamilyDriver):
         t = math.exp(mu) / (math.exp(mu) + (1.0 / t - 1.0))
         return min_t + (max_t - min_t) * t
 
-    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None):
+    def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None, diff_ref=None,
+                      diff_weight=0.0):
         device = latents.device
         h, w = latents.shape[-2:]
         n = h * w
@@ -130,7 +132,37 @@ class QwenImage21Driver(FamilyDriver):
             raise RuntimeError("edit conditioning without its reference latents - re-cache the latents")
         tt = torch.tensor([t], device=device, dtype=torch.bfloat16)
         pred = dit(xt.to(torch.bfloat16), enc.to(torch.bfloat16), tt, [shapes], img_mask, enc_mask)[:, -n:]
+        if diff_ref is not None and diff_weight > 0.0:
+            # Fizgig 7.0.1 qwen_image21/driver.py training_loss: slider disentanglement, tokens where the two poles
+            # differ count more (Krea 2's formula)
+            d = S.pack((latents.float() - diff_ref.to(device).float()).abs()).mean(dim=-1)     # (1, N)
+            dm = d.mean(dim=1, keepdim=True)
+            r = (d / dm.clamp_min(1e-8)).clamp(max=8.0)
+            w = (1.0 - float(diff_weight)) + float(diff_weight) * r
+            w = w / w.mean(dim=1, keepdim=True).clamp_min(1e-8)
+            w = torch.where(dm > 1e-6, w, torch.ones_like(w))      # identical pair: uniform, never all-zero
+            se = (pred.float() - (noise - x0)).pow(2).mean(dim=-1)
+            return (se * w).mean(), {"t": t}
         return F.mse_loss(pred.float(), noise - x0), {"t": t}
+
+    # ---- prompt-pair sliders (Fizgig 7.0.1 qwen_image21/driver.py noise_latents / predict) ----------------------
+    def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
+        """A noised practice latent, drawn as training_loss draws one (noise, then t)."""
+        h, w = latents.shape[-2:]
+        x0 = S.pack(latents.float())
+        noise = torch.randn(x0.shape, generator=generator).to(latents.device)
+        t = self._sample_t(h * w, generator, min_t, max_t)
+        return {"xt": (1 - t) * x0 + t * noise, "t": t, "hw": (h, w)}
+
+    def predict(self, dit, state, cond):
+        """The DiT's velocity for the image tokens at a noise_latents() state (text conditioning only, no refs)."""
+        h, w = state["hw"]
+        n = h * w
+        device = state["xt"].device
+        enc, img_mask, enc_mask = S.model_inputs(cond["hidden_states"][0], n, device)
+        tt = torch.tensor([state["t"]], device=device, dtype=torch.bfloat16)
+        return dit(state["xt"].to(torch.bfloat16), enc.to(torch.bfloat16), tt, [[(1, h, w)]], img_mask,
+                   enc_mask)[:, -n:]
 
     # ---- sampling -------------------------------------------------------------------------------
     @torch.no_grad()

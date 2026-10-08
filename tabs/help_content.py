@@ -605,7 +605,15 @@ Training a v-pred checkpoint as eps (or the reverse) gives noise.</li>
 convolutions (LoCon)</b>.</li>
 <li>The first run downloads the small CLIP tokenizer files. To stay offline, put them in a
 <code>clip_tokenizer</code> folder next to the checkpoint.</li>
-<li>These presets are community starting points, not recipes measured by Fizgig. Expect to tune them.</li>
+<li><b>Presets:</b> <i>Strong</i> (rank 32, alpha 16) and <i>Standard</i> (rank 16, alpha 8) are Fizgig's measured
+recipe: a flat 5e-5 learning rate, fused AdamW, Adaptive LR off (it reacts to SDXL's noisy per-epoch loss). Fizgig
+measured them on a photographic checkpoint, so on Pony, Illustrious and NoobAI they are a good start rather than a
+measurement. <i>Fast</i>, <i>Cosine</i> and <i>Style</i> are community starting points.</li>
+<li><b>Base precision:</b> bf16, INT8 or 4-bit. Fizgig measured about 10.3 GB peak on bf16, 8.2 GB on INT8 and 7.4 GB
+on 4-bit (including the 1024 px preview), so SDXL trains on 8 GB cards with 4-bit.</li>
+<li><b>LoKR</b> works too; its file uses the same layer names ComfyUI reads for SDXL.</li>
+<li>SDXL 1.0 previews use <b>DPM++ 2M SDE Karras</b> (in ComfyUI: dpmpp_2m_sde / karras), as Fizgig does; the other
+variants keep their own sampler.</li>
 </ul>
 <h3>Anima</h3>
 <ul>

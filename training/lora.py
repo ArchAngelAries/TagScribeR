@@ -277,7 +277,7 @@ class FamilyLoRA:
         `lora_unet_<path with dots as underscores>` (a LoKR: `diffusion_model.<dotted path>`, the LyCORIS standard)."""
         f = self.desc.lora
         if f.kohya:
-            return (f"diffusion_model.{full}" if lokr
+            return (f"diffusion_model.{full}" if lokr and not f.lokr_kohya_stems
                     else f"{f.file_prefix}{self.driver.lora_key_name(full).replace('.', '_')}")
         return f"{f.file_prefix}{full}"
 

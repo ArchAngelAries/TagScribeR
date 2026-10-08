@@ -74,6 +74,9 @@ class LoRAFormat:
     alpha_key: str = "{prefix}.alpha"
     kohya: bool = False               # True = the lora_unet_ convention used by Klein/Krea 2/H3
     file_prefix: str = ""             # what precedes a module path in every key, e.g. "transformer."
+    # a kohya family's LoKR keys on the lora_unet_ stems (SDXL: ComfyUI names its modules by those) instead of LyCORIS'
+    # diffusion_model.<path> (Fizgig 7.0.1 LoRAFormat.lokr_kohya_stems)
+    lokr_kohya_stems: bool = False
     note: str = ""
     source: str = ""
 

@@ -123,8 +123,8 @@ each to `requirements.txt` and the installer in the stage that first needs it.
     start noise and round-up sizes (Krea 2, Klein); INT8 + maximum swap when even that is short; 28 RAW preview steps
     without the Turbo LoRA; fp8's inferred 1 MP memory point until measured; Klein's INT8 text encoder on small cards;
     the `text_embed` / `klein9b` and `krea2` cache names; Klein's extra timestep modes, Preserve Distribution and
-    Attention Mechanism; one t per image at batch size above 1; SDXL's 225-token captions and zeros for an empty
-    caption; the H3 time-embedding grid asset; a Turbo LoRA that matches nothing is a warning, the run continues.
+    Attention Mechanism; one t per image at batch size above 1; SDXL's 225-token captions and the empty caption
+    encoded as text (as ComfyUI / A1111; Fizgig uses zeros); the H3 time-embedding grid asset; a Turbo LoRA that matches nothing is a warning, the run continues.
   - Mirrored from Fizgig (a fix): the fused, once-rounded add for frozen adapters (training/lora.py).
   - Krea 2 extras beyond the audit: port them as their stages come.
 - **README:** remove the roadmap line about a Fizgig tracker (it is a development aid, not a user feature), and keep

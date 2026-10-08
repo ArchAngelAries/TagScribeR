@@ -203,9 +203,10 @@ def test_descriptions_validate_and_are_distinct():
     for d in VARIANTS:
         assert d.validate() == [], d.key
         assert (d.latent_channels, d.spatial_factor, d.bucket_step, d.native_megapixels) == (4, 8, 64, 1.0)
-        assert d.precisions == ("bf16",) and d.modelspec_arch == "stable-diffusion-xl-v1-base"
-        assert d.network_types == ("lora",) and d.ema_default == "0.98" and d.train_memory == {}
-        assert d.lora.kohya and d.lora.file_prefix == "lora_unet_"
+        assert d.precisions == ("bf16", "int8", "nf4") and d.modelspec_arch == "stable-diffusion-xl-v1-base"
+        assert d.network_types == ("lora", "lokr") and d.ema_default == "0.98"                 # Fizgig 7.0.1
+        assert d.train_memory["int8"][0] == ((0.5, 8.2), (1.0, 8.2))
+        assert d.lora.kohya and d.lora.file_prefix == "lora_unet_" and d.lora.lokr_kohya_stems
         assert set(d.family_options) == {"SDXL_MIN_SNR_GAMMA", "SDXL_NOISE_OFFSET", "SDXL_LOCON"} and all(P.family_shows(P.BY_KEY[k], d)
                                                                        for k in d.family_options)
         assert d.pref_for("dit") and d.model_files[1].default_to == "dit" and not d.model_files[1].required
@@ -217,12 +218,16 @@ def test_descriptions_validate_and_are_distinct():
 
 def test_presets_resolve_without_refusals():
     for d in VARIANTS:
-        assert len(d.presets) == 3 and d.presets[0][0].startswith("✨") and "Fast" in d.presets[0][0]
+        assert len(d.presets) == 5 and "Strong (rank 32, alpha 16, 5e-5)" in d.presets[0][0]     # Fizgig's first
+        first = d.presets[0][1]
+        assert (first["NETWORK_DIM"], first["NETWORK_ALPHA"], first["LEARNING_RATE"], first["ADAPTIVE_LR"],
+                first["OPTIMIZER_TYPE"]) == (32, 16, 5e-5, False, "adamw")
+        assert "Fast" in d.presets[2][0]                                                      # TagScribeR's kept
         for name, values in d.presets:
             new, rep = presets.apply(values, P.defaults(), d)
             assert rep.refused == [] and rep.ignored == [], (name, rep.refused, rep.ignored)
             assert new["DATASET_MEGAPIXELS"] == "1.0" and new["FAMILY_EMA"] == "0.98 (recommended)"
-        fast = d.presets[0][1]
+        fast = d.presets[2][1]
         assert fast["ADAPTIVE_LR"] is True and fast["NETWORK_DIM"] == 16
 
 
@@ -234,7 +239,7 @@ def test_model_rows_default_to_the_checkpoint_and_options_reach_train_kwargs(tmp
     kw, _ = pipeline.train_kwargs(PONY, vals, tmp_path / "run", models)
     assert kw["dit_path"] == kw["vae_path"] == kw["te_path"] == "pony.safetensors"
     assert kw["driver_options"] == {"min_snr_gamma": 5.0, "noise_offset": 0.0, "locon": True}
-    assert kw["precision"] == "bf16" and kw["network_dim"] == 16
+    assert kw["precision"] == "auto" and kw["network_dim"] == 16       # bf16 / INT8 / NF4 offered: Auto
     kw, _ = pipeline.train_kwargs(PONY, vals, tmp_path / "run", {**models, "pony_vae": "vae.safetensors"})
     assert kw["vae_path"] == "vae.safetensors" and kw["te_path"] == "pony.safetensors"
     kw, _ = pipeline.train_kwargs(registry.get("qwen_image21"), P.defaults(), tmp_path / "run", {})
@@ -690,3 +695,34 @@ def test_third_party_headers_and_pyflakes_clean():
         n += check(f.read_text(encoding="utf-8"), str(f), Reporter(buf, buf))
     assert n == 0, buf.getvalue()
     assert math.isfinite(0.0)
+
+
+def test_fizgig_sampler_lokr_stems_and_quant_targets(tmp_path):
+    """Fizgig 7.0.1 for SDXL: the DPM++ 2M SDE Karras preview sampler (default on SDXL 1.0, Euler still selectable,
+    v-prediction / zero-terminal-SNR passed through); LoKR written on the lora_unet_ (LDM) stems ComfyUI reads and read
+    back; INT8 / NF4 quantise the transformer Linears but not proj_in / proj_out."""
+    from training.lora import FamilyLoRA
+    assert SDXL.default_sampling().sampler == "dpmpp_2m_sde"
+    for cls in (TinyEpsDriver, TinyVPredDriver):
+        drv = _driver(cls)
+        unet = _tiny_unet()
+        cond = {k: v[0] for k, v in _cond(1).items()}
+        dpm = drv.generate(unet, cond, 64, 64, steps=4, seed=3, options=(("sampler", "dpmpp_2m_sde_karras"),))
+        assert dpm.shape == (1, 4, 8, 8) and torch.isfinite(dpm).all()
+        assert torch.equal(dpm, drv.generate(unet, cond, 64, 64, steps=4, seed=3,
+                                             options=(("sampler", "dpmpp_2m_sde_karras"),)))
+        eul = drv.generate(unet, cond, 64, 64, steps=4, seed=3, options=(("sampler", "euler"),))
+        assert not torch.equal(dpm, eul)
+    drv = _driver()
+    unet = _tiny_unet()
+    q = drv.quant_target_names(unet)
+    assert q and not any(n.endswith(("proj_in", "proj_out")) for n in q)
+    assert any(n.endswith("proj_in") for n in drv.lora_target_names(unet))
+    net = FamilyLoRA(unet, drv)
+    net.add_trainable(4, 4, kind="lokr", factor=4)
+    sd = net.state_dict()
+    assert sd and all(k.startswith("lora_unet_") for k in sd) and any(k.endswith(".lokr_w1") for k in sd)
+    assert any("input_blocks" in k or "output_blocks" in k or "middle_block" in k for k in sd)     # LDM names
+    net.save(str(tmp_path / "lokr.safetensors"))
+    net2 = FamilyLoRA(_tiny_unet(), drv)
+    assert net2.add_file(str(tmp_path / "lokr.safetensors"), "context") == len(net.trainable_modules())

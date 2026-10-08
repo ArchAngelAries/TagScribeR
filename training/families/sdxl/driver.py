@@ -166,9 +166,29 @@ class SDXLDriver(FamilyDriver):
                 out = uncond + cfg * (cond_out - uncond)
             return out
         sampler = str(opts.get("sampler", self.description.default_sampling().sampler if self.description else "euler"))
+        if sampler.startswith("dpmpp_2m_sde"):
+            return self._dpmpp(predict, x.to(device), steps, seed, on_step).cpu()
         return S.euler_sample(predict, x.to(device), steps, prediction=self.prediction,
                               zero_terminal_snr=self.zero_terminal_snr, ancestral=sampler in ("euler_a", "euler_ancestral"),
                               seed=seed, on_step=on_step).cpu()
+
+    def _dpmpp(self, predict, x, steps, seed, on_step):
+        """DPM++ 2M SDE with Karras sigmas through diffusers' DPMSolverMultistepScheduler (Fizgig 7.0.1 sdxl/driver.py
+        _scheduler / generate): the SDE noise from seed + 1; v-prediction and zero-terminal-SNR passed through."""
+        from diffusers import DPMSolverMultistepScheduler
+        sch = DPMSolverMultistepScheduler(
+            beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=1000,
+            prediction_type=self.prediction, algorithm_type="sde-dpmsolver++", solver_order=2, use_karras_sigmas=True,
+            **({"rescale_betas_zero_snr": True, "timestep_spacing": "trailing"} if self.zero_terminal_snr else {}))
+        sch.set_timesteps(int(steps), device=x.device)
+        g = torch.Generator("cpu").manual_seed(int(seed) + 1)
+        x = x * sch.init_noise_sigma
+        for i, t in enumerate(sch.timesteps):
+            if on_step is not None:
+                on_step(i, len(sch.timesteps))
+            out = predict(sch.scale_model_input(x, t), int(t)).to(x.device)
+            x = sch.step(out, t, x, generator=g, return_dict=False)[0]
+        return x
 
     @torch.no_grad()
     def decode(self, vae, latents, width, height):
@@ -181,6 +201,12 @@ class SDXLDriver(FamilyDriver):
         return Image.fromarray((px * 255.0).permute(1, 2, 0).cpu().numpy().round().astype(np.uint8))
 
     # ---- LoRA and the block map -------------------------------------------------------------------
+    def quant_target_names(self, dit):
+        """INT8 / NF4 quantise the transformer Linears the LoRA targets except proj_in / proj_out (Fizgig 7.0.1
+        sdxl/driver.py); the convolutions a LoCon run adds stay bf16."""
+        return [n for n in self.lora_target_names(dit) if not n.endswith(("proj_in", "proj_out"))
+                and isinstance(dit.get_submodule(n), torch.nn.Linear)]
+
     def block_map(self, dit=None):
         """IN01..IN08, MID, OUT00..OUT08 in kohya's block terms; each block lists the target modules it holds under
         the current options (transformer Linears; with LoCon also 3x3 convs). Blocks with no target are left out."""

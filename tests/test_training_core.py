@@ -443,3 +443,26 @@ def test_frozen_loha_and_diffusers_dot_spelling(tiny, tmp_path):
     assert torch.allclose(w(x), want, atol=0.05 * float(want.abs().max()))     # bf16 adapter
     baked, ranks = net.bake(["context"])                 # a LoHa bakes through the SVD path like a LoKR
     assert ranks["blocks.1.lin"] > 0 and ranks["blocks.0.lin"] == 2
+
+
+def test_earlier_exclusions_train_again_and_are_kept_per_family(tmp_path):
+    """Fizgig 7.0.0: an image excluded by an earlier run of the same family is not skipped (it trains, marked as past
+    its recaptions); another family's exclusion does not touch it; an old flat entry counts for every family."""
+    import json as _json
+    from training.loss_logger import PerImageLossWatch
+    ds = tmp_path / "ds"
+    ds.mkdir()
+    for n in ("a", "b", "c"):
+        (ds / f"{n}.txt").write_text(f"caption {n}", encoding="utf-8")
+    keys = [str(ds / n) for n in ("a", "b", "c")]
+    (ds / "tagscriber_excluded.json").write_text(_json.dumps({
+        keys[0]: {"families": {"krea2": {"epoch": 3}}, "caption": "caption a"},
+        keys[1]: {"families": {"klein": {"epoch": 3}}, "caption": "caption b"},
+        keys[2]: {"epoch": 2, "reason": "old flat entry", "caption": "caption c"}}), encoding="utf-8")
+    w = PerImageLossWatch(str(tmp_path / "out"), dataset_dir=str(ds), family="krea2")
+    w.preflight(set(keys))
+    assert not any(w.is_excluded([k]) for k in keys)                     # nothing is skipped from step 1
+    assert w._known_hard == {keys[0], keys[2]}                            # this family's and the old flat entry
+    w._record_exclusion(keys[1], 5)                                       # krea2 excludes b too: both records kept
+    saved = _json.loads((ds / "tagscriber_excluded.json").read_text(encoding="utf-8"))
+    assert set(saved[keys[1]]["families"]) == {"klein", "krea2"}

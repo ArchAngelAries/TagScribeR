@@ -201,7 +201,9 @@ class ProblemImagesDialog(QDialog):
             return
         rep = pipeline.read_problem_images(self.run_dir).get("images", {}).get(k, {})
         v = rep.get("verdict", "")
-        self.lbl_verdict.setText(f"<b>{v}</b>: {VERDICT_HELP.get(v, '')}")
+        self.lbl_verdict.setText(f"<b>{v}</b>: {VERDICT_HELP.get(v, '')}" + (
+            "<br>Excluded by an earlier run: training normally; if it gets stuck again it is excluded at once."
+            if rep.get("earlier_exclusion") else ""))
         img = self._image_path(k)
         if img:
             pm = QPixmap(img)

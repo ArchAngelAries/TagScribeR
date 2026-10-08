@@ -447,6 +447,9 @@ it at the next epoch.</li>
 (×1.1).</li>
 <li><b>Auto-recaption stuck images</b> re-captions them between epochs with the captioner you choose (a local vision
 model or the WD tagger). After two failed attempts an image is set aside.</li>
+<li>Set-aside images are recorded per model family in <code>tagscriber_excluded.json</code> in the dataset folder.
+A later run trains them normally; if one gets stuck again it is set aside at once, without new recaptions. Editing
+its caption clears the record.</li>
 <li>When nothing has improved for a while, the window says training has <b>plateaued</b> and estimates the best
 epoch.</li>
 </ul>

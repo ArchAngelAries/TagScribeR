@@ -53,7 +53,8 @@ class Watch:
             logger.info(f"[auto-recaption] ON - stuck images re-captioned with {self.captioner.get('model')}"
                         + (f" (trigger: '{trigger_word}')" if trigger_word else ""))
         self.watch = PerImageLossWatch(output_dir, apply_lr=per_image_lr, write_jsonl=True,
-                                       dataset_dir=self.image_dir, caption_ext=self.caption_ext)
+                                       dataset_dir=self.image_dir, caption_ext=self.caption_ext,
+                                       family=self.driver.description.key)
         keys = set(dataset.items())
         self.watch.preflight(keys)
         logger.info(f"[loss-watch] per-image loss watch ON (per_image_lr={per_image_lr})")

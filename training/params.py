@@ -306,7 +306,7 @@ PARAMS: tuple[Param, ...] = (
     P("SAMPLE_AT_FIRST", "Preview before training", BOOL, True, "Samples",
       "Render a set before the first step - the base model's look, for comparison.", preset=False),
     P("SAMPLE_CFG_SCALE", "CFG", FLOAT, 0.0, "Samples",
-      "Guidance scale (0 = the family default). Above 1 the negative prompt is used.", preset=False, minimum=0.0,
+      "Guidance scale (0 = the family default; with a speed LoRA, its own CFG). Above 1 the negative prompt is used.", preset=False, minimum=0.0,
       maximum=30.0),
     P("SAMPLE_NEGATIVE", "Negative prompt", TEXT,
       "blurry, low detail, noisy, washed out, oversaturated, distorted anatomy, extra limbs, duplicate objects, text, "

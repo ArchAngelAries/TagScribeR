@@ -107,6 +107,7 @@ def test_full_run_then_pause_and_resume(setup):
     _run_stages(resumed)
     final = rd / "tiny_lora.safetensors"
     assert final.exists()
+    assert (rd / "tiny_lora-000003.safetensors").exists()      # the last epoch under its number too (Fizgig #176)
     from safetensors import safe_open
     with safe_open(str(final), framework="pt") as f:
         md = f.metadata()
@@ -236,3 +237,48 @@ def test_qwen_driver_on_a_tiny_config():
     assert all(p.grad is not None for p in net.parameters())
     out = drv.generate(dit, {"hidden_states": torch.randn(5, 32)}, 64, 64, steps=2, seed=1)
     assert out.shape == (1, S.latent_hw(64, 64)[0] * S.latent_hw(64, 64)[1], 64)
+
+
+class _Rec:
+    """Records the preview's calls on the network, EMA and driver; `fail` names a call that raises."""
+    def __init__(self, fail=None):
+        self.calls, self.fail, self.gen = [], fail, []
+
+    def __getattr__(self, name):
+        def f(*a, **k):
+            self.calls.append((name, a))
+            if name == self.fail:
+                self.fail = None                        # fails once, as a GPU running out of memory would
+                raise RuntimeError("out of memory")
+        return f
+
+
+def _preview(out_dir, fail=None, cfg=1.0, speed_cfg=1.0):
+    from types import SimpleNamespace
+    from training import train
+    net, ema = _Rec(fail), _Rec(fail)
+    gen = []
+    driver = SimpleNamespace(generate=lambda *a, **k: gen.append(k), decode=lambda *a: SimpleNamespace(save=lambda p: None),
+                             block_swap_mode=lambda *a, **k: None)
+    dit = torch.nn.Linear(2, 2)
+    speed = SimpleNamespace(cfg=speed_cfg, sigmas=None, options=())
+    try:
+        train._render_previews(driver, dit, net, None, [{}], str(out_dir), 1, output_name="x", steps=1, cfg=cfg,
+                               neg={"n": 1}, width=8, height=8, seed=1, ema=ema, speed=speed)
+    except RuntimeError:
+        pass
+    return net.calls, ema.calls, gen
+
+
+def test_failed_preview_undoes_exactly_what_it_changed(tmp_path):
+    from training.train import ADAPTER, SPEED
+    net, ema, _ = _preview(tmp_path, fail="move_adapter")         # the speed LoRA's move to the GPU runs out of memory
+    assert ("set_enabled", (ADAPTER, True)) in net and ("set_enabled", (SPEED, False)) in net
+    assert ("move_adapter", (SPEED, "cpu")) in net and ema == []        # EMA was never swapped in: not swapped out
+
+
+def test_turbo_preview_honours_a_higher_cfg(tmp_path):
+    *_, gen = _preview(tmp_path, cfg=1.0, speed_cfg=1.0)
+    assert gen[0]["cfg"] == 1.0 and gen[0]["neg_cond"] is None         # the speed LoRA's own CFG, no negative
+    *_, gen = _preview(tmp_path, cfg=3.0, speed_cfg=1.0)
+    assert gen[0]["cfg"] == 3.0 and gen[0]["neg_cond"] == {"n": 1}     # Fizgig 6.8.1: more CFG, with the negative

@@ -9,6 +9,9 @@
 #   * TagScribeR's dataset layer and captioners; a CPU device for smoke tests; `--config run.json`;
 #   * `driver_options`: family extensions forwarded to driver.configure() (SDXL min-SNR gamma, noise offset, LoCon).
 # The pause contract, state dirs, resume, schedulers, EMA, adapters and file naming are Fizgig's.
+# Brought level with Fizgig 7.0.1 (commit 1c8ec88): the final save also kept under its epoch number (#176); a failed
+# preview undoes exactly what it changed; CFG above 1 honoured with a speed LoRA; preview time left out of the bar's
+# s/it; the resumed schedule fast-forwarded by whole optimizer steps with accumulation; an explicit thumbnail kept.
 """The LoRA trainer for any family, driven through the family's driver.
 
     python -m training.train --config RUN_FOLDER/train_config.json
@@ -24,11 +27,13 @@ Run-folder control files (written by the Train tab):
 """
 import argparse
 import datetime
+import gc
 import json
 import logging
 import math
 import os
 import random
+import shutil
 import sys
 import time
 
@@ -224,30 +229,39 @@ def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_n
     device = next(iter(dit.parameters())).device
     logger.info(f"[sample] epoch {epoch}: rendering {len(encoded)} preview(s)")
     _preview_vram("preview start", reset_peak=True)
-    net.set_enabled(ADAPTER, False)
-    if speed is not None:
-        net.move_adapter(SPEED, device)
-        net.set_enabled(SPEED, True)
-    if ema is not None:
-        ema.swap_in()
-    was_training = dit.training
-    dit.eval()
-    if swapped:
-        driver.block_swap_mode(dit, inference=True)
     paths = []
-    ref_kw = {"refs": [r.to(device) for r in refs]} if refs else {}
+    was_training = dit.training
     park = lowmem and not swapped      # a swapped model is already mostly on CPU; moving it would undo the layout
+    done = set()           # what this preview has changed, so the finally undoes exactly that, wherever it failed
     try:
+        net.set_enabled(ADAPTER, False)
+        done.add("adapter")
+        if speed is not None:
+            done.add("speed")              # before the move: a move that runs out of memory still gets put back
+            net.move_adapter(SPEED, device)
+            net.set_enabled(SPEED, True)
+        if ema is not None:
+            ema.swap_in()
+            done.add("ema")
+        dit.eval()
+        if swapped:
+            done.add("swap")
+            driver.block_swap_mode(dit, inference=True)
+        ref_kw = {"refs": [r.to(device) for r in refs]} if refs else {}
         lats = []
         for i, cond in enumerate(encoded):
             cond = {k: v.to(device) if hasattr(v, "to") else v for k, v in cond.items()}
             if speed is not None:
-                lats.append(driver.generate(dit, cond, width, height, steps=steps, seed=seed + i, cfg=speed.cfg,
+                # the speed LoRA's own CFG, unless the Samples tab asks for more (then the negative applies too)
+                _cfg = cfg if cfg and cfg > 1.0 else speed.cfg
+                lats.append(driver.generate(dit, cond, width, height, steps=steps, seed=seed + i, cfg=_cfg,
+                                            neg_cond=neg if _cfg > 1.0 else None,
                                             sigmas=speed.sigmas, options=speed.options, **ref_kw))
             else:
                 lats.append(driver.generate(dit, cond, width, height, steps=steps, seed=seed + i, cfg=cfg,
                                             neg_cond=neg, **ref_kw))
         if park:                            # never hold the training model and the VAE decode together
+            done.add("lowmem_park")
             _preview_vram("before decode")
             quant.move(dit, "cpu")
             _empty_cache()
@@ -257,17 +271,18 @@ def _render_previews(driver, dit, net, vae, encoded, out_dir, epoch, *, output_n
             driver.decode(vae, lat, width, height).save(p)
             paths.append(p)
     finally:
-        if park:
+        if "lowmem_park" in done:
             quant.move(dit, device)
             _preview_vram("after decode, model restored")
-        if swapped:
+        if "swap" in done:
             driver.block_swap_mode(dit, inference=False)
-        if ema is not None:
+        if "ema" in done:
             ema.swap_out()
-        if speed is not None:
+        if "speed" in done:
             net.set_enabled(SPEED, False)
             net.move_adapter(SPEED, "cpu")
-        net.set_enabled(ADAPTER, True)
+        if "adapter" in done:
+            net.set_enabled(ADAPTER, True)
         dit.train(was_training)
         _empty_cache()
         _preview_vram("after preview cleanup")
@@ -485,7 +500,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         import warnings
         with warnings.catch_warnings():         # fast-forwarding a resumed schedule before the first step
             warnings.simplefilter("ignore", UserWarning)
-            for _ in range(global_step // gradient_accumulation):
+            # the loop steps ceil(steps / accumulation) times per epoch (a partial group flushes at the epoch end)
+            for _ in range(start_epoch * opt_steps_per_epoch if gradient_accumulation > 1 else global_step):
                 scheduler.step()
 
     last_prompt = [None]
@@ -554,10 +570,13 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             previews_on[0] = False
             logger.exception(f"[sample] epoch {epoch}: preview failed - previews are off for the rest of this run; "
                              f"training and saving continue")
+            gc.collect()
             _empty_cache()
             return
         last_prompt[0] = prompts[-1] if prompts else None
-        if checkpoint and paths:
+        # this epoch's checkpoint was saved before its preview existed, with the previous epoch's as its thumbnail:
+        # re-embed its own. An explicit thumbnail (or "off") stays
+        if checkpoint and paths and not (metadata_thumbnail or "").strip():
             refresh_checkpoint_thumbnail(checkpoint, paths[0])
 
     def state(epoch):
@@ -651,7 +670,9 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             prune_state_dirs(output_dir, output_name, keep_last_n_states)
             state_saved = True
         if sample_every_n_epochs and done % sample_every_n_epochs == 0:
+            _tp = time.time()
             previews(done, ckpt)
+            progress.start_t += time.time() - _tp       # the bar's s/it is training speed, not previews
         if os.path.exists(pause_flag) and done < max_train_epochs:
             if state_saved:
                 logger.info(f"[pause] requested - state for epoch {done} already saved; exiting cleanly")
@@ -664,6 +685,9 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     progress.close()
     final = os.path.join(output_dir, f"{output_name}.safetensors")
     save_lora(final, max_train_epochs)
+    # the last epoch under its number too (Fizgig #176): a resumed run that extends this one ends on the same plain
+    # name, and without a numbered copy that epoch would be overwritten and lost
+    shutil.copyfile(final, os.path.join(output_dir, f"{output_name}-{max_train_epochs:06d}.safetensors"))
     if save_state_on_train_end:
         state(max_train_epochs)
     logger.info(f"Training complete -> {final}")

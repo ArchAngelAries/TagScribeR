@@ -386,7 +386,9 @@ changed since the last run.</li>
 <ul>
 <li><b>Pause</b> finishes the current epoch, saves a resumable state and exits cleanly; <b>Resume</b> continues exactly
 there. <b>Stop</b> ends the run immediately (saved epochs stay).</li>
-<li>To train more epochs on a finished LoRA: raise <i>Epochs</i>, click <i>Latest</i> under Resume, Start.</li>
+<li>To train more epochs on a finished LoRA: raise <i>Epochs</i>, click <i>Latest</i> under Resume, Start. The
+finished LoRA is also saved under its epoch number (for example <code>name-000030.safetensors</code>), so extending a
+run never overwrites its last epoch.</li>
 <li>Start while a run is going <b>queues</b> the current settings; queued runs start one after another. The queue is
 never started automatically when the app opens.</li>
 <li><b>Last run</b> reloads the settings of the most recent run.</li>
@@ -453,7 +455,11 @@ will do.</li>
 <li>On cards under 20 GB the preview size is capped at 768 px and the model steps aside for decoding.</li>
 <li>A failed preview (e.g. out of memory) turns previews off for the rest of the run. Training continues.</li>
 <li><b>Preview override…</b> renders a different prompt at the next preview round without restarting.</li>
-<li>Each saved checkpoint carries its own epoch's preview as its thumbnail (shown by ComfyUI's model browser).</li>
+<li>Each saved checkpoint carries its own epoch's preview as its thumbnail (shown by ComfyUI's model browser),
+unless you set a thumbnail yourself in the Metadata section.</li>
+<li>With a <b>Turbo / speed LoRA</b> the preview uses the LoRA's own CFG (usually 1). Set CFG above 1 to guide it
+more; the negative prompt then applies too.</li>
+<li>Preview time is left out of the speed shown on the progress bar.</li>
 <li>A family's <b>Turbo LoRA</b> (if you set its file) makes previews much faster. Strength 0 turns it off; -1 uses the
 family default.</li>
 </ul>

@@ -551,11 +551,26 @@ supported here.</li>
 training adapter. <i>Get</i> opens each download page.</li>
 <li><b>Memory:</b> loading the DiT needs about 22 GB of free system RAM. Caching captions needs about 15 GB of free
 VRAM; with less, the text encoder streams from system RAM and is slower.</li>
-<li>The default mode trains blocks 20 to 49. <b>Low-noise %</b> and the training mode are under <i>Show all
-settings</i>.</li>
-<li>The presets use the Automagic v3 optimizer, which sets its own learning rate, so Adaptive LR is off for them.</li>
-<li>Previews run at 20 steps on the training model. Fizgig's Turbo-LoRA previews, HQQ 4-bit and the high-noise
-LR dial aren't available yet.</li>
+<li><b>Training base</b>: the standard First/last frame (fl2va) model, or <i>Reference (ref2va)</i> if the LoRA will
+be used in ComfyUI's Reference-to-Video workflow (set the optional reference DiT file).</li>
+<li><b>Training adapter</b>: <i>Circlestone</i> (the default, best for photos; one file for both bases),
+<i>Ostris</i> (learns a video look faster; TagScribeR picks its fl2va or ref2va file to match the base), or
+<i>Off</i>. It is on for every training step, off for previews and never saved into your LoRA.</li>
+<li><b>Training structure</b>: <i>Likeness and Style</i> puts 60% of the steps on nearly clean images (the tuned
+default); <i>Model default</i> is the reference trainer's 8%, weighted to movement; <i>Custom</i> uses your own
+<i>Clean-end share</i>.</li>
+<li><b>Training mode</b>: <i>Default</i> trains blocks 20 to 49 (best likeness, quickest steps); <i>More Blocks</i>
+6 to 49; <i>Off</i> trains the blocks you type in <i>Blocks to train</i> (numbers and ranges, or Fizgig's
+<code>h3blk_N</code> ids).</li>
+<li>Under <i>Show all settings</i>: <b>Medium to High Noise LR</b> (the learning rate of the noisy-half steps; leave
+at 100), <b>Adapter-relative LR</b> (the learning rate becomes a ceiling the run climbs toward as the LoRA grows; set
+the rate where you want to end up) and <b>Train the text token refiner</b> (recommended off; it trains only in mode
+Off with every block). The first two do nothing with Automagic v3, which sets its own rate.</li>
+<li>The presets are Fizgig's: Automagic v3 (it sets its own learning rate, so Adaptive LR is off), caption dropout
+0.05 and EMA 0.98. EMA also offers <b>Short run</b>, which averages about the last quarter of a short run. Other
+optimizers get Fizgig's H3 weight decay of 1e-4. The LoRA trains in bf16, as in Fizgig.</li>
+<li>Previews run at 20 steps on the training model, 768 x 768. HQQ 4-bit, the 66 GB bf16 DiT, clips, sound,
+distillation and sliders aren't available yet.</li>
 </ul>
 <h3>FLUX.2 Klein Base 9B</h3>
 <ul>

@@ -150,8 +150,12 @@ The options as originally presented:
   ports Fizgig's H3 trainer for image LoRAs: the flow-matching objective (target x0 minus noise), the low-noise %
   dial, the 20-49 block window and training modes, the frozen training adapter, caption dropout 0.05, EMA,
   Automagic v3, kohya keys, the three presets, and INT8 (the checkpoint's own ConvRot storage) or NF4 bases.
-  - *Not ported yet:* clips, audio and voice items, RefMods, multi-concept, distillation, the rotation fine-tune,
-    Turbo-LoRA previews, HQQ 4-bit, the high-noise LR dial, the adapter ramp and the movement limiter.
+  - *Stage 4 of the port plan (2026-10-08, unit-tested only):* Fizgig 7.0.1's `H3_*` options (Training base
+    fl2va / ref2va, Training structure, Medium to High Noise LR, the Circlestone / Ostris / Off adapter choice, the
+    adapter-relative LR ramp, the token refiner), its block ids, run metadata, bf16 adapters, weight decay, EMA Short
+    run, 768 previews and the Turbo-LoRA previews.
+  - *Not ported yet:* clips, audio and voice items, RefMods, multi-concept, distillation, sliders, the rotation
+    fine-tune, HQQ 4-bit and the bf16 DiT. (Fizgig retired the movement limiter.)
   - *Code provenance:* Fizgig's headers describe its H3 model and VAE as ports of ComfyUI's code (GPL-3.0). The
     owner decided to include it (2026-10-05); `THIRD_PARTY_NOTICES.md` records the provenance. This is separate
     from the model weights' licence.

@@ -37,8 +37,9 @@ def _values(tmp_path, **over):
     return v
 
 
-def _run_stages(run, *, device="cpu"):
-    """Run a built run's stages in-process (the same argv the Train tab launches as child processes)."""
+def _run_stages(run, *, device="cpu", **train_over):
+    """Run a built run's stages in-process (the same argv the Train tab launches as child processes); train_over
+    overrides entries of the frozen train config."""
     from training import cache, train
     for _label, argv in run.stages:
         mod, args = argv[2], argv[3:]
@@ -48,6 +49,7 @@ def _run_stages(run, *, device="cpu"):
             cfg_path = args[args.index("--config") + 1]
             cfg = json.loads(Path(cfg_path).read_text(encoding="utf-8"))
             cfg["train"]["device"] = device
+            cfg["train"].update(train_over)
             Path(cfg_path).write_text(json.dumps(cfg), encoding="utf-8")
             try:
                 train.main(args)
@@ -160,6 +162,19 @@ def test_accumulation_lokr_and_flat_lr(setup):
         md = f.metadata()
     assert any(k.endswith(".lokr_w1") for k in keys) and md["ss_lokr_factor"] == "4"
     assert not pipeline.samples(run.run_dir)
+
+
+def test_ema_short_run_sizes_the_decay_to_the_run(setup, caplog):
+    """Fizgig 7.0.1's EMA Short run (H3's): decay 1 - 4/steps, fast ramp."""
+    desc, data, models, tmp = setup
+    vals = _values(tmp, MAX_TRAIN_EPOCHS=2, ADAPTIVE_LR=False, SAMPLE_ENABLED=False, LORA_NAME="short_ema")
+    run = pipeline.build_run(desc, vals, data, models)
+    with caplog.at_level("INFO"):
+        _run_stages(run, ema_decay="short")
+    line = next(r.getMessage() for r in caplog.records if "SHORT-RUN" in r.getMessage())
+    steps = int(line.split("mode: ")[1].split(" steps")[0])
+    assert f"decay {max(0.5, 1 - 4 / steps):.3f}" in line
+    assert (run.run_dir / "short_ema.safetensors").is_file()
 
 
 def test_batching_family_and_caption_extension(tmp_path):

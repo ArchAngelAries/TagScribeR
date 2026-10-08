@@ -1,11 +1,10 @@
-# Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/minimax/trainer.py (compute_loss,
-# sample_sigmas, parse_block_spec, the LoRA target patterns, the Fast / More Blocks training modes),
-# minimax/caching.py and minimax/sampling.py.
+# Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/minimax/driver.py (Fizgig 7.0.1's MiniMaxDriver:
+# the options, _shift, the high-noise LR, the adapter ramp, run_metadata, block_map, lora_target_names), minimax/common.py
+# (compute_loss, sample_sigmas, parse_block_spec, AdapterRamp), minimax/caching.py and minimax/sampling.py.
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: Fizgig has no FamilyDriver for MiniMax H3 - this class puts its H3 code behind the family
-# interface (loading, quantisation and the LoRA come from the generic layer; the objective, conditioning and sampler are
-# Fizgig's). Fizgig builds the LoRA on all 50 blocks and freezes the out-of-window ones per step; here only the window's
-# modules exist (the others would hold zero-initialised, never-updated adapters, so training is identical).
+# Changes for TagScribeR: still images only. Fizgig builds the LoRA on all 50 blocks and freezes the out-of-window ones
+# per step; here only the window's modules exist (the others would hold zero-initialised, never-updated adapters, so
+# training is identical and the file smaller). The options arrive as configure() keywords (training/params.py H3_*).
 """MiniMax H3 driver for the training family layer (training/driver.py).
 
 * conditioning: Qwen3-VL-32B layer-50 hidden states, (L, 5120) bf16, variable length (batch size 1)
@@ -31,6 +30,15 @@ _BLOCK_MODULES = ("attn.qkv_proj", "attn.out_proj", "mlp.fc1", "mlp.fc2")
 LIKENESS_BLOCKS = "20-49"        # Fizgig MINIMAX_LIKENESS_BLOCKS: "Default" (fast) mode
 FULL_MODEL_BLOCKS = "6-49"       # Fizgig MINIMAX_FULL_MODEL_BLOCKS: "More Blocks" mode (blocks 0-5 deform anatomy)
 DEFAULT_LOWNOISE_PCT = 60.0      # the preset value (lora_trainer_gui.py settings default "60")
+STRUCTURE_PCT = {"likeness": 60.0, "model": 8.0}     # Fizgig families/minimax.py _STRUCTURE (Custom: the box)
+N_REFINER = 2                    # MiniMaxH3Config.token_refiner_num_layers
+
+
+def _block_index(token):
+    """A block id as Fizgig 7.0.1 names it ('h3blk_N', the old Repair Studio's; 'block_N', this app's earlier name)
+    -> N, or None."""
+    m = re.fullmatch(r"(?:h3blk|block)_(\d+)", str(token).strip())
+    return int(m.group(1)) if m else None
 
 
 def parse_block_spec(spec, num_blocks: int = None):
@@ -45,7 +53,9 @@ def parse_block_spec(spec, num_blocks: int = None):
         if not chunk:
             continue
         m = re.fullmatch(r"(\d+)\s*-\s*(\d+)", chunk)
-        if m:
+        if _block_index(chunk) is not None:
+            out.add(_block_index(chunk))
+        elif m:
             lo, hi = int(m.group(1)), int(m.group(2))
             if lo > hi:
                 raise ValueError(f"range runs backwards: {chunk!r}")
@@ -103,8 +113,12 @@ class MiniMaxH3Driver(FamilyDriver):
 
     def __init__(self):
         self.lownoise_pct = DEFAULT_LOWNOISE_PCT
+        self.highnoise_lr = 1.0
         self.likeness_mode = "default"
         self.blocks_spec = "all"
+        self.adapter_ramp = 0.0
+        self.train_refiner = False
+        self._ramp = None
         self._warned_range = False
 
     # ---- run options (driver_options: the Train tab's H3 dials) --------------------------------------------------
@@ -120,18 +134,52 @@ class MiniMaxH3Driver(FamilyDriver):
         return "default"
 
     def configure(self, **options) -> None:
-        if "lownoise_pct" in options:
-            pct = float(options["lownoise_pct"])
+        """The Train tab's H3 options (Fizgig 7.0.1 MiniMaxDriver.set_options / _shift / training_loss / _ramp_setup):
+        structure + lownoise_pct (the clean-end share), highnoise_lr_pct, likeness_mode, blocks, adapter_ramp,
+        train_token_refiner."""
+        pct = options.get("lownoise_pct", self.lownoise_pct)
+        if "structure" in options:
+            word = str(options["structure"] or "").split()[0].lower() if str(options["structure"] or "").strip() \
+                else "likeness"
+            pct = STRUCTURE_PCT.get(word, pct)
+        if "lownoise_pct" in options or "structure" in options:
+            pct = float(str(pct).rstrip("%"))
             if S.lownoise_to_shift(pct) is None:
-                raise ValueError(f"Low-noise training % must be strictly between 0 and 100 (got {pct:g})")
+                raise ValueError(f"The clean-end share must be strictly between 0 and 100 % (got {pct:g})")
             self.lownoise_pct = pct
+        if "highnoise_lr_pct" in options:
+            raw = options["highnoise_lr_pct"]
+            v = 100.0 if raw in (None, "") else float(str(raw).rstrip("%"))
+            self.highnoise_lr = max(0.0, min(1.0, v / 100.0))           # Fizgig clamps to 0-100 %
         if "likeness_mode" in options:
             self.likeness_mode = self._mode(options["likeness_mode"])
         if "blocks" in options:
-            self.blocks_spec = str(options["blocks"] or "all").strip() or "all"
+            self.blocks_spec = str(options["blocks"] or "all").split("·")[0].strip() or "all"
+        if "adapter_ramp" in options:
+            tok = str(options["adapter_ramp"] or "").split()
+            try:
+                self.adapter_ramp = max(0.0, float(tok[0])) if tok else 0.0
+            except ValueError:
+                self.adapter_ramp = 0.0                                 # "Off"
+        if "train_token_refiner" in options:
+            self.train_refiner = str(options["train_token_refiner"]).strip().lower() in ("1", "true", "yes", "on")
         self._block_index = None
-        logger.info(f"[h3] low-noise {self.lownoise_pct:g}% -> schedule shift {self.shift:.4g}; training mode "
-                    f"{self.likeness_mode}: blocks {self.trained_blocks_spec()}")
+        self.trained_blocks()            # a bad block list fails here, before anything loads
+        logger.info(f"[h3] clean-end share {self.lownoise_pct:g}% -> schedule shift {self.shift:.4g}; training mode "
+                    f"{self.likeness_mode}: blocks {self.trained_blocks_spec()}"
+                    + (f"; steps above sigma 0.5 at {self.highnoise_lr * 100:.0f}% of the LR"
+                       if self.highnoise_lr != 1.0 else "")
+                    + (f"; adapter-relative LR {self.adapter_ramp:g}" if self.adapter_ramp else "")
+                    + ("; the token refiner trains" if self.trains_refiner() else ""))
+
+    def trains_refiner(self) -> bool:
+        """Fizgig: the refiner is a LoRA target with train_token_refiner=1, but a routed step (Default mode) freezes it
+        and a --train_blocks list (More Blocks, a typed list) leaves it out - so it trains in mode Off over every
+        block, or when the typed list names h3_rf_N."""
+        if not self.train_refiner or self.likeness_mode != "off":
+            return False
+        spec = self.blocks_spec.lower()
+        return spec == "all" or "h3_rf_" in spec
 
     @property
     def shift(self) -> float:
@@ -151,7 +199,8 @@ class MiniMaxH3Driver(FamilyDriver):
         elif self.blocks_spec.lower() == "all":
             idx = list(range(n))
         else:
-            idx = parse_block_spec(self.blocks_spec, n)
+            spec = ",".join(t for t in self.blocks_spec.split(",") if not t.strip().lower().startswith("h3_rf_"))
+            idx = parse_block_spec(spec, n)
         return [i for i in idx if i < n]
 
     def trained_blocks_spec(self) -> str:
@@ -225,7 +274,7 @@ class MiniMaxH3Driver(FamilyDriver):
         if (min_t > 0.0 or max_t < 1.0) and not self._warned_range:
             self._warned_range = True
             logger.warning("[h3] the noise range boxes do nothing for MiniMax H3: it trains on its own schedule (set "
-                           "by Low-noise training %).")
+                           "by Training structure).")
         if latents.shape[0] != 1:
             raise ValueError("MiniMax H3 image training is batch size 1")
         device = latents.device
@@ -246,7 +295,12 @@ class MiniMaxH3Driver(FamilyDriver):
         a_noise = torch.randn(2 * 2, dit.config.audio_latents_dim, generator=generator).to(device)
         pred = dit(noised.to(dt), t, text, audio_noise=a_noise)
         loss = F.mse_loss(pred.float(), (x0 - noise).float())
-        return loss, {"t": float(sigma[0])}
+        info = {"t": float(sigma[0])}
+        if self.highnoise_lr != 1.0:
+            # Fizgig's noise-band LR: a step drawn in the noisy half trains at this share of the rate (the loop averages
+            # the multiplier over an accumulation window and ignores it under Automagic v3)
+            info["lr_mult"] = self.highnoise_lr if float(sigma[0]) >= S.LOWNOISE_SIGMA else 1.0
+        return loss, info
 
     # ---- sampling -------------------------------------------------------------------------------
     @torch.no_grad()
@@ -282,22 +336,113 @@ class MiniMaxH3Driver(FamilyDriver):
                 torch.cuda.empty_cache()
         return Image.fromarray((px * 255.0).permute(1, 2, 0).cpu().float().numpy().round().astype(np.uint8))
 
+    # ---- the adapter-relative LR ramp (Fizgig option adapter_ramp) -------------------------------------
+    def prepare_training(self, dit, net, **_run) -> None:
+        self._ramp = _AdapterRamp(net, self.adapter_ramp) if self.adapter_ramp > 0 else None
+        if self._ramp is not None:
+            logger.info(f"[ramp] adapter-relative LR ON - each step held at {100 * self.adapter_ramp:.3f}% of the "
+                        f"adapter's current size, starting at 10% of the learning rate")
+
+    def step_policy(self, batch, epoch):
+        return False, (self._ramp.mult if self._ramp is not None else 1.0)
+
+    def after_optimizer_step(self) -> None:
+        if self._ramp is not None:
+            self._ramp.step()
+
+    def after_epoch(self, epoch, steps_remaining) -> None:
+        if self._ramp is not None:
+            logger.info(self._ramp.epoch_report())
+
+    def run_metadata(self) -> dict:
+        """Fizgig 7.0.1 MiniMaxDriver.run_metadata for a still-image run: the clip, voice and distillation entries
+        read as off, as they do in Fizgig on a folder of stills."""
+        blocks = self.trained_blocks_spec() if self.likeness_mode == "default" else "all"
+        md = {"ss_visual_stop": "off", "ss_audio_stop": "off",
+              "ss_photo_blocks": blocks, "ss_clip_blocks": blocks, "ss_audio_blocks": blocks, "ss_tread": "off",
+              "ss_clip_still_as_photo": "0", "ss_distill": "off",
+              "ss_adapter_ramp": f"{self.adapter_ramp:g}" if self.adapter_ramp else "off",
+              "ss_train_token_refiner": "1" if self.trains_refiner() else "0",
+              "ss_timestep_density": f"{float(self.shift):g}"}
+        if self.likeness_mode != "default":
+            idx = self.trained_blocks()
+            if len(idx) < self.description.n_blocks or self.trains_refiner():
+                md["ss_train_blocks"] = ",".join([f"h3blk_{i}" for i in idx] +
+                                                 ([f"h3_rf_{i}" for i in range(N_REFINER)] if self.trains_refiner()
+                                                  else []))
+        return md
+
     # ---- LoRA and the block map -------------------------------------------------------------------
     def block_map(self, dit=None):
-        """All 50 blocks (4 Linears each) - the model's map, whatever the training mode trains."""
+        """The 50 blocks (4 Linears each) and the two token-refiner blocks - the model's map, whatever the training
+        mode trains. Ids are Fizgig 7.0.1's (the old Repair Studio's): h3blk_N, h3_rf_N."""
         names = {n for n, _ in dit.named_modules()} if dit is not None else None
-        blocks = []
-        for i in range(self._n_blocks(dit)):
-            mods = [f"blocks.{i}.{m}" for m in _BLOCK_MODULES]
-            blocks.append(Block(f"block_{i}", f"Block {i}", [m for m in mods if names is None or m in names]))
-        return [BlockGroup("Blocks", blocks)]
+
+        def keep(mods):
+            return [m for m in mods if names is None or m in names]
+        main = [Block(f"h3blk_{i}", f"Block {i}", keep([f"blocks.{i}.{m}" for m in _BLOCK_MODULES]))
+                for i in range(self._n_blocks(dit))]
+        n_rf = len(dit.token_refiner.blocks) if dit is not None else N_REFINER
+        refiner = [Block(f"h3_rf_{i}", f"Refiner {i}", keep([f"token_refiner.blocks.{i}.{m}" for m in _BLOCK_MODULES]))
+                   for i in range(n_rf)]
+        return [BlockGroup("Blocks", main), BlockGroup("Token Refiner", refiner)]
 
     def lora_target_names(self, dit):
-        """The trainable adapters' Linears: the training mode's blocks only (Default 20-49). The frozen training adapter
-        still reaches every block it adapts."""
+        """The trainable adapters' Linears: the training mode's blocks only (Default 20-49), and the token refiner when
+        it trains (trains_refiner). The frozen training adapter still reaches every block it adapts."""
+        groups = self.block_map(dit)
         keep = set(self.trained_blocks(self._n_blocks(dit)))
-        return [m for g in self.block_map(dit) for i, b in enumerate(g.blocks) if i in keep for m in b.modules]
+        out = [m for i, b in enumerate(groups[0].blocks) if i in keep for m in b.modules]
+        if self.trains_refiner():
+            out += [m for b in groups[1].blocks for m in b.modules]
+        return out
 
     def quant_target_names(self, dit):
-        """Every block Linear is quantised (the base is frozen everywhere), not just the trained window."""
-        return [m for g in self.block_map(dit) for b in g.blocks for m in b.modules]
+        """Every main-block Linear is quantised (the base is frozen everywhere), not just the trained window."""
+        return [m for b in self.block_map(dit)[0].blocks for m in b.modules]
+
+
+class _AdapterRamp:
+    """Fizgig minimax/common.py AdapterRamp, as its driver builds it (_ramp_setup: target R, start at 10% of the LR):
+    each step held at a constant fraction of the adapter's current size ||dW||, so the rate climbs toward the configured
+    ceiling as the adapter grows. The size reads the family LoRA's trainable adapters (Fizgig _adapter_size)."""
+
+    def __init__(self, net, target_rel):
+        self.net, self.target, self.mult = net, float(target_rel), 0.1
+        self._smooth = self._prev = None
+
+    @torch.no_grad()
+    def _size(self) -> float:
+        from training.lora import TRAINABLE
+        tot = 0.0
+        for w in self.net.wrapped.values():
+            m = w.adapters[TRAINABLE] if TRAINABLE in w.adapters else None
+            if m is None:
+                continue
+            if hasattr(m, "lokr_w1"):
+                n = (m.lokr_w1.float().norm() * m.lokr_w2.float().norm()) ** 2
+            else:
+                a, b = m[0].weight.float(), m[1].weight.float()
+                n = torch.trace((a @ a.T) @ (b.T @ b)).clamp(min=0)
+            tot += float(n) * w.scales[TRAINABLE] ** 2
+        return tot ** 0.5
+
+    @torch.no_grad()
+    def step(self) -> float:
+        cur = self._size()
+        if self._prev is None or cur <= 1e-9:
+            self._prev = cur
+            return self.mult
+        rel = max(0.0, cur - self._prev) / cur      # this step as a fraction of what exists
+        self._prev = cur
+        self._smooth = rel if self._smooth is None else 0.9 * self._smooth + 0.1 * rel
+        if self._smooth > 1e-12:
+            # Fizgig's damped per-step gain caps: up at most 1.01x, down at most 0.95x, floor 2% of the LR
+            err = self._smooth / self.target
+            self.mult = min(1.0, max(0.02, self.mult * min(1.01, max(0.95, err ** -0.3))))
+        return self.mult
+
+    def epoch_report(self) -> str:
+        rel = self._smooth or 0.0
+        return (f"[ramp] adapter ||dW||={self._prev or 0:.2f}, growing {100 * rel:.3f}%/step (target "
+                f"{100 * self.target:.3f}%) - LR at {100 * self.mult:.0f}% of the configured ceiling")

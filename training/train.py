@@ -54,6 +54,11 @@ logger = logging.getLogger("training.train")
 ADAPTER = "training_adapter"
 CONTEXT = "context"
 SPEED = "speed_lora"
+
+
+def _short_ema(ema_decay) -> bool:
+    """EMA "Short run" (ema_decay "short"): the decay is sized to the run (Fizgig 7.0.1, H3's)."""
+    return str(ema_decay).lower().startswith("short")
 TRAINABLE_PREVIEW = "preview_lora"     # the epoch's LoRA, frozen on a preview checkpoint
 PAUSE_FILE = ".pause_requested"
 OVERRIDE_FILE = ".sample_override.json"
@@ -465,7 +470,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         own = None if device.type == "cpu" else driver.plan_run(precision, blocks_to_swap, run=dict(
             dit_path=dit_path, network_type=network_type, network_dim=network_dim, lokr_factor=lokr_factor,
             optimizer_type=optimizer_type, training_adapter=training_adapter, context_lora_path=context_lora_path,
-            ema_decay=ema_decay, batch_size=dataset.batch_size, megapixels=mp))
+            ema_decay=0.98 if _short_ema(ema_decay) else ema_decay, batch_size=dataset.batch_size, megapixels=mp))
         if device.type == "cpu":
             precision, blocks_to_swap, why = (desc.precisions[0], 0, "CPU run: first precision, no swap")
         elif own is not None:
@@ -622,7 +627,16 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     adaptive = (AdaptiveLR(adaptive_lr_min, adaptive_lr_max, clip_signal=desc.adaptive_lr_clip_signal)
                 if adaptive_lr else None)
     ema = None
-    if ema_decay and ema_decay > 0:
+    if _short_ema(ema_decay):
+        # Fizgig 7.0.1's short-run mode (from H3): the normal ramp never reaches 0.98 on a short run, so the window is
+        # sized to the run instead - decay 1 - 4/steps (about the last quarter), fast ramp
+        from training.ema import EMAWeights
+        _total = max(1, int(dataset.num_items) * max(1, int(max_train_epochs)))
+        ema_decay = min(0.995, max(0.5, 1.0 - 4.0 / _total))
+        ema = EMAWeights(net.trainable_modules(), ema_decay, ramp=2)
+        logger.info(f"[ema] SHORT-RUN mode: {_total} steps -> decay {ema_decay:.3f} (window ~ a quarter of the run), "
+                    f"fast ramp - checkpoints and previews use the average")
+    elif ema_decay and float(ema_decay) > 0:
         from training.ema import EMAWeights
         ema = EMAWeights(net.trainable_modules(), float(ema_decay))
         logger.info(f"[ema] ON at decay {ema_decay:g} - checkpoints and previews use the running average")

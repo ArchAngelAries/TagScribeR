@@ -190,7 +190,7 @@ def test_import_fizgig_preset_file(qwen, tmp_path):
     assert name == "From Fizgig"
     new, rep = presets.apply(tp.load(name), P.defaults(), qwen)
     assert new["NETWORK_DIM"] == 8 and new["ADAPTIVE_LR"] is True
-    assert "MINIMAX_TREAD" in rep.ignored
+    assert "H3_TREAD" in rep.ignored                   # the old MiniMax key, read under its Fizgig 7.0.1 name
 
 
 def test_last_run_snapshot_records_family():

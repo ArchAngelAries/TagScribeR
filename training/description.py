@@ -131,7 +131,18 @@ class FamilyDescription:
     modelspec_arch: str = ""          # SAI modelspec.architecture, e.g. "Qwen-Image-2.1"
     training_adapter: str = ""        # pref key of the family's frozen training adapter ("" = none)
     training_adapter_note: str = ""   # one line for the Training tab under the adapter toggle
+    # a training adapter picked by a choice parameter instead of the on / off tick (MiniMax H3's H3_ADAPTER, Fizgig
+    # 7.0.1): the parameter key, and per choice (its first word) (pref key on the standard base, pref key on the
+    # alternative base); a choice not listed (Off) trains without one
+    adapter_choice: str = ""
+    adapter_files: tuple = ()
+    # an alternative training base picked by a choice parameter (MiniMax H3's H3_TRAIN_BASE, Fizgig --dit=pref:...):
+    # (parameter key, the first word of the choice that picks it, the pref key of its file)
+    alt_base: tuple = ()
+    # the trainable adapter's dtype ("fp32", or "bf16" where the family's own trainer trained in bf16: MiniMax H3)
+    trainable_dtype: str = "fp32"
     ema_default: str = ""             # default EMA decay for the Training tab ("0.98", "Off"); "" = no EMA control
+    ema_short_run: bool = False       # the EMA choice also offers Short run (the decay sized to the run - H3's)
     implementation: str = ""          # SAI modelspec.implementation (reference repo URL)
     precisions: tuple = ("bf16",)     # base precisions offered for training: any of "bf16", "int8", "nf4"
     # measured training memory for the Auto plan: {precision: (peak GB with no block swap, GB saved per swapped
@@ -192,6 +203,9 @@ class FamilyDescription:
     train_preview_checkpoint: bool = False
     preview_checkpoint_sampling: Optional[SamplingSettings] = None
     preview_speed_steps: int = 0      # preview steps with it (0 = the SpeedLoRA's own)
+    # the Samples tab sets the speed LoRA's steps in a box of their own (FAMILY_TURBO_STEPS; MiniMax H3's "N steps
+    # at M%" row) and the Steps box stays the plain-model count
+    samples_turbo_pace: bool = False
     preview_speed_strength: Optional[float] = None   # preview strength for it (None = the SpeedLoRA's own; 0 = off
     # by default: previews render without it until the Samples tab's Turbo strength is raised)
     # (steps, strength) preview defaults an older release shipped; the Samples tab replaces them with the current
@@ -301,6 +315,11 @@ class FamilyDescription:
                 problems.append(f"{f.pref_key}: a row that defaults to another file cannot be required")
         if self.training_adapter and self.pref_for("training_adapter") != self.training_adapter:
             problems.append("training_adapter must name the model file whose role is training_adapter")
+        named = [k for _w, a, b in self.adapter_files for k in (a, b)] + list(self.alt_base[2:3])
+        if any(k not in keys for k in named):
+            problems.append("adapter_files and alt_base must name model files")
+        if self.trainable_dtype not in ("fp32", "bf16"):
+            problems.append("trainable_dtype must be fp32 or bf16")
         if self.driver and not (self.modelspec_arch and self.implementation):
             problems.append("a trainable family needs modelspec_arch and implementation for LoRA metadata")
         return problems

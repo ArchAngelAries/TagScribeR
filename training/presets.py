@@ -108,48 +108,73 @@ def _is_number(value) -> bool:
         return False
 
 
-# MiniMax H3 keys with no generic equivalent: they switch on machinery this port does not have (clip / video / voice
-# features, the adapter ramp, the movement limiter, distillation, the fine-tune) or that Fizgig leaves inert under the
-# preset optimiser (the high-noise LR % band multiplier: never applied under Automagic v3) - ignored, not refused
-_MINIMAX_IGNORED = ("MINIMAX_TREAD", "MINIMAX_CLIP_STILL", "MINIMAX_ADAPTER_RAMP", "MINIMAX_HIGHNOISE_LR_PCT",
-                    "MINIMAX_TRAIN_ADALN", "MINIMAX_SLOW_BLOCKS", "MINIMAX_SLOW_LR_SCALE", "MINIMAX_BLOCK_LIMIT",
-                    "MINIMAX_LR_WARMUP", "MINIMAX_LIKENESS_OPT")
+# Fizgig's old MiniMax H3 keys: Fizgig 7.0.1 renamed them H3_* and reads the old names as aliases (families/minimax.py
+# FamilyOption setting=...); so does this app
+_MINIMAX_RENAMED = ("LOWNOISE_PCT", "HIGHNOISE_LR_PCT", "LIKENESS_MODE", "BLOCKS", "ADAPTER", "ADAPTER_RAMP",
+                    "TRAIN_REFINER", "TRAIN_BASE", "CAPTION_DROPOUT", "TREAD", "CLIP_STILL", "DISTILL",
+                    "DISTILL_WEIGHT", "DISTILL_REFS", "DISTILL_PHASE1", "FT_SCOPE")
+# old H3 keys Fizgig itself deleted (0 hits in 7.0.1)
+_MINIMAX_IGNORED = ("MINIMAX_TRAIN_ADALN", "MINIMAX_SLOW_BLOCKS", "MINIMAX_SLOW_LR_SCALE", "MINIMAX_BLOCK_LIMIT",
+                    "MINIMAX_LR_WARMUP", "MINIMAX_LIKENESS_OPT", "MINIMAX_LOGNORM", "MINIMAX_TURBO_STEPS",
+                    "MINIMAX_TURBO_STRENGTH")
+# H3 options for clips, voice, distillation and the fine-tune: machinery this still-image port does not have. A
+# switched-on one is reported; the clip ones (on in every Fizgig preset, inert on a folder of stills) pass quietly
+_H3_NOT_HERE = ("H3_DISTILL", "H3_DISTILL_WEIGHT", "H3_DISTILL_REFS", "H3_DISTILL_PHASE1", "H3_MIXED_STOP_CATEGORY",
+                "H3_MIXED_STOP_EPOCH", "H3_MIXED_STOP_MODE", "H3_FT_SCOPE", "H3_FT_BLOCKS", "H3_SAMPLE_FRAMES")
+_H3_CLIP_ONLY = ("H3_TREAD", "H3_CLIP_STILL")
 
 
-def _migrate_minimax(key, value, preset, out, notes, ignored) -> None:
-    """Fizgig's MINIMAX_* preset keys -> this app's parameters (EMA, caption dropout, the training adapter, base
-    precision); the H3 dials (low-noise %, training mode, blocks) are parameters of their own."""
+def _precision_label(value, key, notes):
+    """Fizgig's H3 base-precision labels ("int8 · most accurate ...", "4-bit · ...", "4-bit HQQ · ...") -> this app's;
+    HQQ is not offered, so it becomes NF4 with a note."""
+    v = str(value or "").split("·")[0].strip().lower()
+    prec = "int8" if v.startswith("int8") else ("nf4" if v.startswith(("4-bit", "nf4", "hqq")) else "auto")
+    if "hqq" in v:
+        notes.append(f"[preset] {key}: HQQ 4-bit isn't offered - using plain 4-bit NF4")
+    return P.PRECISION_LABELS[prec]
+
+
+def _h3_structure(pct) -> str:
+    """The Training structure a clean-end share stands for (Fizgig's _STRUCTURE: 60, 8, else Custom)."""
+    try:
+        v = float(str(pct).rstrip("%"))
+    except ValueError:
+        return P.H3_STRUCTURES[0]
+    return {60.0: P.H3_STRUCTURES[0], 8.0: P.H3_STRUCTURES[1]}.get(v, P.H3_STRUCTURES[2])
+
+
+def _migrate_h3(key, value, preset, out, notes, ignored) -> None:
+    """Fizgig's MiniMax H3 keys: the old MINIMAX_* names -> H3_* (an explicit H3_* key in the same preset wins), and the
+    H3 keys this app expresses differently (EMA, base precision, caption dropout) or does not have."""
+    if key.startswith("MINIMAX_") and key[len("MINIMAX_"):] in _MINIMAX_RENAMED:
+        new = "H3_" + key[len("MINIMAX_"):]
+        if new in preset:
+            return
+        if key == "MINIMAX_LOWNOISE_PCT" and "H3_STRUCTURE" not in preset:
+            out["H3_STRUCTURE"] = _h3_structure(value)
+        key = new
     if key == "MINIMAX_EMA":
         if "FAMILY_EMA" not in preset:
             out["FAMILY_EMA"] = value
-    elif key == "MINIMAX_CAPTION_DROPOUT":
+    elif key == "MINIMAX_BASE_QUANT":
+        if "FAMILY_PRECISION" not in preset:
+            out["FAMILY_PRECISION"] = _precision_label(value, key, notes)
+    elif key == "H3_CAPTION_DROPOUT":
         tok = P.first_token(value)
         if "CAPTION_DROPOUT" not in preset:
             out["CAPTION_DROPOUT"] = float(tok) if _is_number(tok) else 0.0
-    elif key == "MINIMAX_ADAPTER":
-        v = str(value or "").strip().lower()
-        if v.startswith("ostris"):
-            notes.append("[preset] MINIMAX_ADAPTER: the Ostris adapter is for video-only sets and isn't offered - "
-                         "using the Circlestone image adapter")
-        if "FAMILY_TRAINING_ADAPTER" not in preset:
-            out["FAMILY_TRAINING_ADAPTER"] = not v.startswith("off")
-    elif key == "MINIMAX_BASE_QUANT":
-        v = str(value or "").split("·")[0].strip().lower()
-        prec = "int8" if v.startswith("int8") else ("nf4" if v.startswith(("4-bit", "nf4", "hqq")) else "auto")
-        if "hqq" in v:
-            notes.append("[preset] MINIMAX_BASE_QUANT: HQQ 4-bit isn't offered - using plain 4-bit NF4")
-        if "FAMILY_PRECISION" not in preset:
-            out["FAMILY_PRECISION"] = P.PRECISION_LABELS[prec]
-    elif key == "MINIMAX_TRAIN_REFINER":
-        if value in (True, "True", "true", 1, "1"):
-            notes.append("[preset] MINIMAX_TRAIN_REFINER: training the text refiner isn't offered - left off")
+    elif key in _H3_CLIP_ONLY:
         ignored.append(key)
-    elif key == "MINIMAX_DISTILL" or key.startswith(("MINIMAX_DISTILL_", "MINIMAX_FT_", "MINIMAX_REG_",
-                                                     "MINIMAX_MIXED_STOP_", "MINIMAX_REFMOD", "MINIMAX_CONCEPT",
-                                                     "MINIMAX_MULTICONCEPT", "MINIMAX_FINETUNE", "MINIMAX_TURBO",
-                                                     "MINIMAX_TRAIN_BASE", "MINIMAX_LOGNORM")):
-        if value not in (False, "False", "false", 0, "0", "", None):
-            notes.append(f"[preset] {key}: not available in the image-only MiniMax H3 trainer - ignored")
+    elif key in _H3_NOT_HERE:
+        if key in ("H3_DISTILL", "H3_MIXED_STOP_CATEGORY", "H3_FT_SCOPE") and _on(value):
+            notes.append(f"[preset] {key}: not available in the still-image MiniMax H3 trainer - ignored")
+        ignored.append(key)
+    elif key in P.BY_KEY:
+        out[key] = value
+    elif key.startswith("MINIMAX_"):
+        if key.startswith(("MINIMAX_REFMOD", "MINIMAX_CONCEPT", "MINIMAX_MULTICONCEPT", "MINIMAX_REG_",
+                           "MINIMAX_FT_")) and _on(value):
+            notes.append(f"[preset] {key}: not available in the still-image MiniMax H3 trainer - ignored")
         ignored.append(key)
     else:
         ignored.append(key)
@@ -174,11 +199,12 @@ def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
                 out["FAMILY_PRECISION"] = P.PRECISION_LABELS[prec]
         elif key in LEGACY_IGNORED or key.startswith(LEGACY_IGNORED_PREFIXES):
             ignored.append(key)
-        elif key.startswith("MINIMAX_") and key not in P.BY_KEY:
-            if key in _MINIMAX_IGNORED:
-                ignored.append(key)
-            else:
-                _migrate_minimax(key, value, preset, out, notes, ignored)
+        elif key in _MINIMAX_IGNORED:
+            ignored.append(key)
+        elif key.startswith("MINIMAX_") or key in _H3_NOT_HERE + _H3_CLIP_ONLY + ("H3_CAPTION_DROPOUT",):
+            _migrate_h3(key, value, preset, out, notes, ignored)
+        elif key == "FAMILY_PRECISION" and "·" in str(value or ""):
+            out[key] = _precision_label(value, key, notes)       # Fizgig 7.0.1's H3 labels
         elif key == "FAMILY_PRECISION" and str(value or "").strip().lower().startswith("as the file"):
             # Fizgig 7.0.1 Klein's "As the file (bf16 or fp8)": its recommended Base file is fp8, which TagScribeR's
             # fp8 choice keeps exactly as stored (a bf16 file is quantised to fp8 instead - pick bf16 for that file)

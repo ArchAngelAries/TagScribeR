@@ -5,9 +5,7 @@ flow-matching objective (target x0 - noise), the low-noise % dial -> schedule sh
 training adapter, caption dropout, EMA, the kohya LoRA keys and the presets. See docs/TRAINING_PLAN.md and
 THIRD_PARTY_NOTICES.md.
 
-Not ported (Fizgig has them; this family does not): video clips, audio / voice items, reference images (RefMods),
-multi-concept, reference distillation, the rotation full fine-tune, TREAD token routing (Fizgig runs it on clip steps
-only, never on stills), "clip still" (a clip feature), the high-noise LR % dial (Fizgig never applies it under Automagic
-v3, the preset optimiser), HQQ / NF4-streamed H2D rings and the int8 attention kernel, the Turbo-LoRA previews, the
-adapter ramp, the movement limiter and the 66 GB bf16 base.
+Not ported yet (Fizgig has them; this family does not): video clips, audio / voice items, reference images (RefMods),
+multi-concept, reference distillation, sliders, the rotation full fine-tune, TREAD token routing and "clip still" (clip
+features), HQQ and the H2D streaming rings, the int8 attention kernel and the 66 GB bf16 base. See docs/dev/PORT_PLAN.md.
 """

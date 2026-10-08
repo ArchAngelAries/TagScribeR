@@ -19,7 +19,7 @@ from training.families.minimax_h3.weights import rotate  # noqa: E402
 from training.lora import FamilyLoRA  # noqa: E402
 
 registry.register(MINIMAX_H3)
-OFF = "Off - hand-pick the blocks below"
+OFF = "Off · hand-pick the blocks in Blocks to train"
 TINY = dict(hidden_size=64, num_layers=4, token_refiner_num_layers=1, num_attention_heads=2, attention_head_dim=96,
             ffn_hidden_size=32, text_dim=24, timestep_input_dim=16, time_embed_hidden_size=32, time_embed_dim=16)
 
@@ -55,32 +55,54 @@ def test_description_presets_and_registry(desc):
     assert desc.validate() == []
     assert desc.arch_id == "minimaxh3" and "_" not in desc.arch_id
     assert (desc.latent_channels, desc.spatial_factor, desc.bucket_step, desc.n_blocks) == (24, 16, 32, 50)
-    assert desc.lora.kohya and desc.training_adapter == "minimax_circlestone_adapter"
+    assert desc.lora.kohya and desc.training_adapter == "" and desc.adapter_choice == "H3_ADAPTER"   # Fizgig 7.0.1
+    assert desc.trainable_dtype == "bf16" and desc.ema_short_run and desc.optimizer_weight_decay == 1e-4
+    assert desc.optimizers[:3] == ("automagic3", "adamw8bit", "adamw") and desc.optimizer_eps_floor_8bit
+    assert (desc.preview_width, desc.preview_height) == (768, 768)
     names = [n for n, _ in desc.presets]
     assert names == ["✨ MiniMax H3 Fast (LoRA 8, 50 epochs)", "✨ MiniMax H3 (rank 16, 60 epochs)",
                      "✨ MiniMax H3 Style (LoRA 8)"]
     fast, base, style = (v for _, v in desc.presets)
     assert (fast["NETWORK_DIM"], fast["NETWORK_ALPHA"], fast["MAX_TRAIN_EPOCHS"], fast["LEARNING_RATE"]) == (8, 8, 50, 1e-6)
-    assert fast["OPTIMIZER_TYPE"] == "automagic3" and fast["MINIMAX_LOWNOISE_PCT"] == "60"
-    assert fast["MINIMAX_CAPTION_DROPOUT"] == "0.05 (default)" and fast["MINIMAX_EMA"] == "0.98 (recommended)"
+    assert fast["OPTIMIZER_TYPE"] == "automagic3" and fast["H3_LOWNOISE_PCT"] == "60"
+    assert fast["H3_CAPTION_DROPOUT"] == "0.05 (default)" and fast["FAMILY_EMA"] == "0.98 (recommended)"
     assert base["NETWORK_DIM"] == 16 and base["MAX_TRAIN_EPOCHS"] == 60
-    assert fast["MINIMAX_CLIP_STILL"] is True and style["MINIMAX_CLIP_STILL"] is False
+    assert fast["H3_CLIP_STILL"] == "1" and style["H3_CLIP_STILL"] == ""
     assert registry.by_arch_id("minimaxh3") is desc
+    assert P.options_for(P.BY_KEY["FAMILY_EMA"], desc)[-1] == P.EMA_SHORT
 
 
 def test_preset_keys_resolve_without_refusals(desc):
     for name, values in desc.presets:
         migrated, notes, ignored = presets.migrate_legacy(values)
-        assert [k for k in migrated if k not in P.BY_KEY] == [], name
-        assert all(k.startswith("MINIMAX_") for k in ignored)
+        assert [k for k in migrated if k not in P.BY_KEY and not k.startswith("FAMILY_SLIDER")] == [], name
+        assert set(ignored) <= {"H3_TREAD", "H3_CLIP_STILL", "H3_DISTILL"} and notes == []
         new, rep = presets.apply(values, P.defaults(), desc)
-        assert rep.refused == [], (name, rep.refused)
+        assert rep.refused == [] and rep.blocked == [], (name, rep.refused)
         assert new["FAMILY_EMA"].startswith("0.98") and new["CAPTION_DROPOUT"] == 0.05
-        assert new["FAMILY_TRAINING_ADAPTER"] is True and new["OPTIMIZER_TYPE"] == "automagic3"
-        assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["auto"]
-        assert float(new["MINIMAX_LOWNOISE_PCT"]) == 60.0 and new["MINIMAX_LIKENESS_MODE"] == "Default"
-    new, rep = presets.apply({"MINIMAX_ADAPTER": "Off", "MINIMAX_BASE_QUANT": "int8 · most accurate"}, P.defaults(), desc)
-    assert new["FAMILY_TRAINING_ADAPTER"] is False and new["FAMILY_PRECISION"] == P.PRECISION_LABELS["int8"]
+        assert new["H3_ADAPTER"] == P.H3_ADAPTERS[0] and new["OPTIMIZER_TYPE"] == "automagic3"
+        assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["auto"] and new["H3_STRUCTURE"] == P.H3_STRUCTURES[0]
+        assert float(new["H3_LOWNOISE_PCT"]) == 60.0 and new["H3_LIKENESS_MODE"] == "Default"
+        assert float(new["H3_HIGHNOISE_LR_PCT"]) == 100.0 and new["H3_TRAIN_REFINER"] is False
+    # Fizgig's older MINIMAX_* keys map onto the H3_* ones (an explicit H3_* key wins)
+    old = {"MINIMAX_ADAPTER": "Ostris — best for videos", "MINIMAX_BASE_QUANT": "int8 · most accurate",
+           "MINIMAX_LOWNOISE_PCT": "8", "MINIMAX_HIGHNOISE_LR_PCT": "70", "MINIMAX_CAPTION_DROPOUT": "0.10 (strong)",
+           "MINIMAX_TRAIN_ADALN": False, "MINIMAX_ADAPTER_RAMP": "0.005 (recommended)", "MINIMAX_EMA": "Off",
+           "MINIMAX_LIKENESS_MODE": "More Blocks", "MINIMAX_TRAIN_BASE": "Reference (ref2va)"}
+    new, rep = presets.apply(old, P.defaults(), desc)
+    assert new["H3_ADAPTER"] == P.H3_ADAPTERS[1] and new["FAMILY_PRECISION"] == P.PRECISION_LABELS["int8"]
+    assert new["H3_STRUCTURE"] == P.H3_STRUCTURES[1] and float(new["H3_LOWNOISE_PCT"]) == 8.0
+    assert float(new["H3_HIGHNOISE_LR_PCT"]) == 70.0 and new["CAPTION_DROPOUT"] == 0.1
+    assert new["H3_ADAPTER_RAMP"] == "0.005 (recommended)" and new["FAMILY_EMA"] == "Off"
+    assert new["H3_LIKENESS_MODE"] == "More Blocks" and new["H3_TRAIN_BASE"] == P.H3_BASES[1]
+    new, rep = presets.apply({"MINIMAX_LOWNOISE_PCT": "45", "H3_LOWNOISE_PCT": "30"}, P.defaults(), desc)
+    assert float(new["H3_LOWNOISE_PCT"]) == 30.0
+    new, rep = presets.apply({"MINIMAX_LOWNOISE_PCT": "45"}, P.defaults(), desc)
+    assert new["H3_STRUCTURE"] == "Custom" and float(new["H3_LOWNOISE_PCT"]) == 45.0
+    new, rep = presets.apply({"FAMILY_PRECISION": "4-bit HQQ · lower error than 4-bit, slower",
+                              "H3_DISTILL": "1"}, P.defaults(), desc)
+    assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["nf4"]
+    assert any("HQQ" in n for n in rep.notes) and any("H3_DISTILL" in n for n in rep.notes)
 
 
 def test_shift_mapping_and_sigma_distribution_match_fizgig():
@@ -173,6 +195,61 @@ def test_fast_mode_trains_exactly_blocks_20_to_49(desc):
         d.trained_blocks()
     with pytest.raises(ValueError):
         d.configure(lownoise_pct=0)
+
+
+def test_fizgig_701_options_structure_noise_lr_refiner_ramp_metadata(desc):
+    d = MiniMaxH3Driver()
+    d.description = desc
+    d.configure(structure=P.H3_STRUCTURES[1], lownoise_pct=33)               # a structure owns the share
+    assert d.lownoise_pct == 8.0 and d.run_metadata()["ss_timestep_density"] == f"{(1 - 0.08) / 0.08:g}"
+    d.configure(structure="Custom", lownoise_pct=33)
+    assert d.lownoise_pct == 33.0
+    # Medium to High Noise LR: clamped to 0-100 %, a noisy-half step carries the multiplier (Fizgig lr_mult)
+    d.configure(highnoise_lr_pct=150)
+    assert d.highnoise_lr == 1.0
+    d.configure(highnoise_lr_pct="40%")
+    assert d.highnoise_lr == pytest.approx(0.4)
+
+    class Fake:
+        patch_size = (1, 2, 2)
+
+        class config:
+            audio_latents_dim = 32
+
+        def __call__(self, noised, t, text, audio_noise=None):
+            return torch.zeros_like(noised)
+    seen = set()
+    for seed in range(40):
+        _l, info = d.training_loss(Fake(), torch.randn(1, 24, 4, 6), _cond(), torch.Generator().manual_seed(seed))
+        assert info["lr_mult"] == (pytest.approx(0.4) if info["t"] >= 0.5 else 1.0)
+        seen.add(info["lr_mult"] == 1.0)
+    assert seen == {True, False}
+    # block ids are Fizgig 7.0.1's (h3blk_N, h3_rf_N); the refiner trains only in mode Off over every block
+    ids = [b.id for g in d.block_map() for b in g.blocks]
+    assert ids[:2] == ["h3blk_0", "h3blk_1"] and ids[-2:] == ["h3_rf_0", "h3_rf_1"] and len(ids) == 52
+    d.configure(likeness_mode="Default", train_token_refiner=True)
+    assert not d.trains_refiner() and d.run_metadata()["ss_photo_blocks"] == "20-49"
+    d.configure(likeness_mode=OFF, blocks="all")
+    assert d.trains_refiner() and len(d.lora_target_names(None)) == 208
+    md = d.run_metadata()
+    assert md["ss_train_token_refiner"] == "1" and md["ss_train_blocks"].endswith("h3blk_49,h3_rf_0,h3_rf_1")
+    d.configure(blocks="h3blk_3, 7-8", train_token_refiner=False)
+    assert d.trained_blocks() == [3, 7, 8] and d.run_metadata()["ss_train_blocks"] == "h3blk_3,h3blk_7,h3blk_8"
+    # the adapter-relative LR ramp: starts at 10% of the LR, follows the adapter's growth, off by default
+    assert d.step_policy({}, 1) == (False, 1.0) and d.run_metadata()["ss_adapter_ramp"] == "off"
+    d.configure(adapter_ramp="0.005 (recommended)", likeness_mode=OFF, blocks="all")
+    dit = _dit()
+    net = FamilyLoRA(dit, d)
+    net.add_trainable(4, 4)
+    assert all(p.dtype == torch.bfloat16 for p in net.parameters())         # H3 trains its LoRA in bf16 (Fizgig)
+    d.prepare_training(dit, net, precision="int8", blocks_to_swap=0, total_steps=10, megapixels=0.25, batch_size=1)
+    assert d.step_policy({}, 1) == (False, pytest.approx(0.1))
+    d.after_optimizer_step()                                                   # the first reading only records
+    for p in net.parameters():
+        p.data.add_(0.01)
+    d.after_optimizer_step()                                                   # a big step: the ramp backs off
+    assert d.step_policy({}, 1)[1] == pytest.approx(0.1 * 0.95)
+    assert d.run_metadata()["ss_adapter_ramp"] == "0.005" and "[ramp]" in d._ramp.epoch_report()
 
 
 def test_lora_keys_are_kohya_and_round_trip(desc, driver, tmp_path):
@@ -353,16 +430,28 @@ def test_pipeline_driver_options_and_train_kwargs(desc, tmp_path):
     tp = presets.TrainingPresets(desc)
     vals, _ = presets.apply(tp.load(tp.default_name), P.defaults(), desc)
     vals.update(LORA_NAME="h3")
-    assert pipeline.driver_options(desc, vals) == {"lownoise_pct": 60.0, "likeness_mode": "Default", "blocks": "all"}
+    assert pipeline.driver_options(desc, vals) == {
+        "structure": P.H3_STRUCTURES[0], "lownoise_pct": 60.0, "highnoise_lr_pct": 100.0, "likeness_mode": "Default",
+        "blocks": "all", "adapter_ramp": "Off", "train_token_refiner": False}
+    files = {k: str(tmp_path / f"{k}.safetensors") for k in ("ad", "ost", "ostref", "ref")}
+    for f in files.values():
+        open(f, "wb").write(b"x")
     models = {"minimax_dit": "d.safetensors", "minimax_vae": "v.safetensors", "minimax_text_encoder": "t.safetensors",
-              "minimax_circlestone_adapter": str(tmp_path / "ad.safetensors")}
-    (tmp_path / "ad.safetensors").write_bytes(b"x")
+              "minimax_circlestone_adapter": files["ad"], "minimax_training_adapter": files["ost"],
+              "minimax_ref_training_adapter": files["ostref"], "minimax_ref_dit": files["ref"]}
     kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", models)
     assert kw["family"] == "minimax_h3" and kw["optimizer_type"] == "automagic3" and kw["ema_decay"] == 0.98
     assert (kw["network_dim"], kw["max_train_epochs"], kw["precision"]) == (8, 50, "auto")
-    assert kw["training_adapter"].endswith("ad.safetensors")
+    assert kw["training_adapter"] == files["ad"] and kw["dit_path"] == "d.safetensors"
     assert kw["driver_options"]["lownoise_pct"] == 60.0
-    vals["MINIMAX_LOWNOISE_PCT"] = 25
-    assert pipeline.driver_options(desc, vals)["lownoise_pct"] == 25.0
+    # the adapter choice and the training base pick the files (Fizgig: Ostris per base, Circlestone for both)
+    vals.update(H3_ADAPTER=P.H3_ADAPTERS[1])
+    assert pipeline.train_kwargs(desc, vals, tmp_path / "run", models)[0]["training_adapter"] == files["ost"]
+    vals.update(H3_TRAIN_BASE=P.H3_BASES[1])
+    kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", models)
+    assert kw["training_adapter"] == files["ostref"] and kw["dit_path"] == files["ref"]
+    vals.update(H3_ADAPTER="Off", FAMILY_EMA=P.EMA_SHORT)
+    kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", models)
+    assert "training_adapter" not in kw and kw["ema_decay"] == "short"
     cfg = pipeline.dataset_config(desc, vals, str(tmp_path), None)
     assert cfg["caption_dropout"] == 0.05 if "caption_dropout" in cfg else True

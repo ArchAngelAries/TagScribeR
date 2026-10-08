@@ -1,48 +1,38 @@
-# Ported from Fizgig (https://github.com/shootthesound/Fizgig): the facts of src/fizgig/minimax/ (model.py, loader.py,
-# trainer.py, sampling.py, embedder.py), lora_trainer_gui.py (MINIMAX_BUILT_IN_PRESETS, the H3 model paths and the
-# MINIMAX_* settings), scripts/fetch_models.py (files and sizes) and training/metadata.py (ARCH_MINIMAX).
+# Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/families/minimax.py (Fizgig 7.0.1's MiniMax
+# H3 description: model files, presets, options, optimizer settings) and the facts of src/fizgig/minimax/ (model.py,
+# loader.py, sampling.py, embedder.py) and training/metadata.py (ARCH_MINIMAX).
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
-# Changes for TagScribeR: Fizgig has no FamilyDescription for MiniMax H3, so this one is assembled from those sources -
-# every value cites its file; the presets keep Fizgig's keys and values verbatim (the MINIMAX_* keys this app expresses
-# differently are mapped by training/presets.py migrate_legacy).
+# Changes for TagScribeR: still images only, so the clip, voice, audio-VAE, distillation, multi-concept, fine-tune and
+# Slider parts are left out (port plan stages 5-6); Fizgig's family options are this app's H3_* parameters
+# (training/params.py, same keys and labels); the HQQ base, the H2D block rings and the 66 GB bf16 DiT are not ported
+# (int8 and NF4 only); the LoRA file keeps this app's "minimaxh3" name suffix (Fizgig: "mmh3").
 """MiniMax H3 (image LoRA training only): the 33B omni DiT trained on single still images."""
 from training.description import FamilyDescription, LoRAFormat, ModelFile, SamplingSettings
+from training.params import H3_ADAPTERS, H3_STRUCTURES
 
 _REPO = "Comfy-Org/MiniMax-H3"
-_FETCH = "Fizgig scripts/fetch_models.py FAMILIES['minimax']"
+_OSTRIS = "ostris/minimax_h3_training_adapter"
 
-# Fizgig MINIMAX_BUILT_IN_PRESETS (lora_trainer_gui.py:1007-1170), keys and values verbatim. The rank-16 entry is the
-# base recipe; Fast is "spread from it" with rank 8 / 50 epochs; Style is Fast with the clip-still off; Fast is
-# re-inserted first so it is the default.
-_DEFAULTS = {
-    "NETWORK_DIM": 16, "NETWORK_ALPHA": 16,
-    "NETWORK_TYPE": "LoRA (standard)", "LOKR_FACTOR": 8,
-    "LEARNING_RATE": 1e-6,                                  # Automagic's STARTING rate, not the rate (17 Sep 2026)
-    "MINIMAX_ADAPTER_RAMP": "Off",
-    "MINIMAX_CAPTION_DROPOUT": "0.05 (default)",
-    "MAX_TRAIN_EPOCHS": 60, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
-    "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-5", "ADAPTIVE_LR_MAX": "4e-4",
-    "OPTIMIZER_TYPE": "automagic3",
-    "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0,
-    "DATASET_MEGAPIXELS": "0.25",
-    "MINIMAX_LOWNOISE_PCT": "60", "MINIMAX_HIGHNOISE_LR_PCT": "100",
-    "MINIMAX_BLOCKS": "all", "MINIMAX_BASE_QUANT": "Auto (recommended)",
-    "MINIMAX_TRAIN_ADALN": False,
-    "MINIMAX_TRAIN_REFINER": False,
-    "MINIMAX_LIKENESS_MODE": "Default",                     # Fizgig MINIMAX_MODE_FAST: blocks 20-49
-    "MINIMAX_ADAPTER": "Circlestone — best for photos",
-    "MINIMAX_TREAD": True,
-    "MINIMAX_CLIP_STILL": True,
-    "MINIMAX_SLOW_BLOCKS": "", "MINIMAX_SLOW_LR_SCALE": "0.2",
-    "MINIMAX_BLOCK_LIMIT": "Off",
-    "MINIMAX_LR_WARMUP": "Off",
-    "MINIMAX_EMA": "0.98 (recommended)",
-    "MINIMAX_DISTILL": False,
-}
-_FAST = {**_DEFAULTS, "NETWORK_DIM": 8, "NETWORK_ALPHA": 8, "MAX_TRAIN_EPOCHS": 50, "LEARNING_RATE": 1e-6,
-         "MINIMAX_ADAPTER_RAMP": "Off", "ADAPTIVE_LR": False}
-_STYLE = {**_FAST, "LEARNING_RATE": 1e-6, "OPTIMIZER_TYPE": "automagic3", "MINIMAX_LIKENESS_MODE": "Default",
-          "MINIMAX_CLIP_STILL": False}
+
+def _preset(rank, epochs, clip_still=True, lr=1e-6, optimizer="automagic3"):
+    """Fizgig 7.0.1's H3 built-ins (families/minimax.py _preset), keys and values verbatim. H3_TREAD, H3_CLIP_STILL and
+    H3_DISTILL switch on clip / distillation features this port does not have: they are carried (so the preset is
+    Fizgig's) and ignored."""
+    return {
+        "NETWORK_DIM": rank, "NETWORK_ALPHA": rank, "NETWORK_TYPE": "LoRA (standard)", "LOKR_FACTOR": 8,
+        "LEARNING_RATE": lr, "MAX_TRAIN_EPOCHS": epochs, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
+        "FAMILY_SLIDER": False, "FAMILY_SLIDER_GUIDANCE": "2",
+        "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-5", "ADAPTIVE_LR_MAX": "4e-4", "OPTIMIZER_TYPE": optimizer,
+        "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0, "DATASET_MEGAPIXELS": "0.25",
+        "FAMILY_PRECISION": "Auto (recommended)", "BLOCKS_SWAP": "Auto (detect from GPU)",
+        "FAMILY_EMA": "0.98 (recommended)",
+        "H3_ADAPTER_RAMP": "Off", "H3_CAPTION_DROPOUT": "0.05 (default)", "H3_STRUCTURE": H3_STRUCTURES[0],
+        "H3_LOWNOISE_PCT": "60", "H3_HIGHNOISE_LR_PCT": "100",
+        "H3_BLOCKS": "all", "H3_TRAIN_REFINER": "", "H3_LIKENESS_MODE": "Default",
+        "H3_ADAPTER": H3_ADAPTERS[0], "H3_TREAD": "1", "H3_CLIP_STILL": "1" if clip_still else "",
+        "H3_DISTILL": "",
+    }
+
 
 MINIMAX_H3 = FamilyDescription(
     key="minimax_h3",
@@ -56,8 +46,14 @@ MINIMAX_H3 = FamilyDescription(
     model_files=(
         ModelFile("minimax_dit", "MiniMax H3 DiT (pruned int8)", True, _REPO,
                   "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors", 21.0,
-                  "The 33B DiT as ComfyUI ships it (int8 ConvRot, ~21 GB) - what training runs on. The 66 GB bf16 "
-                  "release is refused. Loading needs about 22 GB of free RAM.", role="dit"),
+                  "The 33B DiT as ComfyUI ships it (int8 ConvRot, ~21 GB): the training base, so your LoRA trains on "
+                  "the weights it will run on. The 66 GB bf16 release is not supported here yet. Loading needs about "
+                  "22 GB of free RAM.", role="dit"),
+        ModelFile("minimax_ref_dit", "MiniMax H3 DiT (reference, ref2va)", False, _REPO,
+                  "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors", 21.0,
+                  "Optional: used when Training base is Reference (ref2va). A different fine-tune from the one above, "
+                  "the model ComfyUI's Reference-to-Video workflow loads; a LoRA trained on it works best there.",
+                  role="ref_dit"),
         ModelFile("minimax_vae", "MiniMax H3 video VAE", True, _REPO, "vae/minimax_h3_video_vae_fp16.safetensors", 4.9,
                   "Encodes your photos (caching) and decodes previews; 24 latent channels, 16x.", role="vae"),
         ModelFile("minimax_text_encoder", "Qwen3-VL-32B text encoder (nvfp4)", True, _REPO,
@@ -68,8 +64,15 @@ MINIMAX_H3 = FamilyDescription(
         ModelFile("minimax_circlestone_adapter", "Training adapter (Circlestone)", False,
                   "circlestone-labs/MiniMax-H3-Image-Training-Adapter",
                   "minimax_h3_image_training_adapter.safetensors", 0.62,
-                  "Optional but recommended for photos: a frozen helper LoRA on for every training step, off for "
-                  "previews, never saved into your LoRA.", role="training_adapter"),
+                  "Needed when Training adapter is Circlestone (the default), one file for both bases: sharper eyes, "
+                  "cleaner skin and better prompt-following on any dataset with stills. On for every training step, "
+                  "off for previews, never saved into your LoRA.", role="training_adapter"),
+        ModelFile("minimax_training_adapter", "Training adapter (Ostris, fl2va)", False, _OSTRIS,
+                  "minimax_h3_training_adapter_v1.safetensors", 0.16,
+                  "Optional: used when Training adapter is Ostris on the standard base."),
+        ModelFile("minimax_ref_training_adapter", "Training adapter (Ostris, ref2va)", False, _OSTRIS,
+                  "minimax_h3_ref2va_training_adapter_v1.safetensors", 0.16,
+                  "Optional: used when Training adapter is Ostris and Training base is Reference (ref2va)."),
     ),
     text_encoder_label="Qwen3-VL-32B",
     vae_label="MiniMax H3 video VAE",
@@ -101,9 +104,14 @@ MINIMAX_H3 = FamilyDescription(
 
     driver="training.families.minimax_h3.driver:MiniMaxH3Driver",
     modelspec_arch="MiniMax-H3",                             # Fizgig training/metadata.py ARCH_MINIMAX
-    training_adapter="minimax_circlestone_adapter",
-    training_adapter_note="Circlestone's image training adapter: frozen, on for every step, off in previews.",
-    ema_default="0.98",                                      # MINIMAX_EMA (Peter, 9 Sep 2026)
+    # the training adapter is the H3_ADAPTER choice (Circlestone / Ostris per base / Off), not the generic tick
+    adapter_choice="H3_ADAPTER",
+    adapter_files=(("Circlestone", "minimax_circlestone_adapter", "minimax_circlestone_adapter"),
+                   ("Ostris", "minimax_training_adapter", "minimax_ref_training_adapter")),
+    alt_base=("H3_TRAIN_BASE", "Reference", "minimax_ref_dit"),
+    trainable_dtype="bf16",                                  # the old trainer: network.to(device, dtype=bfloat16)
+    ema_default="0.98",                                      # the old H3 default (v5.4.1)
+    ema_short_run=True,
     implementation="https://github.com/MiniMax-AI/MiniMax-H3",   # Fizgig training/metadata.py IMPL_MINIMAX
     precisions=("int8", "nf4"),
     # Fizgig minimax/trainer.py measured anchors (5090, gradient checkpointing, batch 1): NF4 pruned base 10.46 GB
@@ -112,8 +120,11 @@ MINIMAX_H3 = FamilyDescription(
     # and 0.39 GB per swapped block is Fizgig's _H2D_PER_BLOCK_GB (one streamed int8 block) - not measured with this
     # port's offloader. NF4 cannot swap.
     train_memory={"int8": (((0.25, 22.1), (1.0, 22.4)), 0.39), "nf4": (((0.25, 13.5), (1.0, 13.7)), 0.0)},
-    # Fizgig locks the optimizer to adamw / automagic3 for H3 (full-precision state: 8-bit state costs fine detail).
-    optimizers=("automagic3", "adamw"),
+    # Fizgig 7.0.1's Train tab offers its whole optimizer catalog; Automagic v3 is the presets' optimizer. Adam-family
+    # optimizers get the old trainer's weight decay 1e-4 (bitsandbytes' default is 1e-2) and the 8-bit eps floor
+    optimizers=("automagic3", "adamw8bit", "adamw", "pagedadamw8bit", "ademamix8bit", "pagedademamix8bit", "lion8bit"),
+    optimizer_weight_decay=1e-4,
+    optimizer_eps_floor_8bit=True,
     network_types=("lora", "lokr"),
 
     sampling=(
@@ -125,15 +136,18 @@ MINIMAX_H3 = FamilyDescription(
     ),
     preview_steps=20,
     preview_cfg=1.0,
-    preview_width=512,                                       # Fizgig _build_minimax_train_command fallback "512"
-    preview_height=512,
+    preview_width=768,                                       # Fizgig 7.0.1 (the old Samples default)
+    preview_height=768,
 
     presets=(
-        ("✨ MiniMax H3 Fast (LoRA 8, 50 epochs)", dict(_FAST)),
-        ("✨ MiniMax H3 (rank 16, 60 epochs)", dict(_DEFAULTS)),
-        ("✨ MiniMax H3 Style (LoRA 8)", dict(_STYLE)),
+        # Fizgig 7.0.1's, in its order (the first is the default). Its fourth, the Slider preset, waits for slider
+        # training (port plan stage 5)
+        ("✨ MiniMax H3 Fast (LoRA 8, 50 epochs)", _preset(8, 50)),
+        ("✨ MiniMax H3 (rank 16, 60 epochs)", _preset(16, 60)),
+        ("✨ MiniMax H3 Style (LoRA 8)", _preset(8, 50, clip_still=False)),
     ),
-    family_options=("MINIMAX_LOWNOISE_PCT", "MINIMAX_LIKENESS_MODE", "MINIMAX_BLOCKS"),
+    family_options=("H3_TRAIN_BASE", "H3_STRUCTURE", "H3_LOWNOISE_PCT", "H3_HIGHNOISE_LR_PCT", "H3_LIKENESS_MODE",
+                    "H3_BLOCKS", "H3_ADAPTER", "H3_ADAPTER_RAMP", "H3_TRAIN_REFINER"),
 
     helper_files=(("Qwen/Qwen3-VL-4B-Instruct", ("chat_template.json", "generation_config.json", "merges.txt",
                                                   "preprocessor_config.json", "tokenizer.json",
@@ -141,11 +155,12 @@ MINIMAX_H3 = FamilyDescription(
                                                   "vocab.json")),),
 
     notes=(
-        ("Image LoRA training only: video clips, voice, reference images (RefMods), multi-concept, distillation, the "
-         "rotation full fine-tune and the Turbo-LoRA previews are not part of this port.", "docs/TRAINING_PLAN.md"),
+        ("Image LoRA training only: video clips, voice, reference images (RefMods), multi-concept, distillation, "
+         "sliders, the rotation full fine-tune, the HQQ base and the bf16 DiT are not part of this port yet.",
+         "docs/dev/PORT_PLAN.md"),
         ("Training target is x0 - noise on noised = (1 - sigma) x0 + sigma noise, t = 1 - sigma fed to the DiT (sign "
-         "convention matched to ComfyUI). The Low-noise training % dial sets the schedule shift (1 - P) / P; the "
-         "default 60% is shift 0.667.", "Fizgig minimax/trainer.py:1-14, lora_trainer_gui.py:518-540"),
+         "convention matched to ComfyUI). Training structure sets the clean-end share P and with it the schedule shift "
+         "(1 - P) / P; the default 60% is shift 0.667.", "Fizgig minimax/driver.py _shift, families/minimax.py"),
         ("Caption dropout 0.05 swaps in the cached empty-prompt embedding for that share of steps.",
          "Fizgig minimax/trainer.py:5385, scripts/minimax_cache_text.py:298"),
         ("Default training mode trains blocks 20-49 only; blocks 0-19 would only ever hold zero-initialised adapters "

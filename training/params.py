@@ -22,6 +22,7 @@ PRECISION_LABELS = {"auto": "Auto (fits your free VRAM)", "bf16": "bf16 (full pr
                     "int8": "INT8 (8-bit, fastest)", "nf4": "4-bit NF4 (smallest)"}
 NETWORK_LABELS = {"lora": "LoRA (standard)", "lokr": "LoKR (Kronecker)"}
 EMA_OPTIONS = ("Off", "0.98 (recommended)", "0.99 (stronger)", "0.995 (long runs only)")
+EMA_SHORT = "Short run (window = ¼ of the run)"   # Fizgig 7.0.1's _FAMILY_EMA_SHORT (families with ema_short_run)
 SWAP_AUTO = "Auto (detect from GPU)"
 SCHEDULERS = ("constant", "constant_with_warmup", "cosine", "cosine_with_restarts", "linear", "polynomial")
 OPTIMIZER_NOTES = {
@@ -33,6 +34,12 @@ OPTIMIZER_NOTES = {
     "lion8bit": "Lion - sign updates; use about 1/10 of the AdamW learning rate (bitsandbytes)",
     "automagic3": "Automagic v3 - sets its own learning rate; the LR box is its start (1e-6 recommended)",
 }
+
+# MiniMax H3's choices, Fizgig 7.0.1's labels (families/minimax.py _STRUCTURE and OPTIONS)
+H3_STRUCTURES = ("Likeness and Style — 60% clean-end", "Model default, movement — 8% clean-end", "Custom")
+H3_BASES = ("First/last frame (fl2va) — standard", "Reference (ref2va)")
+H3_ADAPTERS = ("Circlestone — best for photos", "Ostris — best for videos", "Off")
+H3_RAMPS = ("Off", "0.003 (slow build)", "0.005 (recommended)", "0.01 (fast build)")
 
 GROUPS = ("Output", "Training Parameters", "Loss watch", "Optimizer", "Memory & Precision", "Timesteps",
           "Dataset", "Caption augmentation (extension)", "Metadata", "Samples")
@@ -103,8 +110,9 @@ PARAMS: tuple[Param, ...] = (
       "It keeps training stable on families that need it.", family_only="adapter"),
     P("FAMILY_EMA", "Weight averaging (EMA)", CHOICE, "0.98 (recommended)", "Training Parameters",
       "Checkpoints and previews come from a running average of the adapter's recent steps instead of whichever "
-      "step the epoch ended on - smoother, usually better. Training itself runs on the raw weights.",
-      options=EMA_OPTIONS, family_only="ema"),
+      "step the epoch ended on - smoother, usually better. Training itself runs on the raw weights. MiniMax H3 also "
+      "offers Short run: the average covers about the last quarter of the run, for runs too short for 0.98 to "
+      "settle.", options=EMA_OPTIONS, family_only="ema"),
     P("CONTEXT_LORA_PATH", "Context LoRA", PATH, "", "Training Parameters",
       "Optional: an existing LoRA kept frozen and active while you train, so the new LoRA learns to work on top "
       "of it (e.g. a face on a style). It is never saved into the output. LoRA, LoKR and LoHa files from most "
@@ -235,21 +243,51 @@ PARAMS: tuple[Param, ...] = (
     P("PRESERVE_DISTRIBUTION", "Preserve distribution shape", BOOL, False, "Timesteps",
       "With a noise range set: keep drawing until the noise levels fall inside it (the natural curve, cut off) "
       "instead of squeezing the whole curve into the range.", advanced=True, family_only="option"),
-    # MiniMax H3 extensions: Fizgig's keys and defaults (lora_trainer_gui.py settings 2113-2143, MINIMAX_* presets).
-    # Passed to the driver as driver_options.
-    P("MINIMAX_LOWNOISE_PCT", "Low-noise training %", FLOAT, 60.0, "Timesteps",
-      "MiniMax H3: the share of training steps drawn from the clean half of the noise range (below sigma 0.5), where "
-      "detail and identity are learned. 60 is the tuned default for stills; 50 is the plain uniform schedule; 8 is "
-      "the model's own video schedule (mostly composition and movement). Fizgig maps it to the schedule shift "
-      "(1 - P) / P.", minimum=1.0, maximum=99.0, family_only="option"),
-    P("MINIMAX_LIKENESS_MODE", "Training mode", CHOICE, "Default", "Training Parameters",
-      "MiniMax H3: which of the 50 blocks the LoRA trains. Default = blocks 20-49 (the identity blocks: quickest steps "
-      "and the measured best for characters and styles). More Blocks = 6-49 (slower, holds the dataset's global "
-      "traits out of the LoRA longer). Off = the blocks you type below.",
-      options=("Default", "More Blocks", "Off - hand-pick the blocks below"), family_only="option"),
-    P("MINIMAX_BLOCKS", "Blocks to train", TEXT, "all", "Training Parameters",
+    # MiniMax H3 options: Fizgig 7.0.1's family options (families/minimax.py OPTIONS), their H3_* keys and labels, so
+    # its presets import unchanged; the old MINIMAX_* keys are mapped by training/presets.py. Passed to the driver as
+    # driver_options (DRIVER_OPTIONS below).
+    P("H3_TRAIN_BASE", "Training base", CHOICE, H3_BASES[0], "Training Parameters",
+      "MiniMax H3: the model the LoRA trains on. First/last frame (fl2va) is the standard base. Reference (ref2va) "
+      "is a different fine-tune, the one ComfyUI's Reference-to-Video workflow loads: pick it if the LoRA will be "
+      "used there (set the DiT (reference) file under Model files).", options=H3_BASES, family_only="option"),
+    P("H3_STRUCTURE", "Training structure", CHOICE, H3_STRUCTURES[0], "Timesteps",
+      "MiniMax H3: how the run spreads its steps over the noise range. Likeness and Style puts 60% of the steps on "
+      "nearly clean images (the tuned default for stills). Model default is the reference trainer's schedule, "
+      "weighted to movement and composition (8%). Custom uses the Clean-end share below.", options=H3_STRUCTURES,
+      family_only="option"),
+    P("H3_LOWNOISE_PCT", "Clean-end share (%)", FLOAT, 60.0, "Timesteps",
+      "MiniMax H3, Training structure Custom only: the share of steps drawn from the clean half of the noise range "
+      "(below sigma 0.5), where detail and identity are learned. 50 is the plain uniform schedule. Fizgig maps it to "
+      "the schedule shift (1 - P) / P.", minimum=1.0, maximum=99.0, family_only="option"),
+    P("H3_HIGHNOISE_LR_PCT", "Medium to High Noise LR (%)", FLOAT, 100.0, "Timesteps",
+      "MiniMax H3: scales the learning rate of the steps in the noisy half (sigma 0.5 and above): pose, framing, "
+      "face shape. Best left at 100 unless you are experimenting. Values outside 0-100 are clamped, as in Fizgig. "
+      "No effect with Automagic v3, which sets its own rate.", advanced=True, family_only="option"),
+    P("H3_LIKENESS_MODE", "Training mode", CHOICE, "Default", "Training Parameters",
+      "MiniMax H3: which of the 50 blocks the LoRA trains. Default = blocks 20-49: high quality, versatile, best at "
+      "keeping the model's priors, and the quickest steps. More Blocks = 6-49: less preservation of the priors; may "
+      "help a motion concept, not a likeness upgrade. Blocks 0-5 stay out either way (they deform anatomy and "
+      "colour). Off = the blocks you type in Blocks to train.",
+      options=("Default", "More Blocks", "Off · hand-pick the blocks in Blocks to train"), family_only="option"),
+    P("H3_BLOCKS", "Blocks to train", TEXT, "all", "Training Parameters",
       "MiniMax H3, training mode Off only: blocks as numbers and ranges, e.g. 6-49 or 3-12, 14-15, 22, 31-33 "
-      "(0-49; 'all' = every block). A typo stops the run instead of training a different set.", advanced=True,
+      "(0-49; 'all' = every block, h3blk_N ids work too). Measured answers: 6-49 for the whole model (More Blocks) "
+      "and 20-49 for likeness (Default). A typo stops the run instead of training a different set.", advanced=True,
+      family_only="option"),
+    P("H3_ADAPTER", "Training adapter", CHOICE, H3_ADAPTERS[0], "Training Parameters",
+      "MiniMax H3: a frozen helper LoRA that de-distills the base while yours learns: on at 1.0 for every training "
+      "step, off for previews, never in your saved file. Circlestone (one file for both bases) trains sharper LoRAs "
+      "from photos. Ostris learns a video look faster; for a still-image dataset Circlestone is the better pick. Set "
+      "the file under Model files.", options=H3_ADAPTERS, family_only="option"),
+    P("H3_ADAPTER_RAMP", "Adapter-relative LR", CHOICE, H3_RAMPS[0], "Optimizer",
+      "MiniMax H3: makes the learning rate a ceiling the run climbs toward. Each step is held at this fraction of "
+      "the LoRA's current size, starting at 10% of the rate and rising as the LoRA grows (a new LoRA is easily "
+      "damaged by a full step). Set the learning rate where you want to end up. No effect with Automagic v3.",
+      options=H3_RAMPS, advanced=True, family_only="option"),
+    P("H3_TRAIN_REFINER", "Train the text token refiner", BOOL, False, "Training Parameters",
+      "MiniMax H3, recommended off: the refiner sets how every prompt is read; training it softens output and makes "
+      "previews judder between epochs. It does not affect trigger words. As in Fizgig, it trains only with Training "
+      "mode Off and Blocks to train 'all' (the other modes stop the backward before it).", advanced=True,
       family_only="option"),
     # ---- dataset ----------------------------------------------------------------------------------
     P("DATASET_MEGAPIXELS", "Target megapixels", CHOICE, "0.25", "Dataset",
@@ -354,8 +392,9 @@ DRIVER_OPTIONS.update({"TARGET_LAYERS": "target_layers", "TRAINING_BLOCKS": "tra
                        "PRESERVE_DISTRIBUTION": "preserve_distribution"})
 DRIVER_OPTIONS.update({"COMPILE_BLOCKS": "compile_blocks"})
 DRIVER_OPTIONS.update({"ATTENTION_MECHANISM": "attention_mechanism"})
-DRIVER_OPTIONS.update({"MINIMAX_LOWNOISE_PCT": "lownoise_pct", "MINIMAX_LIKENESS_MODE": "likeness_mode",
-                       "MINIMAX_BLOCKS": "blocks"})
+DRIVER_OPTIONS.update({"H3_STRUCTURE": "structure", "H3_LOWNOISE_PCT": "lownoise_pct",
+                       "H3_HIGHNOISE_LR_PCT": "highnoise_lr_pct", "H3_LIKENESS_MODE": "likeness_mode",
+                       "H3_BLOCKS": "blocks", "H3_ADAPTER_RAMP": "adapter_ramp", "H3_TRAIN_REFINER": "train_token_refiner"})
 PRESET_KEYS = tuple(p.key for p in PARAMS if p.preset)
 
 
@@ -373,6 +412,8 @@ def options_for(param: Param, desc=None) -> tuple:
         return tuple(NETWORK_LABELS[t] for t in desc.network_types if t in NETWORK_LABELS)
     if param.key == "FAMILY_PRECISION":
         return (PRECISION_LABELS["auto"],) + tuple(PRECISION_LABELS[p] for p in desc.precisions)
+    if param.key == "FAMILY_EMA" and desc.ema_short_run:
+        return param.options + (EMA_SHORT,)
     return param.options
 
 

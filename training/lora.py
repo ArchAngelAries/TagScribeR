@@ -149,7 +149,7 @@ class LoRALinear(nn.Module):
         self.adapters = nn.ModuleDict()
         self.scales = {}
 
-    def add(self, name, rank, alpha, trainable, A=None, B=None, strength=1.0):
+    def add(self, name, rank, alpha, trainable, A=None, B=None, strength=1.0, trainable_dtype=torch.float32):
         a = LoRAFactor(self.base.in_features, rank, bias=False)
         b = LoRAFactor(rank, self.base.out_features, bias=False)
         if A is not None:
@@ -159,16 +159,16 @@ class LoRALinear(nn.Module):
             nn.init.kaiming_uniform_(a.weight, a=math.sqrt(5))
             nn.init.zeros_(b.weight)
         dev = getattr(self, "home", None) or self.base.weight.device   # a swapped block's base may sit on CPU
-        dt = torch.float32 if trainable else torch.bfloat16
+        dt = trainable_dtype if trainable else torch.bfloat16
         a.to(dev, dt).requires_grad_(trainable)
         b.to(dev, dt).requires_grad_(trainable)
         self.adapters[name] = nn.Sequential(a, b)
         self.scales[name] = alpha / rank * strength
 
-    def add_lokr(self, name, trainable, factor=8, w1=None, w2=None, scale=1.0):
+    def add_lokr(self, name, trainable, factor=8, w1=None, w2=None, scale=1.0, trainable_dtype=torch.float32):
         ad = LoKR(self.base.in_features, self.base.out_features, factor, w1, w2)
         dev = getattr(self, "home", None) or self.base.weight.device
-        ad.to(dev, torch.float32 if trainable else torch.bfloat16).requires_grad_(trainable)
+        ad.to(dev, trainable_dtype if trainable else torch.bfloat16).requires_grad_(trainable)
         self.adapters[name] = ad
         self.scales[name] = scale
 
@@ -311,7 +311,9 @@ class FamilyLoRA:
     # ---- trainable ------------------------------------------------------------------------------
     def add_trainable(self, rank, alpha, blocks=None, kind="lora", factor=8):
         """blocks: optional set of block ids to train (None = every target). kind "lokr": a Kronecker adapter per
-        Linear (w1 about factor x factor, full w2); rank / alpha do not apply to it."""
+        Linear (w1 about factor x factor, full w2); rank / alpha do not apply to it. The adapters are fp32 unless the
+        description's trainable_dtype says otherwise (H3's old trainer trained its LoRA in bf16, Fizgig 7.0.1)."""
+        tdt = {"bf16": torch.bfloat16}.get(getattr(self.desc, "trainable_dtype", "fp32"), torch.float32)
         skipped_conv = 0
         for full, w in self.wrapped.items():
             if full not in self.targets:
@@ -321,9 +323,11 @@ class FamilyLoRA:
                     if isinstance(w, LoRAConv2d):
                         skipped_conv += 1
                         continue
-                    w.add_lokr(TRAINABLE, True, factor)
-                else:
+                    w.add_lokr(TRAINABLE, True, factor, trainable_dtype=tdt)
+                elif isinstance(w, LoRAConv2d):
                     w.add(TRAINABLE, rank, alpha, True)
+                else:
+                    w.add(TRAINABLE, rank, alpha, True, trainable_dtype=tdt)
         if skipped_conv:
             logger.info(f"[lokr] {skipped_conv} Conv2d target(s) left untrained: LoKR adapters are Linear-only")
         self.rank, self.alpha, self.kind, self.factor = rank, alpha, kind, factor

@@ -91,6 +91,32 @@ def model_path(desc, models: dict, role: str) -> str:
     return path
 
 
+def _choice_word(values, key) -> str:
+    return P.first_token(values.get(key) or P.BY_KEY[key].default).lower()
+
+
+def alt_base_on(desc, values) -> bool:
+    """Whether the run trains on the family's alternative base (MiniMax H3: Training base Reference (ref2va))."""
+    return bool(desc.alt_base) and _choice_word(values, desc.alt_base[0]) == desc.alt_base[1].lower()
+
+
+def dit_key(desc, values) -> str:
+    """The pref key of the base model file this run trains on."""
+    return desc.alt_base[2] if alt_base_on(desc, values) else desc.pref_for("dit")
+
+
+def training_adapter_key(desc, values) -> str:
+    """The pref key of the training adapter this run uses ("" = none): the family's adapter choice (MiniMax H3's
+    Circlestone / Ostris per base / Off), else its one adapter when the tick is on."""
+    if desc.adapter_choice:
+        word = _choice_word(values, desc.adapter_choice)
+        for w, std, alt in desc.adapter_files:
+            if w.lower() == word:
+                return alt if alt_base_on(desc, values) else std
+        return ""
+    return desc.training_adapter if values.get("FAMILY_TRAINING_ADAPTER", True) else ""
+
+
 def driver_options(desc, values) -> dict:
     """The family-extension settings (P.DRIVER_OPTIONS) this family offers, as driver.configure() keywords."""
     out = {}
@@ -115,12 +141,15 @@ def blocks_to_swap(values) -> int:
     return int(m.group()) if m else -1
 
 
-def ema_decay(values, desc) -> float:
+def ema_decay(values, desc):
+    """The run's EMA decay: a number, 0.0 for off, or "short" (Short run, families with ema_short_run)."""
     if not desc.ema_default:
         return 0.0
     tok = P.first_token(values.get("FAMILY_EMA") or desc.ema_default)
     if tok.lower() == "off":
         return 0.0
+    if tok.lower() == "short":
+        return "short" if desc.ema_short_run else float(P.first_token(desc.ema_default))
     try:
         return float(tok)
     except ValueError:
@@ -217,10 +246,14 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
             f"filter missing:caption) or move them out - Fizgig refuses to start in this case too.")
     else:
         info(f"{len(imgs)} captioned image(s).")
+    adapter_key, base_key = training_adapter_key(desc, values), dit_key(desc, values)
     for f in desc.model_files:
         path = (models.get(f.pref_key) or "").strip()
-        used = f.role in ("dit", "vae", "text_encoder") or \
-            (f.role == "training_adapter" and values.get("FAMILY_TRAINING_ADAPTER", True)) or \
+        if f.pref_key == base_key and not f.required and not os.path.isfile(path):
+            err(f"Model file missing: {f.label} - the chosen training base; set it under Model files" +
+                (f" ({f.repo})" if f.repo else ""))
+            continue
+        used = f.role in ("vae", "text_encoder") or f.pref_key in (adapter_key, base_key) or \
             (f.role == "speed_lora" and values.get("SAMPLE_ENABLED") and float(values.get("FAMILY_TURBO_STRENGTH",
                                                                                          -1) or 0) != 0) or \
             (f.role == "preview_dit" and values.get("SAMPLE_ENABLED") and values.get("SAMPLE_USE_DISTILLED", True))
@@ -228,7 +261,7 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
             err(f"Model file missing: {f.label} - set it under Model files" + (f" ({f.repo})" if f.repo else ""))
         elif used and path and not os.path.isfile(path):
             warn(f"{f.label}: {path} not found")
-        elif f.role == "training_adapter" and used and not path:
+        elif f.pref_key == adapter_key and not path:
             warn(f"{f.label} is not set - {desc.training_adapter_note or 'training runs without it'}")
     try:
         bs = int(values.get("DATASET_BATCH_SIZE") or 1)
@@ -356,7 +389,8 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
     preview prompts."""
     m = lambda role: model_path(desc, models, role)  # noqa: E731
     kw = {
-        "family": desc.key, "dit_path": m("dit"), "output_dir": str(run_dir),
+        "family": desc.key, "output_dir": str(run_dir),
+        "dit_path": (models.get(dit_key(desc, values)) or "").strip() if alt_base_on(desc, values) else m("dit"),
         "output_name": str(values.get("LORA_NAME")).strip(),
         "network_dim": _num(values, "NETWORK_DIM", int), "network_alpha": _num(values, "NETWORK_ALPHA"),
         "learning_rate": _num(values, "LEARNING_RATE"), "max_train_epochs": _num(values, "MAX_TRAIN_EPOCHS", int),
@@ -384,8 +418,9 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
     if values.get("ADAPTIVE_LR"):
         kw.update(adaptive_lr=True, adaptive_lr_min=float(P.first_token(values.get("ADAPTIVE_LR_MIN", "1e-5"))),
                   adaptive_lr_max=float(P.first_token(values.get("ADAPTIVE_LR_MAX", "4e-4"))))
-    adapter = m("training_adapter")
-    if desc.training_adapter and values.get("FAMILY_TRAINING_ADAPTER", True) and adapter and os.path.isfile(adapter):
+    akey = training_adapter_key(desc, values)
+    adapter = (models.get(akey) or "").strip() if akey else ""
+    if adapter and os.path.isfile(adapter):
         kw["training_adapter"] = adapter
     ctx = str(values.get("CONTEXT_LORA_PATH") or "").strip()
     if ctx:

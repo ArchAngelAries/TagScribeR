@@ -477,3 +477,20 @@ def test_earlier_exclusions_train_again_and_are_kept_per_family(tmp_path):
     w._record_exclusion(keys[1], 5)                                       # krea2 excludes b too: both records kept
     saved = _json.loads((ds / "tagscriber_excluded.json").read_text(encoding="utf-8"))
     assert set(saved[keys[1]]["families"]) == {"klein", "krea2"}
+
+
+def test_frozen_bf16_adapter_adds_in_one_rounding(tiny, tmp_path):
+    """Fizgig 7.0.1 families/lora.py: a frozen adapter in the model's dtype is added as torch.add(out, lx, alpha=s) -
+    the strength in fp32, the sum rounded once, as the old loaders did."""
+    from safetensors.torch import save_file
+    dit, net = _net(tiny)
+    lin = dit.blocks[1].lin
+    lin.base.to(torch.bfloat16)
+    save_file({"lora_unet_blocks_1_lin.lora_down.weight": torch.randn(2, 8),
+               "lora_unet_blocks_1_lin.lora_up.weight": torch.randn(8, 2)}, str(tmp_path / "f.safetensors"))
+    net.add_file(str(tmp_path / "f.safetensors"), "context", 0.75)
+    net.set_enabled("lora", False)
+    lin.scales["lora"] = 0.0
+    x = torch.randn(3, 8, dtype=torch.bfloat16)
+    ad, s = lin.adapters["context"], lin.scales["context"]
+    assert torch.equal(lin(x), torch.add(lin.base(x), ad(x), alpha=float(s)))

@@ -9,7 +9,8 @@
 # keys named differently from its module paths (SDXL: LDM names). Behaviour of non-kohya families is unchanged.
 # Brought level with Fizgig 7.0.1 (commit 1c8ec88): frozen LoHa files load (LoHa, add_loha), `lora.down` / `lora.up` key
 # spelling and the `unet.` prefix are read, and the reader goes through `driver.convert_lora_state_dict` and
-# `driver.alias_flat` (another trainer's module names: Krea 2 LoRAs from OneTrainer / AI-Toolkit, Fizgig 6.8.2).
+# `driver.alias_flat` (another trainer's module names: Krea 2 LoRAs from OneTrainer / AI-Toolkit, Fizgig 6.8.2), and a
+# frozen adapter in the model's dtype is added in one fused, once-rounded step.
 """The family layer's LoRA: wraps a family's Linears, trains one adapter and runs any number of frozen ones.
 
 Which Linears (driver.block_map / lora_target_names) and how files are keyed (description.lora: file prefix, down/up
@@ -185,8 +186,14 @@ class LoRALinear(nn.Module):
             if s:
                 if isinstance(ad, (LoKR, LoHa)):
                     out = out + (s * ad(x)).to(out.dtype)
-                else:
-                    out = out + (s * ad(x.to(ad[0].weight.dtype))).to(out.dtype)
+                    continue
+                lx = ad(x.to(ad[0].weight.dtype))
+                if lx.dtype == out.dtype:
+                    # a frozen adapter in the model's dtype: ONE fused add, the strength formed in fp32 and the sum
+                    # rounded once - the old loaders' epilogue, so a preview at strength 0.75 matches them (Fizgig 7.0.1)
+                    out = torch.add(out, lx, alpha=float(s))
+                else:                                # the fp32 trainable adapter: as before
+                    out = out + (s * lx).to(out.dtype)
         return out
 
 

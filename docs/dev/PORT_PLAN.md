@@ -32,15 +32,14 @@ numerics of decision 2 (bf16 INT8 scales, bf16 loss order under autocast, one ca
 revision, clip signal Klein only, RAW CFG 4.5); driver hooks (`batch_cond`, `step_policy`, `after_optimizer_step`,
 `run_metadata`, `frozen_file_added`, `park_for`, `save_preview`, `plan_run`, `load_planned`, INT8 `store_device`);
 Qwen Fast Identity Mode and torch.compile with compile shared by every family (`training/compile.py`, decided on the
-empty card). **Needs one real Krea 2 run by the owner** (short, 0.25 MP, sample-at-first) before it is called
-verified.
+empty card). The owner's next ordinary Krea 2 run on this branch confirms the numeric changes (see Settled).
 
 Left for later stages on purpose: the Krea 2 and Qwen Slider presets (sliders are stage 5); hooks of features not
 ported yet (sliders, fine-tune, clips, preview checkpoints, legacy state order, `cache_stage`).
 
 ## Stage 2 status (2026-10-08)
 
-Done on the same branch `port/stage1-bt67en` (pushing a new branch needs the owner's go), unit-tested only: Klein's
+Done on `port/stage1-bt67en`, unit-tested only: Klein's
 presets (Identity at rank 8), LoKR, EMA control (Off), the whole optimizer catalog (Qwen too); Auto INT8 then NF4 with
 no Auto swap, the fp8-file-as-is rule when uncompiled, Fizgig's measured memory; block ids `double_N` / `single_N`
 (old spelling accepted) and `ss_train_blocks`; torch.compile of both block lists; other trainers' Klein LoRAs
@@ -48,13 +47,7 @@ no Auto swap, the fp8-file-as-is rule when uncompiled, Fizgig's measured memory;
 handoff, RAM cache and INT8 option. Needs a real Klein run (Distilled previews on and off, an Edit LoRA) before it is
 called verified.
 
-Open questions from stage 2 (ask, do not decide): (a) Klein's text encoder below 19.5 GB free: Fizgig loads it in fp8,
-TagScribeR in INT8 - mirror? (b) Klein's text cache key is `text_embed` here, `ctx_vec` upstream (and arch id
-`klein9b` vs `klein9bdrv`): renaming re-caches everything once for no numeric change - keep? (c) the seven extra
-timestep modes, Preserve Distribution and Attention Mechanism, gone upstream: keep as TagScribeR extensions (they are
-kept for now)? (d) at batch size above 1 TagScribeR draws one t per image, Fizgig one per batch (Fizgig refuses batch
-> 1): keep? (e) Klein previews: Fizgig draws the start noise on the GPU in bf16 and floors sizes to 16, TagScribeR
-draws on the CPU and rounds up - mirror (same question as Krea 2's)?
+The owner does not train Klein, so its real-hardware check waits on other users; it stays marked experimental.
 
 ## Decisions the owner has made
 
@@ -81,7 +74,7 @@ draws on the CPU and rounds up - mirror (same question as Krea 2's)?
 
 ## Stages
 
-Each stage lives on its own work branch, passes the full suite, and is pushed for the owner to pull and test. Nothing
+Every stage lands on the one work branch, passes the full suite, and is pushed for the owner to pull and test. Nothing
 goes to `main` without the owner's explicit go.
 
 1. **Shared-layer fixes, then Krea 2 and Qwen Image 2.1 level with upstream** (`port/stage1`).
@@ -119,17 +112,21 @@ each to `requirements.txt` and the installer in the stage that first needs it.
   PyTorch's allocator held 17.5 GB reserved with 12.9 GB in use during Krea 2 training (cache growth across bucket
   shapes); previews at 1024 x 1024 cost about 2.5 minutes per epoch; INT8 was not faster than fp8 in a bare matmul
   benchmark on the AMD card, though it is the measured fast path on NVIDIA.
-- **Open questions from stage 1** (ask, do not decide): (a) Krea 2 preview start noise - Fizgig draws it on the GPU in
-  bf16 and runs previews under autocast, TagScribeR on the CPU in fp32 (same seed, different picture); mirror it?
-  (b) Auto when even maximum swap is short: TagScribeR keeps INT8 + maximum swap (about 5 GB on Krea 2), Fizgig falls
-  to NF4 (11.4 GB) - keep TagScribeR's? (c) the fused bf16 add for frozen adapters (Fizgig families/lora.py:127-133:
-  Turbo / context LoRA previews round once, as the old loaders) - port it? It changes preview pixels slightly. (d)
-  Fizgig's no-Turbo Krea 2 preview default is 8 steps / CFG 1; TagScribeR keeps 28 steps (now CFG 4.5) - keep? (e)
-  fp8's 1 MP memory point is inferred (INT8's +2.9 GB carried over, as Fizgig does for bf16) - fine until measured?
-- **Open questions for the owner** raised by the audits (ask, do not decide): unlimited prompt chunks versus the
-  fixed 225 tokens for SDXL, and zeros for an empty caption; whether the 5.5 MB H3 time-embedding grid asset stays
-  in the repo; whether a bad Turbo LoRA file should be a warning instead of a stopped run; which Krea 2 extras
-  outside the audit's scope are wanted.
+- **Settled, so later sessions do not ask again** (the owner, 2026-10-08: decide by the standing rules - keep what
+  works, mirror Fizgig where it fixes something - record the call here, and stop re-asking; answers given in local
+  sessions are not visible to cloud sessions, so record every decision in this file):
+  - Branches: one work branch (`port/stage1-bt67en`) for all stages; the owner pulls, tests and merges to `main`.
+  - Krea 2: the owner's last real runs were good (sample artifacts gone, trains well). They predate stage 1's
+    numeric changes (bf16 loss order, bf16 INT8 scales, one caption per forward), so the next ordinary Krea 2 run on
+    this branch is the one that confirms them; no special test run is asked for.
+  - Kept as TagScribeR's (works today; changing it would only move pixels or re-cache for no gain): CPU fp32 preview
+    start noise and round-up sizes (Krea 2, Klein); INT8 + maximum swap when even that is short; 28 RAW preview steps
+    without the Turbo LoRA; fp8's inferred 1 MP memory point until measured; Klein's INT8 text encoder on small cards;
+    the `text_embed` / `klein9b` and `krea2` cache names; Klein's extra timestep modes, Preserve Distribution and
+    Attention Mechanism; one t per image at batch size above 1; SDXL's 225-token captions and zeros for an empty
+    caption; the H3 time-embedding grid asset; a Turbo LoRA that matches nothing is a warning, the run continues.
+  - Mirrored from Fizgig (a fix): the fused, once-rounded add for frozen adapters (training/lora.py).
+  - Krea 2 extras beyond the audit: port them as their stages come.
 - **README:** remove the roadmap line about a Fizgig tracker (it is a development aid, not a user feature), and keep
   the "what has actually been run" section true as stages land.
 - **Longer-term roadmap** (after the port, see the README): image cleanup and background removal tools, bucket

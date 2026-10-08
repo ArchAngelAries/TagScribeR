@@ -38,6 +38,24 @@ verified.
 Left for later stages on purpose: the Krea 2 and Qwen Slider presets (sliders are stage 5); hooks of features not
 ported yet (sliders, fine-tune, clips, preview checkpoints, legacy state order, `cache_stage`).
 
+## Stage 2 status (2026-10-08)
+
+Done on the same branch `port/stage1-bt67en` (pushing a new branch needs the owner's go), unit-tested only: Klein's
+presets (Identity at rank 8), LoKR, EMA control (Off), the whole optimizer catalog (Qwen too); Auto INT8 then NF4 with
+no Auto swap, the fp8-file-as-is rule when uncompiled, Fizgig's measured memory; block ids `double_N` / `single_N`
+(old spelling accepted) and `ss_train_blocks`; torch.compile of both block lists; other trainers' Klein LoRAs
+(diffusers q / k / v fusion); Edit LoRAs and reference previews; Distilled 4-step previews with the park / restore
+handoff, RAM cache and INT8 option. Needs a real Klein run (Distilled previews on and off, an Edit LoRA) before it is
+called verified.
+
+Open questions from stage 2 (ask, do not decide): (a) Klein's text encoder below 19.5 GB free: Fizgig loads it in fp8,
+TagScribeR in INT8 - mirror? (b) Klein's text cache key is `text_embed` here, `ctx_vec` upstream (and arch id
+`klein9b` vs `klein9bdrv`): renaming re-caches everything once for no numeric change - keep? (c) the seven extra
+timestep modes, Preserve Distribution and Attention Mechanism, gone upstream: keep as TagScribeR extensions (they are
+kept for now)? (d) at batch size above 1 TagScribeR draws one t per image, Fizgig one per batch (Fizgig refuses batch
+> 1): keep? (e) Klein previews: Fizgig draws the start noise on the GPU in bf16 and floors sizes to 16, TagScribeR
+draws on the CPU and rounds up - mirror (same question as Krea 2's)?
+
 ## Decisions the owner has made
 
 1. **Keep what works.** When Fizgig removed something that still works in TagScribeR, keep it (fp8 as a selectable

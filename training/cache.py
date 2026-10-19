@@ -8,9 +8,10 @@
     python -m training.cache --family qwen_image21 --stage latents --dataset RUN/dataset.json --model VAE
     python -m training.cache --family qwen_image21 --stage text    --dataset RUN/dataset.json --model TE
 
-Latents are stored as `latent_{h}x{w}` (+ `latent_control_{i}_{h}x{w}` for edit pairs, at the target's bucket);
-conditioning as `cond__<driver key>` with the caption in the metadata, so --skip_existing re-encodes exactly the
-captions that changed. Cache files whose image is gone are removed afterwards (unless --keep_cache).
+Latents are stored as `latent_{h}x{w}` (+ `latent_control_{i}_{h}x{w}` for edit pairs: the first at the target's
+bucket, a multi-picture edit's extra references at their own shape); conditioning as `cond__<driver key>` with the
+caption in the metadata, so --skip_existing re-encodes exactly the captions that changed. Cache files whose image is
+gone are removed afterwards (unless --keep_cache).
 """
 import argparse
 import logging
@@ -159,13 +160,18 @@ def cached_matches(path, caption, refs="", rev="", stamp="", partners=()):
     return not _stamps_differ(md["reference_stamp"], stamp, partners, path)
 
 
-def _has_controls(path):
+def _control_count(path):
+    """How many before-image latents a latent cache holds (0 if unreadable). Header only."""
     from safetensors import safe_open
     try:
         with safe_open(path, framework="pt") as f:
-            return any(k.startswith("latent_control_") for k in f.keys())
+            return sum(1 for k in f.keys() if k.startswith("latent_control_"))
     except Exception:
-        return False
+        return 0
+
+
+def _has_controls(path):
+    return _control_count(path) > 0
 
 
 def encode_captions(driver, te, desc, dataset, items, *, skip_existing=False, references=False, on_progress=None):
@@ -263,7 +269,8 @@ def run_latents(desc, driver, dataset, model_path, device, *, skip_existing=Fals
     for it in items:
         if skip_existing and os.path.exists(it.latent_cache_path):
             ok = latent_cache_matches_reso(it.latent_cache_path, it.bucket_size, desc.spatial_factor)
-            if (ok and _has_controls(it.latent_cache_path) == bool(it.control_paths)
+            # a cache from before the pairs (or extra pictures) were added, or after they were removed, no longer fits
+            if (ok and _control_count(it.latent_cache_path) == len(it.control_paths or [])
                     and latent_rev(it.latent_cache_path) == LATENT_REV
                     and not latent_source_changed(it.latent_cache_path, it)):
                 continue
@@ -273,7 +280,9 @@ def run_latents(desc, driver, dataset, model_path, device, *, skip_existing=Fals
     print(f"[cache] latents 0/{len(todo)}", flush=True)
     for batch in dataset.latent_batches(todo, batch_size=1):
         for it, z in zip(batch, driver.encode_images(vae, [it.content for it in batch])):
-            ctrl = driver.encode_images(vae, it.control_content) if it.control_content else []
+            # one at a time: a multi-reference edit's extra pictures have their own shapes, and a driver may stack its
+            # batch (Klein) (Fizgig 8.1.1 families/cache.py:184-187)
+            ctrl = [driver.encode_images(vae, [c])[0] for c in (it.control_content or [])]
             save_latents(desc, it, z, ctrl)
         done += len(batch)
         print(f"[cache] latents {done}/{len(todo)}", flush=True)
@@ -345,11 +354,23 @@ def main(argv=None):
         raise SystemExit(f"{desc.display_name} has no slider training")
     if dataset.has_control and not args.slider and not driver.supports_references:
         raise SystemExit(f"{desc.display_name} has no edit training: remove the originals folder from the run")
-    if dataset.has_control:           # edit training and sliders are one partner per image
-        many = [it.item_key for it in dataset.source_items() if len(it.control_paths) > 1]
+    if dataset.has_control:
+        # a slider pairs one photo with one; an edit takes up to the family's references (Fizgig 8.1.1
+        # families/cache.py:164-170)
+        limit = 1 if args.slider else max(1, int(getattr(desc, "edit_references", 1)))
+        # every image needs its partner (Fizgig dataset/image_dataset.py:716-719): one without would train as plain
+        # text-to-image inside an edit / slider run
+        lone = [it.item_key for it in dataset.source_items() if not it.control_paths]
+        if lone:
+            raise SystemExit(f"{len(lone)} image(s) have no partner image in the "
+                             + ("other end's" if args.slider else "originals") + f" folder (e.g. "
+                             f"{', '.join(lone[:3])}): name each partner like its image (photo.png)")
+        many = [it.item_key for it in dataset.source_items() if len(it.control_paths) > limit]
         if many:
-            raise SystemExit(f"{len(many)} image(s) match more than one partner image (e.g. {', '.join(many[:3])}): "
-                             f"keep one per image, named the same")
+            raise SystemExit(f"{len(many)} image(s) match more than {limit} partner image(s) (e.g. "
+                             f"{', '.join(many[:3])}): {desc.display_name} takes "
+                             + ("one partner per image, named the same" if limit == 1 else
+                                f"up to {limit} (photo.png, then photo_1.png, photo_2.png ...)"))
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     with torch.no_grad():
         if args.stage == "latents":

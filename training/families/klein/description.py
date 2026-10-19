@@ -125,6 +125,9 @@ KLEIN_9B = FamilyDescription(
     #   fp8 file  eager 0.77 / 11.1   inside 0.69 / 11.9   outside fails (the driver compiles it inside)
     # First epoch while compiling: INT8 outside 4.2 s/step, NF4 inside 5.5 -> pays back after ~130 / ~380 steps.
     edit_training=True,               # Fizgig 7.0.1: Klein is an edit model, references ride after the image tokens
+    # BFL's FLUX.2 overview: [klein] "Up to 4" references; each gets its own time offset (sampling.pack_refs). The text
+    # encoder never sees them (Fizgig 8.1.1 families/klein.py:167-171)
+    edit_references=4,
     edit_note=("Pairs of an original and its edited version, the same crop and shape - about 40 pairs is a good "
                "start (20 at least). Each photo 1 MP or larger."),
     compiles=True,

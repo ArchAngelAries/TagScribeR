@@ -218,6 +218,10 @@ class FamilyDescription:
     family_options: tuple = ()
     edit_training: bool = False       # Edit LoRA from before/after pairs (the driver's supports_references)
     edit_note: str = ""               # the Edit LoRA section's "What you need" line: pair count and photo size
+    # the most before-images an edited photo may have (photo.png, then photo_1.png, photo_2.png ... in the Originals
+    # folder or the Extra pictures folder): the first is the original at the same crop, the others are extra
+    # references at their own shape. 1 = one original only (Fizgig 8.1.1 families/description.py:457-460)
+    edit_references: int = 1
     # Slider LoRAs (Fizgig 7.0.1): the LoRA's strength is a dial between two looks, trained from image pairs (the
     # driver's training_loss diff_ref) or from prompts (noise_latents / predict). slider_guidance: a prompt slider's
     # default push strength; slider_ultra_blocks: the block ids an "Ultra mode" slider trains (() = no Ultra mode)

@@ -10,7 +10,9 @@
 Dataset config (a dict; the run builder freezes it into the run folder as dataset.json):
 
     {"datasets": [{"image_directory": "...", "cache_directory": "...", "num_repeats": 1,
-                   "control_directory": "..."}],         # control_directory = edit pairs (optional)
+                   "control_directory": "...",            # control_directory = edit pairs (optional)
+                   "extra_reference_directory": "..."}],  # a multi-picture edit's extra pictures (optional):
+                                                          # photo_1.png, photo_2.png ... for photo.png
      "resolution": [704, 704],                           # target area; buckets keep the aspect ratio
      "caption_extension": ".txt", "batch_size": 1, "enable_bucket": true, "bucket_no_upscale": true,
      "caption_shuffle_variants": 0, "caption_keep_tokens": 0, "caption_dropout": 0.0, "caption_separator": ","}
@@ -195,6 +197,17 @@ class BucketSelector:
         return tuple(self.bucket_resolutions[int(np.abs(self.aspect_ratios - aspect_ratio).argmin())])
 
 
+def _own_shape(image, bucket_reso: Tuple[int, int], step: int) -> Tuple[int, int]:
+    """(width, height) at `bucket_reso`'s pixel count in `image`'s own aspect, snapped to `step` (Fizgig 8.1.1
+    dataset/image_dataset.py _own_shape): how a multi-picture edit's extra references are sized."""
+    from PIL import Image
+    w, h = image.size if isinstance(image, Image.Image) else (image.shape[1], image.shape[0])
+    area, ar = bucket_reso[0] * bucket_reso[1], w / h
+    nw = max(step, int(round((area * ar) ** 0.5 / step)) * step)
+    nh = max(step, int(round((area / ar) ** 0.5 / step)) * step)
+    return nw, nh
+
+
 def resize_image_to_bucket(image, bucket_reso: Tuple[int, int]) -> np.ndarray:
     """Scale to cover the bucket (Lanczos up, area down) and centre-crop. (width, height) in, (H, W, C) uint8 out."""
     from PIL import Image
@@ -232,20 +245,41 @@ class ItemInfo:
         self.content: Optional[np.ndarray] = None
         self.control_content: Optional[list] = None
         self.cache_directory: Optional[str] = None
+        self.control_signature: tuple = ()   # training: the cached before-image shapes (control_signature)
 
     def __repr__(self):
         return f"ItemInfo({self.item_key!r}, {self.original_size} -> {self.bucket_size})"
 
 
-def latent_cache_matches_reso(cache_file: str, bucket_reso: Tuple[int, int], spatial_factor: int) -> Optional[bool]:
-    """Does the cached latent match `bucket_reso` (pixel w, h)? The cache FILENAME encodes the original size, so a
-    cache written at another Target Megapixels has the same name; training on it would silently run at the old
-    resolution. Header-only read; None if unreadable."""
+def _latent_cache_keys(cache_file: str) -> Optional[list]:
+    """The tensor names of a latent cache (header only; None if unreadable)."""
     try:
         from safetensors import safe_open
         with safe_open(cache_file, framework="pt") as f:
-            keys = list(f.keys())
+            return list(f.keys())
     except Exception:
+        return None
+
+
+def control_signature(keys) -> tuple:
+    """The before-image tensors of a latent cache by index: (('0', '44x44'), ('1', '32x60'), ...). Items that stack in
+    one batch must share it (a multi-picture edit's extras have their own shapes)."""
+    out = []
+    for k in keys or []:
+        if k.startswith("latent_control_"):
+            _, _, i, hw = k.split("_", 3)
+            out.append((int(i), hw))
+    return tuple((str(i), hw) for i, hw in sorted(out))
+
+
+def latent_cache_matches_reso(cache_file: str, bucket_reso: Tuple[int, int], spatial_factor: int,
+                              keys=None) -> Optional[bool]:
+    """Does the cached latent match `bucket_reso` (pixel w, h)? The cache FILENAME encodes the original size, so a
+    cache written at another Target Megapixels has the same name; training on it would silently run at the old
+    resolution. Header-only read (or the tensor names already read); None if unreadable."""
+    if keys is None:
+        keys = _latent_cache_keys(cache_file)
+    if keys is None:
         return None
     expected = {int(bucket_reso[0]) // spatial_factor, int(bucket_reso[1]) // spatial_factor}
     for k in keys:
@@ -268,23 +302,57 @@ def _text_cache_caption(path: str) -> str:
         return ""
 
 
+def partner_order(stem: str, name: str) -> int:
+    """Where a partner file sorts among an image's partners (Fizgig 8.1.1 dataset/image_dataset.py _sort_key): the
+    exact name (photo.png, the original at the target's crop) first, then photo_1, photo_2 ... by their number, then
+    anything else."""
+    bn = os.path.splitext(os.path.basename(name))[0].casefold()
+    if bn == stem.casefold():
+        return 0
+    suffix = bn.rsplit("_", 1)[-1]
+    return int(suffix) + 1 if suffix.isdigit() else 999999
+
+
 def partners(stem: str, names) -> list:
     """The names in `names` that pair with an image whose file stem is `stem` (an edit's before-image, a slider's
-    other end): stem.<ext> or stem_<anything>.<ext>, ignoring case (Fizgig 7.0.1 families/launch.py pairs)."""
+    other end): stem.<ext> or stem_<anything>.<ext>, ignoring case (Fizgig 7.0.1 families/launch.py pairs), the exact
+    name first, then by number (partner_order)."""
     st = stem.casefold()
-    return [n for n in names if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS
-            and (n.casefold().startswith(st + ".") or n.casefold().startswith(st + "_"))]
+    found = [n for n in names if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS
+             and (n.casefold().startswith(st + ".") or n.casefold().startswith(st + "_"))]
+    return sorted(found, key=lambda n: (partner_order(stem, n), n))
 
 
-def _control_for(control_dir: str, stem: str) -> list:
-    """Edit pairs and image-pair sliders: the partner image(s) named like the image."""
-    if not control_dir:
-        return []
-    try:
-        names = sorted(os.listdir(control_dir))
-    except OSError:
-        return []
-    return [os.path.join(control_dir, n) for n in partners(stem, names)]
+def partner_map(stems, names) -> dict:
+    """{stem: [its partner names]} for every image stem: the longest stems claim their partners first and a claimed
+    name is nobody else's (Fizgig 8.1.1 dataset/image_dataset.py:681-696: photo_1.png is photo_1's own original when
+    photo_1 is itself an image, not an extra picture of photo). Stems with no partner are left out."""
+    free = set(names)
+    out = {}
+    for stem in sorted(stems, key=lambda s: (-len(s), s)):
+        m = partners(stem, free)
+        free.difference_update(m)
+        if m:
+            out[stem] = m
+    return out
+
+
+def _control_names(control_dir: str, extras_dir: str = "") -> dict:
+    """{file name: full path} of the partner images in the control folder and (a multi-picture edit) the extra
+    pictures folder (Fizgig 8.1.1 image_dataset.py:691-696 globs both into one set). A name in both folders is the
+    control folder's."""
+    out = {}
+    for d in (extras_dir, control_dir):
+        if not d:
+            continue
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for n in names:
+            if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS and os.path.isfile(os.path.join(d, n)):
+                out[n] = os.path.join(d, n)
+    return out
 
 
 # ---- the dataset ---------------------------------------------------------------------------------------------
@@ -318,7 +386,10 @@ class TrainingDataset:
         ext = self.config["caption_extension"]
         for d in self.config["datasets"]:
             img_dir, cache_dir = d["image_directory"], d["cache_directory"]
-            for path in glob_images(img_dir, ext):
+            paths = glob_images(img_dir, ext)
+            ctrl = _control_names(d.get("control_directory") or "", d.get("extra_reference_directory") or "")
+            pairs = partner_map([os.path.splitext(os.path.basename(p))[0] for p in paths], ctrl) if ctrl else {}
+            for path in paths:
                 stem = os.path.splitext(os.path.basename(path))[0]
                 if (cache_dir, stem) in seen:
                     logger.warning(f"[dataset] {os.path.basename(path)} and {os.path.basename(seen[(cache_dir, stem)])} "
@@ -336,13 +407,15 @@ class TrainingDataset:
                               latent_cache_path(cache_dir, stem, size, self.arch))
                 it.text_encoder_output_cache_path = text_cache_path(cache_dir, stem, self.arch)
                 it.image_path, it.cache_directory = path, cache_dir
-                it.control_paths = _control_for(d.get("control_directory") or "", stem)
+                it.control_paths = [ctrl[n] for n in pairs.get(stem, [])]
                 items.append(it)
         return items
 
-    @staticmethod
-    def load_pixels(item: ItemInfo) -> None:
-        """Fill item.content (and control_content) at the item's bucket size: RGB / RGBA uint8 (H, W, C)."""
+    def load_pixels(self, item: ItemInfo) -> None:
+        """Fill item.content (and control_content) at the item's bucket size: RGB / RGBA uint8 (H, W, C). The first
+        before-image is the original at the target's crop; extra references (photo_1, photo_2 ... of a multi-picture
+        edit) keep their own shape at the target's pixel count, as BFL's reference sizes them (Fizgig 8.1.1
+        dataset/image_dataset.py:1080-1085)."""
         from PIL import Image
         img = Image.open(item.image_path)
         if img.mode not in ("RGB", "RGBA"):
@@ -350,11 +423,12 @@ class TrainingDataset:
         item.content = resize_image_to_bucket(img, item.bucket_size)
         if item.control_paths:
             ctrl = []
-            for cp in item.control_paths:
+            for i, cp in enumerate(item.control_paths):
                 c = Image.open(cp)
                 if c.mode not in ("RGB", "RGBA"):
                     c = c.convert("RGB")
-                ctrl.append(resize_image_to_bucket(c, item.bucket_size))
+                ctrl.append(resize_image_to_bucket(c, item.bucket_size if i == 0 else
+                                                   _own_shape(c, item.bucket_size, self.bucket_step)))
             item.control_content = ctrl
 
     def latent_batches(self, items: list, batch_size: int = 1):
@@ -380,14 +454,11 @@ class TrainingDataset:
         for d in self.config["datasets"]:
             cache_dir, img_dir = d["cache_directory"], d["image_directory"]
             valid = None
-            control_dir = d.get("control_directory") or ""
-            try:
-                control_names = sorted(os.listdir(control_dir)) if control_dir else []
-            except OSError:
-                control_names = []
+            ctrl = _control_names(d.get("control_directory") or "", d.get("extra_reference_directory") or "")
             if img_dir and os.path.isdir(img_dir):
                 valid = {os.path.splitext(f)[0] for f in os.listdir(img_dir)
                          if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS}
+            found = []                       # (item_key, w, h, cache_file)
             for cache_file in glob.glob(os.path.join(glob.escape(cache_dir), f"*_{self.arch}.safetensors")):
                 tokens = os.path.basename(cache_file).split("_")
                 try:
@@ -398,18 +469,24 @@ class TrainingDataset:
                 if valid is not None and item_key not in valid:
                     skipped_stale += 1
                     continue
+                found.append((item_key, w, h, cache_file))
+            # the partner images are claimed by the longest names first, as the cache stage paired them
+            pairs = partner_map([k for k, *_ in found], ctrl) if ctrl else {}
+            for item_key, w, h, cache_file in found:
                 te = text_cache_path(cache_dir, item_key, self.arch)
                 if not os.path.exists(te):
                     missing_te += 1
                     continue
                 bucket = self.selector.get_bucket_resolution((w, h))
-                if latent_cache_matches_reso(cache_file, bucket, self.spatial_factor) is False:
+                keys = _latent_cache_keys(cache_file)
+                if latent_cache_matches_reso(cache_file, bucket, self.spatial_factor, keys) is False:
                     skipped_reso += 1
                     continue
                 # the caption the text cache was encoded from, and the partner image(s): the loss watch re-encodes a
                 # fixed caption from these (an Edit LoRA's text cache must keep seeing its reference image)
                 it = ItemInfo(item_key, _text_cache_caption(te), (w, h), bucket, cache_file)
-                it.control_paths = [os.path.join(control_dir, n) for n in partners(item_key, control_names)]
+                it.control_paths = [ctrl[n] for n in pairs.get(item_key, [])]
+                it.control_signature = control_signature(keys)
                 it.text_encoder_output_cache_path = te
                 it.cache_directory = cache_dir
                 it.image_path = next((os.path.join(img_dir, item_key + e) for e in IMAGE_EXTENSIONS
@@ -442,6 +519,19 @@ class TrainingDataset:
         for reso in sorted(self.buckets):
             bucket = self.buckets[reso]
             rng.shuffle(bucket)
+            sigs = {it.control_signature for it in bucket}
+            if self.batch_size > 1 and len(sigs) > 1:
+                # TagScribeR trains batches above 1: items only stack with the same before-image shapes (a multi-
+                # picture edit's extras keep their own), so the bucket is dealt out by signature, shuffled order kept
+                groups = {}
+                for it in bucket:
+                    groups.setdefault(it.control_signature, []).append(it)
+                bucket[:] = [it for s in sorted(groups) for it in groups[s]]
+                start = 0
+                for s in sorted(groups):
+                    self.batches += [(reso, start + i) for i in range(0, len(groups[s]), self.batch_size)]
+                    start += len(groups[s])
+                continue
             self.batches += [(reso, i) for i in range(0, len(bucket), self.batch_size)]
         rng.shuffle(self.batches)
 
@@ -468,6 +558,8 @@ class TrainingDataset:
         rng = rng or random.Random()
         reso, start = self.batches[idx]
         chunk = self.buckets[reso][start:start + self.batch_size]
+        # a bucket dealt out by reference shapes (shuffle): a group's last batch stops at the group's end
+        chunk = [it for it in chunk if it.control_signature == chunk[0].control_signature]
         data: dict = {}
         for it in chunk:
             sd = {**load_file(it.latent_cache_path), **load_file(self._text_file(it, rng))}

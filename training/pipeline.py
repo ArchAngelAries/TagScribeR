@@ -113,6 +113,59 @@ def edit_on(desc, values) -> bool:
     return bool(desc.edit_training and values.get("FAMILY_EDIT"))
 
 
+# the Edit pairs card's "What the edit uses" choice (a family with edit_references > 1): FAMILY_EDIT_PICTURES, and the
+# extra pictures folder FAMILY_EDIT_EXTRAS_DIR (Fizgig 8.1.1 families/launch.py:79-86)
+EDIT_PHOTO_ONLY, EDIT_WITH_EXTRAS = "The photo only", "The photo + extra pictures"
+
+
+def edit_extras_on(desc, values) -> bool:
+    """An edit with extra pictures from their own folder (photo_1, photo_2 ... for photo.png)."""
+    return (edit_on(desc, values) and int(getattr(desc, "edit_references", 1)) > 1
+            and str(values.get("FAMILY_EDIT_PICTURES") or "").strip() == EDIT_WITH_EXTRAS)
+
+
+def preview_extras(desc, values, photo: str) -> list:
+    """The extra pictures folder's pictures for `photo` (photo_1, photo_2 ... by their number), up to the model's
+    count; [] outside a multi-picture edit (Fizgig launch.py:89-103)."""
+    xdir = str(values.get("FAMILY_EDIT_EXTRAS_DIR") or "").strip()
+    if not edit_extras_on(desc, values) or not xdir or not os.path.isdir(xdir):
+        return []
+    stem = os.path.splitext(os.path.basename(photo))[0].casefold()
+    found = []
+    for f in os.listdir(xdir):
+        b, e = os.path.splitext(f)
+        head, _, n = b.rpartition("_")
+        if e.lower() in IMAGE_EXTENSIONS and n.isdigit() and head.casefold() == stem:
+            found.append((int(n), os.path.join(xdir, f)))
+    return [p for _, p in sorted(found)][:max(0, int(desc.edit_references) - 1)]
+
+
+def edit_extras(after_dir: str, extras_dir: str, test_photo: str = "") -> tuple[dict, list, list]:
+    """({edited photo: its extra pictures}, extras with no edited photo, extras named exactly as a photo) for the
+    extra pictures folder: photo_1.png, photo_2.png ... belong to photo.png. The test photo's own extras (test_1 ...
+    for the previews) are neither (Fizgig launch.py:105-130)."""
+    photos = {os.path.splitext(f)[0].casefold(): f for f in os.listdir(after_dir)
+              if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS}
+    test_stem = os.path.splitext(os.path.basename(test_photo))[0].casefold() if test_photo else ""
+    found, orphans, misnamed = {}, [], []
+    for f in sorted(os.listdir(extras_dir)):
+        b, e = os.path.splitext(f)
+        if e.lower() not in IMAGE_EXTENSIONS:
+            continue
+        if b.casefold() in photos:
+            misnamed.append(f)
+            continue
+        stem, _, n = b.rpartition("_")
+        owner = photos.get(stem.casefold()) if n.isdigit() else None
+        if owner is None and n.isdigit() and test_stem and stem.casefold() == test_stem:
+            continue                      # the test photo's extras: its previews use them
+        if owner is None:
+            orphans.append(f)
+        else:
+            found.setdefault(owner, []).append(f)
+    return found, orphans, misnamed
+
+
 def _choice_word(values, key) -> str:
     return P.first_token(values.get(key) or P.BY_KEY[key].default).lower()
 
@@ -205,18 +258,20 @@ def sample_prompts(values) -> list[str]:
 
 def edit_pairs(image_folder: str, originals: str) -> tuple[list, list, str | None]:
     """(matched stems, images with no partner, the first partner's path) for an Edit LoRA's or an image-pair slider's
-    two folders, matched as the dataset matches them (training.dataset.partners)."""
-    from training.dataset import partners
+    two folders, matched as the dataset matches them (training.dataset.partner_map: the longest stems claim first, so
+    photo_1.png is photo_1's own original and not counted for photo)."""
+    from training.dataset import partner_map
     def names(folder):
         try:
             return sorted(n for n in os.listdir(folder) if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS)
         except OSError:
             return []
-    before = names(originals)
+    after = names(image_folder)
+    claimed = partner_map([os.path.splitext(n)[0] for n in after], names(originals))
     matched, missing, first = [], [], None
-    for n in names(image_folder):
+    for n in after:
         stem = os.path.splitext(n)[0]
-        m = partners(stem, before)
+        m = claimed.get(stem)
         if m:
             matched.append(stem)
             first = first or os.path.join(originals, m[0])
@@ -230,15 +285,16 @@ def pair_problems(image_folder: str, other: str) -> tuple[list, list]:
     each, at the same framing (Fizgig 7.0.1 pair_problems)."""
     from PIL import Image
 
-    from training.dataset import partners
+    from training.dataset import partner_map
     try:
         before = sorted(os.listdir(other))
         after = sorted(n for n in os.listdir(image_folder) if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS)
     except OSError:
         return [], []
+    claimed = partner_map([os.path.splitext(n)[0] for n in after], before)     # as the dataset pairs them
     multiple, shapes = [], []
     for n in after:
-        m = partners(os.path.splitext(n)[0], before)
+        m = claimed.get(os.path.splitext(n)[0], [])
         if len(m) > 1:
             multiple.append(n)
         elif len(m) == 1:
@@ -403,6 +459,30 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
                     f"(e.g. {', '.join(missing_o[:3])}).")
             elif matched:
                 info(f"Edit LoRA: {len(matched)} before/after pair(s).")
+        if edit_extras_on(desc, values):
+            xdir = str(values.get("FAMILY_EDIT_EXTRAS_DIR") or "").strip()
+            most = int(desc.edit_references) - 1
+            ref = str(values.get("FAMILY_EDIT_REF") or "").strip()
+            if not xdir or not os.path.isdir(xdir):
+                err("Edit LoRA with extra pictures: set the Extra pictures folder (Train tab, Edit pairs).")
+            elif os.path.isdir(image_folder):
+                found, orphans, misnamed = edit_extras(image_folder, xdir, test_photo=ref)
+                over = [p for p, xs in found.items() if len(xs) > most]
+                if not found:
+                    err(f"Edit LoRA: no extra pictures in {xdir} belong to an edited photo - name them after it: "
+                        f"photo_1.png, photo_2.png ... for photo.png")
+                else:
+                    info(f"Edit LoRA: {sum(len(xs) for xs in found.values())} extra picture(s) for {len(found)} "
+                         f"photo(s).")
+                if over:
+                    err(f"Edit LoRA: {len(over)} photo(s) have more than {most} extra pictures (e.g. "
+                        f"{', '.join(over[:3])}) - {desc.display_name} takes up to {most} per photo.")
+                if misnamed:
+                    err(f"Edit LoRA: {len(misnamed)} extra picture(s) are named exactly as a photo (e.g. "
+                        f"{', '.join(misnamed[:3])}) - add _1, _2 ... (photo_1.png for photo.png).")
+                if orphans:
+                    err(f"Edit LoRA: {len(orphans)} extra picture(s) belong to no edited photo (e.g. "
+                        f"{', '.join(orphans[:3])}) - name each after its photo: photo_1.png for photo.png.")
     if resume:
         if not os.path.isfile(os.path.join(resume, "training_state.json")):
             err(f"Resume: {resume} is not a saved training state.")
@@ -476,6 +556,8 @@ def dataset_config(desc, values: dict, image_folder: str, cache_root_dir: Path |
           "num_repeats": max(1, int(values.get("DATASET_REPEATS") or 1))}
     if edit_on(desc, values) and not slider_on(desc, values) and values.get("FAMILY_EDIT_DIR"):
         ds["control_directory"] = os.path.abspath(str(values["FAMILY_EDIT_DIR"]))
+        if edit_extras_on(desc, values) and values.get("FAMILY_EDIT_EXTRAS_DIR"):
+            ds["extra_reference_directory"] = os.path.abspath(str(values["FAMILY_EDIT_EXTRAS_DIR"]))
     elif slider_on(desc, values, "pairs") and values.get("FAMILY_SLIDER_DIR"):
         ds["control_directory"] = os.path.abspath(str(values["FAMILY_SLIDER_DIR"]))   # the -1 end
     return {"datasets": [ds], "resolution": [side, side],
@@ -633,7 +715,9 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                 ref = str(values.get("FAMILY_EDIT_REF") or "").strip() or \
                     (edit_pairs(image_folder, str(values.get("FAMILY_EDIT_DIR") or ""))[2] or "")
                 if ref:
-                    kw["sample_reference"] = [ref]
+                    # a multi-picture edit previews with the photo's own extras (test.jpg -> test_1, test_2 ... in
+                    # the extra pictures folder; the first original's when no test photo is set)
+                    kw["sample_reference"] = [ref, *preview_extras(desc, values, ref)]
     return kw, prompts
 
 

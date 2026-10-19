@@ -142,6 +142,10 @@ QWEN_IMAGE_21 = FamilyDescription(
     optimizers=("adamw8bit", "adamw", "pagedadamw8bit", "ademamix8bit", "pagedademamix8bit", "lion8bit", "automagic3"),
     network_types=("lora", "lokr"),
     edit_training=True,             # one checkpoint for text-to-image and edits (up to 10 references)
+    # the edited photo first, then up to 9 supporting references; the text encoder sees them all at the dataset's
+    # resize (own shape, the 32 px grid), which is what both the vision pass and the latents get (Fizgig 8.1.2
+    # families/qwen_image.py:158-161)
+    edit_references=10,
     # Fast Identity Mode (2 Oct 2026, Sydney, 119 photos, 0.25 MP, 30 epochs, ArcFace vs her photos): blocks 10-14
     # alone 2.90 it/s vs 1.84 for every block (+58%), likeness .507/.587/.620 at epochs 10/20/30 vs .490/.596/.556.
     # One seed per run; Lara (0.5 MP, 15 epochs) matched at epoch 10 and trailed at 15.

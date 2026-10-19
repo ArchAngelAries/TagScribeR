@@ -237,6 +237,37 @@ each to `requirements.txt` and the installer in the stage that first needs it.
   - The H3 tokenizer: Fizgig bundles Qwen/Qwen3-VL-4B-Instruct's files unmodified (its `assets/qwen3vl_tokenizer/
     ATTRIBUTION.md`), the repo TagScribeR's helper files name - the audit's open question is closed.
   - Krea 2 extras beyond the audit: port them as their stages come.
+- **Technical calls for `VISION.md` and `UI_UX_RESEARCH.md`** (the owner, 2026-10-19: "the technical stuff on
+  packages I need you to decide"; decided by the lead, recorded so later sessions do not ask):
+  - Charts stay on `QPainter`; no `pyqtgraph`.
+  - Theme: a token module (`tabs/theme.py`) generating one stylesheet, introduced in stages with a visual check of
+    every tab. `qt_material` and its light / dark themes stay selectable until the token themes cover them (rule 2);
+    they are retired only with the owner's go.
+  - Keyboard: Ctrl+1..7 keep their current tabs; any sidebar regrouping is visual only.
+  - Listening network code (a runner service, a status page): localhost-only until the user sets a token or
+    password, and an audit 08-10 style security review is a precondition for merging it to `main`.
+  - Webhook notifications (ntfy, Discord): off by default; the thumbnail is a separate tick; nothing leaves the
+    machine without the user's explicit setting.
+  - A local VLM during a run: queued until the run ends when it would share the training GPU; an API source may run
+    alongside. Help says so.
+  - Resume on a card that plans another precision: keep the saved precision and block swap (a run's numerics do not
+    change mid-run), warn, and say in the console how to start fresh instead.
+  - Face detection before stage 7: YuNet through the already-installed `onnxruntime` (CPU), replaced by insightface
+    when the face tools land.
+  - Embedding index (SigLIP / CLIP, about 400 MB): opt-in per folder, downloaded on first use; the hash-based
+    health scan stays the default.
+  - Pod templates, if any: no referral codes.
+  - Mid-run dataset edits beyond captions: not now (Fizgig does captions only); revisit after the remote runner.
+- **Product calls on `VISION.md` / `UI_UX_RESEARCH.md` (the owner, 2026-10-19):**
+  - Remote: head for VISION's "all the way" (TagScribeR usable from a browser, a phone, another PC, a pod) while the
+    desktop app stays the primary product. The owner has no budget for cloud testing, so every step must be
+    buildable and testable on one PC: the headless runner and portable run bundle first, then a runner service
+    tested on localhost and the home network ("Train on: this PC / my other PC"), then a web front-end served by it.
+    Pod support is written against the same service and documented as not run on a real pod.
+  - Visual redesign: in parallel with the training ports (different files): the token theme and quick wins first.
+  - Caption layers: yes, optional and off by default; the `.txt` stays an ordinary caption that any tool reads and
+    that can still be edited by hand.
+  - Video dataset tools: in scope, later (after the image work and H3 clips, stage 6).
 - **Orchestration (the owner, 2026-10-19):** see `CLAUDE.md`. The lead plans, integrates and checks; Sonnet for narrow
   execution; Fable for audits, design, improvements, objective review before commits, and bug / exploit hunts.
 - **App features asked for by the owner:** camera EXIF presets in the Metadata tab (done 2026-10-19; the exact EXIF

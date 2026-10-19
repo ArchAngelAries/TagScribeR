@@ -29,11 +29,12 @@ class Watch:
 
     def __init__(self, output_dir, dataset, driver, *, log=False, per_image_lr=False, auto_recaption=False,
                  warmup_look=False, resume=False, start_epoch=0, te_path=None, trigger_word=None,
-                 trigger_position="start", captioner=None):
+                 trigger_position="start", captioner=None, slider=False):
         from training.loss_logger import PerImageLossWatch, is_enabled as env_on
         self.output_dir, self.dataset, self.driver, self.te_path = output_dir, dataset, driver, te_path
         self.trigger_word, self.trigger_position = trigger_word, trigger_position
         self.captioner = captioner or {}
+        self.slider = bool(slider)           # a slider's partner images are its other pole, not a reference
         self.recaptioned = {}
         self.watch = None
         if not resume:
@@ -206,7 +207,7 @@ class Watch:
     def _reencode(self, todo, device):
         """Re-encode the fixed captions into the cache (the loader reads these files every step)."""
         from training import cache
-        refs = any(getattr(item, "control_paths", None) for _, item, _, _ in todo)
+        refs = not self.slider and any(getattr(item, "control_paths", None) for _, item, _, _ in todo)
         te = (self.driver.load_reference_text_encoder(self.te_path, device) if refs
               else self.driver.load_text_encoder(self.te_path, device))
         try:

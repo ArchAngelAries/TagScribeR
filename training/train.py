@@ -119,9 +119,16 @@ def _slider_strip(frames, multipliers):
 def _pair_slider_caption(dataset):
     """The caption an image-pair slider's photos share (the most common one if they were edited apart)."""
     from collections import Counter
+    from training.dataset import read_caption
     counts = Counter()
+    ext = dataset.config.get("caption_extension") or ".txt"
     for it in dataset.items().values():
         text = str(getattr(it, "caption", "") or "").strip()
+        if not text and getattr(it, "image_path", None):      # an item without its caption: the file itself
+            try:
+                text = read_caption(it.image_path, ext).strip()
+            except Exception:  # noqa: BLE001 - an unreadable caption file is just not counted
+                text = ""
         if text:
             counts[text] += 1
     return counts.most_common(1)[0][0] if counts else None
@@ -189,6 +196,16 @@ def _save_state(output_dir, output_name, net, optimizer, *, epoch, global_step, 
     return state_dir
 
 
+def _torch_load(path, map_location):
+    """torch.load for a resume file, restricted to tensors and plain types (weights_only): a state folder from
+    someone else cannot run code. _save_state writes optimizer / EMA / RNG state only, all of which fit."""
+    try:
+        return torch.load(path, map_location=map_location, weights_only=True)
+    except Exception as e:  # noqa: BLE001 - pickle raises several types for a refused global
+        raise RuntimeError(f"[resume] {os.path.basename(path)} could not be read safely ({type(e).__name__}: {e}). "
+                           f"Only state folders written by TagScribeR's trainer can be resumed.") from e
+
+
 def _load_state(state_dir, net, optimizer, device):
     for need in ("lora.safetensors", "optimizer.pt", "training_state.json"):
         if not os.path.isfile(os.path.join(state_dir, need)):
@@ -197,11 +214,11 @@ def _load_state(state_dir, net, optimizer, device):
     if net.load_trainable(os.path.join(state_dir, "lora.safetensors")) == 0:
         raise RuntimeError(f"[resume] {state_dir} matched none of this LoRA's modules - different rank or "
                            f"target modules?")
-    optimizer.load_state_dict(torch.load(os.path.join(state_dir, "optimizer.pt"), map_location=device))
+    optimizer.load_state_dict(_torch_load(os.path.join(state_dir, "optimizer.pt"), device))
     rng_path = os.path.join(state_dir, "rng.pt")
     if os.path.exists(rng_path):
         try:
-            rng = torch.load(rng_path)
+            rng = _torch_load(rng_path, "cpu")
             torch.set_rng_state(rng["torch"])
             if "cuda" in rng and torch.cuda.is_available():
                 torch.cuda.set_rng_state_all(rng["cuda"])
@@ -864,13 +881,14 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         if adaptive:
             adaptive.load_state_dict(meta.get("adaptive_lr_state"))
         if ema is not None and os.path.exists(os.path.join(resume_state_dir, "ema.pt")):
-            ema.load_state_dict(torch.load(os.path.join(resume_state_dir, "ema.pt"), map_location="cpu"))
+            ema.load_state_dict(_torch_load(os.path.join(resume_state_dir, "ema.pt"), "cpu"))
         logger.info(f"[resume] from {resume_state_dir}: continuing at epoch {start_epoch + 1}/{max_train_epochs}")
     from training.loss_watch import Watch
     watch = Watch(output_dir, dataset, driver, log=log_per_image_loss, per_image_lr=per_image_lr,
                   auto_recaption=auto_recaption, warmup_look=warmup_look_outliers,
                   resume=bool(resume_state_dir), start_epoch=start_epoch, te_path=te_path,
-                  trigger_word=trigger_word, trigger_position=trigger_position, captioner=captioner)
+                  trigger_word=trigger_word, trigger_position=trigger_position, captioner=captioner,
+                  slider=slider)
     scheduler = None
     if not adaptive and not owns_its_rate(optimizer):
         scheduler = _step_scheduler(optimizer, lr_scheduler, lr_warmup_steps, opt_steps_per_epoch * max_train_epochs,

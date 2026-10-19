@@ -278,6 +278,11 @@ def apply(preset: dict, current: dict, desc=None) -> tuple[dict, P.ApplyReport]:
                 rep.refused.append((key, value, str(e)))
                 continue
         rep.applied[key] = out[key]
+        if (key in P.PATH_KEYS and str(out[key]).strip().lower() not in ("", "off")
+                and out[key] != current.get(key)):                    # your own value restored: nothing to flag
+            # a shared preset can point the run at a folder or file of its author's choosing: say so
+            rep.notes.append(f"[preset] also set {param.label} ({key}) to '{out[key]}' - check that this is "
+                             f"where you want it")
     return out, rep
 
 

@@ -562,7 +562,9 @@ class TrainTab(QWidget):
 
     def _latest_state(self):
         from training.train_utils import latest_state_dir
-        rd = pipeline.run_dir_for(self.collect())
+        rd = self._run_dir_or_say()
+        if rd is None:
+            return
         s = latest_state_dir(str(rd), str(self.values.get("LORA_NAME", "")).strip())
         if s:
             self.inp_resume.setText(s)
@@ -725,8 +727,18 @@ class TrainTab(QWidget):
         self._launch(self.desc, values, folder, resume)
 
     def models_for(self, desc) -> dict:
-        return {f.pref_key: str(self.cfg.get(pipeline.model_setting_key(f.pref_key), "") or "").strip()
-                for f in desc.model_files}
+        """The model files set for `desc`. A stored path to a file a newer one replaces (ModelFile.replaces, e.g. Qwen's
+        training adapter v1 -> v2) moves to the new file once it is on disk, and the setting is updated."""
+        out = {}
+        for f in desc.model_files:
+            key = pipeline.model_setting_key(f.pref_key)
+            stored = str(self.cfg.get(key, "") or "").strip()
+            moved = f.migrate(stored, os.path.isfile)
+            if moved != stored:
+                self.cfg.set(key, moved)
+                log.info("[models] %s: %s -> %s (the newer file replaces it)", f.label, stored, moved)
+            out[f.pref_key] = moved
+        return out
 
     def _launch(self, desc, values, folder, resume=""):
         models = self.models_for(desc)
@@ -976,10 +988,25 @@ class TrainTab(QWidget):
 
     # ---- windows --------------------------------------------------------------------------------------
     def _run_dir(self):
-        return self.run.run_dir if self.run else pipeline.run_dir_for(self.collect())
+        """The run folder for the current LoRA name, or None while the name is not a valid one (half typed)."""
+        if self.run:
+            return self.run.run_dir
+        try:
+            return pipeline.run_dir_for(self.collect())
+        except ValueError:
+            return None
+
+    def _run_dir_or_say(self):
+        rd = self._run_dir()
+        if rd is None:
+            QMessageBox.information(self, "LoRA name", "Give the LoRA a valid name first (letters, digits, '-' and "
+                                    "'_'; no folders).")
+        return rd
 
     def open_problem_images(self):
-        rd = self._run_dir()
+        rd = self._run_dir_or_say()
+        if rd is None:
+            return
 
         def saved(paths):
             try:
@@ -991,17 +1018,24 @@ class TrainTab(QWidget):
         dlg.show()
 
     def open_override(self):
-        SampleOverrideDialog(str(self._run_dir()), self).exec()
+        rd = self._run_dir_or_say()
+        if rd is not None:
+            SampleOverrideDialog(str(rd), self).exec()
 
     def open_run_folder(self):
-        rd = self._run_dir()
+        rd = self._run_dir_or_say()
+        if rd is None:
+            return
         rd.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(rd)))
 
     def _refresh_samples(self):
         if not self.isVisible():
             return
-        files = list(reversed(pipeline.samples(self._run_dir())))[:60]
+        rd = self._run_dir()
+        if rd is None:
+            return
+        files = list(reversed(pipeline.samples(rd)))[:60]
         have = [self.samples.item(i).data(Qt.UserRole) for i in range(self.samples.count())]
         if have == [str(p) for p in files]:
             return

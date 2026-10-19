@@ -27,12 +27,12 @@ rest of stage 5 (fine-tune, DOP, Multi Concept), (4) new families, (5) improveme
 ### Fixes (from the reviews; each lands with a regression test)
 
 - [x] EXIF blocks written with a doubled / forbidden `Exif\0\0` header (09 #1): every metadata write.
-- [ ] Training (08): mid-run caption fix on an Edit LoRA run re-encodes without its reference (#1, high); latent
+- [x] Training (08; plus the review's: the Train tab tolerates a half-typed name, FAT32 / cloud-sync time shifts re-encode only when a file is newer, pre-stamp text caches notice a newer partner): mid-run caption fix on an Edit LoRA run re-encodes without its reference (#1, high); latent
   cache reused after an in-place edit (#2; Fizgig 8.4.0 re-encodes on mtime); a caption extension that names an image
   type overwrites images (#3); image-pair slider previews never use the pairs' caption (#4); stale-cache glob can
   delete another family's cache (#5); `run_dir_for` unvalidated (#6); resume `torch.load` without
   `weights_only=True` (#8); path keys applied from an imported preset are named in the report (#7).
-- [ ] Shared layer (05 #1): block swap pairs a bare block with a LoRA-wrapped one (Fizgig #199) - H3 with swap.
+- [x] Shared layer (05 #1): block swap pairs a bare block with a LoRA-wrapped one (Fizgig #199) - H3 with swap.
 - [x] App core (09 #2-#9; and the review's findings: export leaked XMP, XMP orientation, 16-bit orientation; caption writes refuse image names): editor "Overwrite originals" convert without confirmation; collection copy overwrites a
   caption; in-place edits drop PNG text / XMP and ignore the quality slider; 16-bit PNGs clipped; header-size guard
   before decoding huge images; UTF-16 captions; file modes and fsync in atomic writers; assorted (inspector shows a

@@ -15,6 +15,7 @@ captions that changed. Cache files whose image is gone are removed afterwards (u
 import argparse
 import logging
 import os
+import re
 import sys
 
 import torch
@@ -39,6 +40,21 @@ def _dtype_str(dt) -> str:
     return str(dt).replace("torch.", "")
 
 
+def source_stamp(path) -> str:
+    """'mtime_ns:bytes' of an image file ("" if it cannot be read): what a cache records about the picture it was
+    made from, so an in-place edit at the same pixel size is noticed."""
+    try:
+        st = os.stat(path)
+    except (OSError, TypeError):
+        return ""
+    return f"{st.st_mtime_ns}:{st.st_size}"
+
+
+def control_stamps(item) -> str:
+    """The same stamp for each of an item's partner (before / other-pole) images, comma-joined."""
+    return ",".join(source_stamp(p) for p in (item.control_paths or []))
+
+
 def save_latents(desc, item, latent, controls=()):
     from safetensors.torch import save_file
     _, h, w = latent.shape
@@ -48,7 +64,8 @@ def save_latents(desc, item, latent, controls=()):
         sd[f"latent_control_{i}_{c.shape[-2]}x{c.shape[-1]}"] = _clean(c, "control latent", item.item_key)
     save_file(sd, item.latent_cache_path, metadata={
         "architecture": desc.arch_id, "width": str(item.original_size[0]), "height": str(item.original_size[1]),
-        "dtype": _dtype_str(latent.dtype), "format_version": FORMAT_VERSION, "latent_rev": LATENT_REV})
+        "dtype": _dtype_str(latent.dtype), "format_version": FORMAT_VERSION, "latent_rev": LATENT_REV,
+        "source_stamp": source_stamp(item.image_path), "control_stamps": control_stamps(item)})
 
 
 def latent_rev(path) -> str:
@@ -61,12 +78,50 @@ def latent_rev(path) -> str:
         return ""
 
 
+def _newer_than(files, cache_path) -> bool:
+    """Is any of `files` newer than the cache file (Fizgig 8.4.0's rule, scripts/cache_latents.py `_newer`)?"""
+    try:
+        cache_t = os.path.getmtime(cache_path)
+        return any(os.path.getmtime(p) > cache_t for p in files if p)
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _stamps_differ(old, new, files, cache_path) -> bool:
+    """Do two comma-joined 'mtime_ns:bytes' stamps describe changed files? A size change always counts. A change of
+    the time alone counts only when a file is also newer than the cache: FAT32 shifts reported times by an hour at a
+    daylight-saving change and cloud sync re-touches files, which must not re-encode a whole dataset."""
+    if old == new:
+        return False
+    a, b = old.split(","), new.split(",")
+    if len(a) != len(b) or any(x.partition(":")[2] != y.partition(":")[2] for x, y in zip(a, b)):
+        return True
+    return _newer_than(files, cache_path)
+
+
+def latent_source_changed(path, item) -> bool:
+    """Was the picture (or a partner image) changed after this latent cache was written? A cache with a stamp is
+    compared with the files' mtime_ns and size now. A cache from before the stamp is judged the way Fizgig 8.4.0 does
+    (scripts/cache_latents.py `_newer`): re-encoded only if the image is newer than the cache file, otherwise KEPT -
+    no one-time full re-encode of every existing cache."""
+    try:
+        from safetensors import safe_open
+        with safe_open(path, framework="pt") as f:
+            md = f.metadata() or {}
+    except Exception:
+        return False
+    if "source_stamp" in md:
+        return (_stamps_differ(md.get("source_stamp", ""), source_stamp(item.image_path), [item.image_path], path)
+                or _stamps_differ(md.get("control_stamps", ""), control_stamps(item), item.control_paths or [], path))
+    return _newer_than([item.image_path, *(item.control_paths or [])], path)
+
+
 def _ref_sizes(item):
     """'WxH,WxH' of an item's before-images as cached (the text cache is only valid at these)."""
     return ",".join(f"{c.shape[1]}x{c.shape[0]}" for c in (item.control_content or []))
 
 
-def save_cond(desc, item, cond, refs="", path=None, caption=None):
+def save_cond(desc, item, cond, refs="", path=None, caption=None, stamp=""):
     """Write one conditioning file (the item's own text cache unless `path` is given, e.g. a shuffle variant)."""
     from safetensors.torch import save_file
     path = path or item.text_encoder_output_cache_path
@@ -77,22 +132,31 @@ def save_cond(desc, item, cond, refs="", path=None, caption=None):
         md["text_rev"] = desc.text_cache_rev
     if refs:
         md["reference_sizes"] = refs
+    if stamp:
+        md["reference_stamp"] = stamp
     tmp = path + ".tmp"
     save_file({f"cond__{k}": _clean(v, k, item.item_key) for k, v in cond.items()}, tmp, metadata=md)
     os.replace(tmp, path)          # the trainer may read this file mid-run (loss-watch caption fixes)
 
 
-def cached_matches(path, caption, refs="", rev=""):
+def cached_matches(path, caption, refs="", rev="", stamp="", partners=()):
     """An existing text cache that still fits: same caption, same before-image sizes and the family's current text
-    encoding revision (FamilyDescription.text_cache_rev)."""
+    encoding revision (FamilyDescription.text_cache_rev). With `stamp` (the before-images' mtime_ns and size), a
+    cache that recorded one must agree (_stamps_differ); a cache from before the stamp is kept unless a partner image
+    is newer than it (the latent caches' fallback)."""
     from safetensors import safe_open
     try:
         with safe_open(path, framework="pt") as f:
             md = f.metadata() or {}
     except Exception:
         return False
-    return (md.get("caption1") == caption and md.get("reference_sizes", "") == refs
-            and md.get("text_rev", "") == rev)
+    if not (md.get("caption1") == caption and md.get("reference_sizes", "") == refs and md.get("text_rev", "") == rev):
+        return False
+    if not stamp:
+        return True
+    if "reference_stamp" not in md:
+        return not _newer_than(partners, path)
+    return not _stamps_differ(md["reference_stamp"], stamp, partners, path)
 
 
 def _has_controls(path):
@@ -127,14 +191,16 @@ def encode_captions(driver, te, desc, dataset, items, *, skip_existing=False, re
     todo = []
     for it, cap, path in jobs:
         refs = _ref_sizes(it) if references else ""
-        if skip_existing and os.path.exists(path) and cached_matches(path, cap, refs, desc.text_cache_rev):
+        stamp = control_stamps(it) if references else ""
+        if skip_existing and os.path.exists(path) and cached_matches(path, cap, refs, desc.text_cache_rev, stamp,
+                                                                     it.control_paths or []):
             continue
         todo.append((it, cap, path, refs))
     written = 0
     if references:
         for n, (it, cap, path, refs) in enumerate(todo, 1):
             c = driver.encode_text_with_references(te, [cap], [it.control_content])[0]
-            save_cond(desc, it, c, refs, path=path, caption=cap)
+            save_cond(desc, it, c, refs, path=path, caption=cap, stamp=control_stamps(it))
             written += 1
             if on_progress:
                 on_progress(n, len(todo))
@@ -158,19 +224,24 @@ def _remove_stale(dataset, items, keep_cache):
             for p in (it.latent_cache_path, it.text_encoder_output_cache_path)}
     keys = {(os.path.normcase(os.path.abspath(it.cache_directory)), it.item_key) for it in items}
     arch = dataset.arch
+    latent_re = re.compile(rf"^(.+)_\d{{4,}}x\d{{4,}}_{re.escape(arch)}\.safetensors$")     # latent_cache_path
+    text_re = re.compile(rf"^(.+)_{re.escape(arch)}_te(_s\d+)?\.safetensors$")             # text_cache_path
     for d in dataset.config["datasets"]:
         cdir = d["cache_directory"]
         ncdir = os.path.normcase(os.path.abspath(cdir))
-        for f in glob.glob(os.path.join(glob.escape(cdir), f"*_{arch}*.safetensors")):
+        for f in glob.glob(os.path.join(glob.escape(cdir), "*.safetensors")):
             name = os.path.basename(f)
             if name.startswith(f"{EMPTY_KEY}_{arch}_te"):
+                continue
+            # only the names THIS family writes (an image stem may itself contain "_<arch>": another family's cache)
+            m = latent_re.match(name) or text_re.match(name)
+            if m is None:
                 continue
             nf = os.path.normcase(os.path.abspath(f))
             if nf in keep:
                 continue
-            if "_te_s" in name:                 # a shuffle variant: kept while its item exists
-                stem = name[: name.rindex(f"_{arch}_te_s")]
-                if (ncdir, stem) in keys:
+            if m.re is text_re and m.group(2):      # a shuffle variant: kept while its item exists
+                if (ncdir, m.group(1)) in keys:
                     continue
             if keep_cache:
                 logger.info(f"Keeping stale cache: {name}")
@@ -193,7 +264,8 @@ def run_latents(desc, driver, dataset, model_path, device, *, skip_existing=Fals
         if skip_existing and os.path.exists(it.latent_cache_path):
             ok = latent_cache_matches_reso(it.latent_cache_path, it.bucket_size, desc.spatial_factor)
             if (ok and _has_controls(it.latent_cache_path) == bool(it.control_paths)
-                    and latent_rev(it.latent_cache_path) == LATENT_REV):
+                    and latent_rev(it.latent_cache_path) == LATENT_REV
+                    and not latent_source_changed(it.latent_cache_path, it)):
                 continue
         todo.append(it)
     logger.info(f"[cache] latents: {len(items)} image(s), {len(todo)} to encode")

@@ -259,14 +259,14 @@ for its linear attention yet — output is correct).</td></tr>
 <ul><li><b>Precision</b> — Auto picks bfloat16 on GPUs that support it (RX 7000+, RTX 30+), else float16.</li>
 <li><b>Quantization</b> — 8-bit/4-bit need bitsandbytes (installed by default; run <code>update.bat</code> if it is missing).</li>
 <li><b>Allow reasoning mode</b> — lets Qwen3.5+ “think” first. Slower; rarely better for captions.</li>
-<li><b>Allow this model to run its own code</b> — shown only for a model that needs it, asked for and remembered per
+<li><b>Allow this model to run its own code</b> — enabled only for a model that needs it, asked for and remembered per
 model (and revision). Models built on Transformers' own architectures never run code from their repository. Only for
 sources you trust.</li>
 <li>A download that stopped partway shows <i>incomplete</i>; <b>Download (resume)</b> continues it.</li>
 <li><b>Gated models</b> (Gemma): accept the licence on the model page, then run <code>hf auth login</code> or set
 <code>HF_TOKEN</code>.</li>
-<li><b>API servers:</b> each profile has a timeout and a retry count (automatic: a local server is not retried after
-a timeout, so a slow reply is never captioned twice). Changing the server address clears the API key, and a key that
+<li><b>API servers:</b> requests time out after 180 seconds and retry automatically: a local server is not retried
+after a timeout, so a slow reply is never captioned twice; a cloud service is retried twice. Changing the server address clears the API key, and a key that
 would travel over plain http to another machine is warned about. A reply the app can't read fails only that image;
 the batch continues.</li></ul>
 """),
@@ -576,15 +576,16 @@ an <b>fp8 / fp8-scaled RAW</b> file (about 13 GB). An fp8 file stays fp8 in memo
 bitsandbytes), then INT8 with block swap. On a machine that runs neither INT8 nor 4-bit, Auto uses fp8. INT8 and
 4-bit are made from whichever file you picked. Choose <b>fp8</b> yourself to train on the fp8 weights exactly as they
 ship (TagScribeR keeps this choice; Fizgig dropped it).</li>
-<li>The <b>Turbo LoRA</b> is optional and only for previews: the RAW model plus the LoRA renders in 8 steps without a
-second model. Leave it empty to preview the RAW model at 28 steps and CFG 4.5 (Fizgig's RAW recipe).</li>
+<li>The <b>Turbo LoRA</b> is optional and only for previews: the RAW model plus the LoRA at strength 0.7 renders in 10
+steps at CFG 1 without a second model (Fizgig's setup; the Samples Turbo strength box changes it). Leave it empty to
+preview the RAW model at 28 steps and CFG 4.5 (Fizgig's RAW recipe).</li>
 <li>Captions are encoded one at a time, as Fizgig does, so each caption's cache never depends on its neighbours.
 Krea 2 text caches made by older versions are re-encoded once on the next run (the image caches are kept).</li>
 <li>The text encoder file can be the fp8_scaled or the bf16 Qwen3-VL-4B. Each cached caption is about 30 MB, so
 leave room on the cache drive.</li>
 <li>Measured by Fizgig at 0.25 MP: INT8 about 16 GB, 4-bit about 11 GB, fp8 about 19 GB, bf16 about 26 GB (each
-swapped block saves about 0.4 GB, 0.8 GB on bf16). At 1 MP: INT8 about 19 GB, 4-bit about 13 GB. So on a 20 GB card
-Auto picks 4-bit for 1 MP training and INT8 for 0.25 MP. Each extra image in the batch adds about 2.4 GB.</li>
+swapped block saves about 0.4 GB, 0.8 GB on bf16). At 1 MP: INT8 about 19 GB, 4-bit about 15 GB. So on a 20 GB card
+Auto picks 4-bit for 1 MP training and INT8 for 0.25 MP; on a 16 GB card at 1 MP it picks INT8 with block swap. Each extra image in the batch adds about 2.4 GB.</li>
 <li>The <b>fp8-scaled text encoder</b> also stays fp8 in memory, which saves VRAM while captions are cached.</li>
 <li><b>Automagic v3</b> (Optimizer) sets its own learning rate for each group of layers: text fusion, attention, MLP
 and input/output. The Learning rate box is only its starting value, and Adaptive LR, the scheduler and per-image LR
@@ -596,7 +597,12 @@ Tools; without them the run trains normally and says so.</li>
 <h3>Qwen Image 2.1</h3>
 <ul>
 <li>Keep the <b>training adapter</b> on: it is frozen during training, off in previews and never in your saved
-file. Without it Qwen 2.1 LoRAs tend to collapse or wobble.</li>
+file. Without it Qwen 2.1 LoRAs tend to collapse or wobble. It is now <b>version 2</b> (the one Fizgig uses): put the
+v2 file next to the v1 file and TagScribeR switches to it on its own. A LoRA trained on v2 is not directly
+comparable with one trained on v1.</li>
+<li><b>Previews</b> use the Comfy-Org <b>Turbo LoRA</b> by default (0.91 GB, set it under Model files): 8 steps, CFG 1.
+Without it (Samples: Turbo strength 0) previews render on the plain model at 25 steps and CFG 3, with a general
+negative prompt.</li>
 <li><b>Fast Identity Mode</b> (the "Fast Identity Mode" preset, or the checkbox under Training Parameters) trains only
 blocks 10-14, where Fizgig measured a character's identity to sit. About 1.5x faster per step, with likeness very close
 to a full-model LoRA. Use it for characters and faces, not styles. It is not used for Edit LoRAs.</li>
@@ -612,6 +618,10 @@ supported here.</li>
 training adapter. <i>Get</i> opens each download page.</li>
 <li><b>Memory:</b> loading the DiT needs about 22 GB of free system RAM. Caching captions needs about 15 GB of free
 VRAM; with less, the text encoder streams from system RAM and is slower.</li>
+<li><b>Older NVIDIA cards</b> (before the RTX 30 series, e.g. V100 or T4): long captions are encoded in chunks (same
+result, lower peak) and very long training items use fp16 attention instead of bf16, both automatically. Nothing
+changes on RTX 30 and newer, AMD or CPU. Ported from Fizgig and unit-tested here, not yet run on such a card: please
+report results.</li>
 <li><b>Training base</b>: the standard First/last frame (fl2va) model, or <i>Reference (ref2va)</i> if the LoRA will
 be used in ComfyUI's Reference-to-Video workflow (set the optional reference DiT file).</li>
 <li><b>Training adapter</b>: <i>Circlestone</i> (the default, best for photos; one file for both bases),
@@ -712,8 +722,9 @@ once.</li>
 <li><b>Base precision:</b> bf16, INT8 or 4-bit. Fizgig measured about 8.9 GB peak on bf16, 7.3 GB on INT8 and 6.6 GB
 on 4-bit.</li>
 <li><b>LoKR</b> works too. LoRAs made with AI-Toolkit load as frozen adapters.</li>
-<li><b>Previews:</b> 20 steps at CFG 4.5 with the model card's negative prompt. Set the optional <b>Anima Turbo
-LoRA</b> file and raise its strength to preview in 10 steps at CFG 1 (strength 0, off, by default).</li>
+<li><b>Previews:</b> with the optional <b>Anima Turbo LoRA</b> file set, previews render on it by default: strength 1,
+10 steps, CFG 1 (Fizgig's default since October). Without it, or with Samples Turbo strength 0, they render on the
+plain model at 20 steps and CFG 4.5 with the model card's negative prompt.</li>
 </ul>
 """),
     "settings": ("Settings", "Settings", """
@@ -740,8 +751,8 @@ in VRAM (ComfyUI, Forge).</li>
 <li><b>“Model has not been downloaded yet”.</b> Use Download (the size is shown first) or pick an installed model.</li>
 <li><b>“Could not connect to the API server”.</b> Is LM Studio / the server running? Does the URL end in <code>/v1</code>?
 Use <i>List</i> to test.</li>
-<li><b>A model needs custom code.</b> Tick “Allow this model to run its own code” in Model options (it appears only
-for models that need it) — only for trusted sources.</li>
+<li><b>A model needs custom code.</b> Tick “Allow this model to run its own code” in Model options (it is enabled
+only for models that need it) — only for trusted sources.</li>
 </ul>
 """),
 }

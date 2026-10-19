@@ -469,6 +469,33 @@ def match_option(value, options) -> str | None:
     return None
 
 
+# Keys whose value is a place on disk. A preset that sets one is worth a note (presets.apply).
+PATH_KEYS = ("LORA_OUTPUT_DIR", "FAMILY_EDIT_DIR", "FAMILY_SLIDER_DIR", "CONTEXT_LORA_PATH", "METADATA_THUMBNAIL")
+
+# Image file extensions a caption file must never use (writing a caption there would overwrite the picture).
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".jxl", ".avif"}
+
+
+def check_caption_ext(value) -> str:
+    """The caption extension if it can be one (".txt"); "" passes (the default is used). Raises ValueError for an
+    image extension - a caption written there replaces the image - or for one that is not ".something"."""
+    ext = "" if value is None else str(value).strip()
+    if not ext:
+        return ext
+    image_exts = set(_IMAGE_EXTS)
+    try:
+        from training.dataset import IMAGE_EXTENSIONS
+        image_exts |= {e.lower() for e in IMAGE_EXTENSIONS}
+    except Exception:  # noqa: BLE001 - dataset needs numpy; the fixed list above already covers the image types
+        pass
+    if not ext.startswith(".") or ext == "." or "/" in ext or "\\" in ext:
+        raise ValueError(f"Caption extension {ext!r} must look like .txt (a dot, then letters)")
+    if ext.lower() in image_exts:
+        raise ValueError(f"Caption extension {ext!r} is an image type - captions written there would overwrite "
+                         f"your pictures. Use .txt or .caption")
+    return ext
+
+
 def coerce(param: Param, value):
     """A stored value as the parameter's type (Fizgig stores numbers as typed strings). Raises ValueError."""
     if param.kind == BOOL:
@@ -480,6 +507,8 @@ def coerce(param: Param, value):
     elif param.kind == FLOAT:
         v = float(str(value).strip())
     else:
+        if param.key == "DATASET_CAPTION_EXT":
+            return check_caption_ext(value)
         return "" if value is None else str(value)
     if param.minimum is not None and v < param.minimum:
         raise ValueError(f"{param.label} must be at least {param.minimum:g}")

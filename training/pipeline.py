@@ -53,8 +53,11 @@ def cache_dir_for(folder: str, root: Path | None = None) -> Path:
 
 
 def run_dir_for(values: dict) -> Path:
+    """<output folder>/<LoRA name>. Raises ValueError for a name that is not just a name (a path, `..`, illegal
+    characters), so nothing that opens or writes in the run folder can leave the runs folder."""
+    from training.train_utils import validate_output_name
     base = Path(str(values.get("LORA_OUTPUT_DIR") or "").strip() or default_output_dir())
-    return base / str(values.get("LORA_NAME") or "my_lora").strip()
+    return base / validate_output_name(str(values.get("LORA_NAME") or "my_lora").strip())
 
 
 def model_setting_key(pref_key: str) -> str:
@@ -299,6 +302,11 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
         err("Open a dataset folder first (the Train tab trains the folder open in the workspace).")
         return out
     ext = str(values.get("DATASET_CAPTION_EXT") or ".txt")
+    try:
+        P.check_caption_ext(ext)
+    except ValueError as e:
+        err(str(e))
+        ext = ".txt"                       # keep checking the rest against a usable extension
     if not image_folder:
         names = []
     else:
@@ -572,11 +580,13 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
             sp = desc.preview_speed()
             speed_path = (models.get(sp.pref_key) or "").strip() if sp and sp.pref_key else ""
             if speed_path and os.path.isfile(speed_path):
-                default = desc.preview_speed_defaults()[1]
                 ts = turbo_strength(desc, values)
                 if ts > 0:
                     kw["speed_lora"] = speed_path
-                    if abs(ts - default) > 1e-9:
+                    # passed whenever it differs from the SpeedLoRA's OWN strength, which the trainer falls back
+                    # to: a family default of its own (Krea 2's 0.7) must reach the trainer. (Fizgig's launch.py
+                    # compares with the family default, so its 0.7 previews run at the LoRA's 1.0.)
+                    if abs(ts - sp.strength) > 1e-9:
                         kw["speed_lora_strength"] = max(0.0, min(2.0, ts))
                     if desc.samples_turbo_pace:             # H3: the Turbo row's own steps (Fizgig 7.0.1)
                         kw["sample_steps"] = _num(values, "FAMILY_TURBO_STEPS", int) or \
@@ -744,6 +754,11 @@ def child_env(base: dict | None = None) -> dict:
     env["PYTHONUNBUFFERED"] = "1"
     from core import paths
     env["PYTHONPATH"] = str(paths.APP_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    try:                                    # the chosen GPU (never integrated graphics) is the children's device 0
+        from core import hardware
+        env.update(hardware.pinned_device_env(environ=env))
+    except Exception:  # noqa: BLE001 - device detection must never stop a run from starting
+        pass
     return env
 
 

@@ -258,6 +258,16 @@ def latent_cache_matches_reso(cache_file: str, bucket_reso: Tuple[int, int], spa
     return None
 
 
+def _text_cache_caption(path: str) -> str:
+    """The caption a text cache was encoded from (its `caption1` header; "" if unreadable). Header only."""
+    try:
+        from safetensors import safe_open
+        with safe_open(path, framework="pt") as f:
+            return str((f.metadata() or {}).get("caption1") or "")
+    except Exception:
+        return ""
+
+
 def partners(stem: str, names) -> list:
     """The names in `names` that pair with an image whose file stem is `stem` (an edit's before-image, a slider's
     other end): stem.<ext> or stem_<anything>.<ext>, ignoring case (Fizgig 7.0.1 families/launch.py pairs)."""
@@ -370,6 +380,11 @@ class TrainingDataset:
         for d in self.config["datasets"]:
             cache_dir, img_dir = d["cache_directory"], d["image_directory"]
             valid = None
+            control_dir = d.get("control_directory") or ""
+            try:
+                control_names = sorted(os.listdir(control_dir)) if control_dir else []
+            except OSError:
+                control_names = []
             if img_dir and os.path.isdir(img_dir):
                 valid = {os.path.splitext(f)[0] for f in os.listdir(img_dir)
                          if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS}
@@ -391,7 +406,10 @@ class TrainingDataset:
                 if latent_cache_matches_reso(cache_file, bucket, self.spatial_factor) is False:
                     skipped_reso += 1
                     continue
-                it = ItemInfo(item_key, "", (w, h), bucket, cache_file)
+                # the caption the text cache was encoded from, and the partner image(s): the loss watch re-encodes a
+                # fixed caption from these (an Edit LoRA's text cache must keep seeing its reference image)
+                it = ItemInfo(item_key, _text_cache_caption(te), (w, h), bucket, cache_file)
+                it.control_paths = [os.path.join(control_dir, n) for n in partners(item_key, control_names)]
                 it.text_encoder_output_cache_path = te
                 it.cache_directory = cache_dir
                 it.image_path = next((os.path.join(img_dir, item_key + e) for e in IMAGE_EXTENSIONS

@@ -29,6 +29,11 @@ on the model it trains instead of a preview checkpoint, and the description fiel
 `MOSS_LORA_SFT`, now also on fine-tunes; Kromoss as an alternative Base; `families/base_check.py`). Port the remaining
 work, MOSS-Image included, from `9162fb20`; audit line numbers from `5d31b2f` still hold for every unchanged file.
 
+**Handoff (2026-10-19, end of the local session):** on `port/v8-wave2`, the v8 shared-layer wave 2 (trainer and
+Train tab), multi-reference Edit LoRAs and the installer's bitsandbytes SHA-256 are done, reviewed and pushed. The
+full fine-tune, MOSS-Image and the theme module are written but uncommitted (backup in `.claude/wip/`); their
+state and exact next steps are in `docs/dev/NEXT_SESSION.md`.
+
 **Handoff (2026-10-19, end of the cloud session):** all fix batches and catch-up wave 1 are done and merged to
 `main`; `docs/dev/NEXT_SESSION.md` lists what the owner should check on real hardware and the next work in order.
 

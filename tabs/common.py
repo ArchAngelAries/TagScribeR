@@ -8,8 +8,9 @@ from typing import Any, Callable
 from PySide6.QtCore import (QEvent, QItemSelection, QItemSelectionModel, QObject, QPersistentModelIndex, QRunnable,
                             Qt, QThreadPool, QTimer, Signal, Slot)
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFrame, QLabel, QMessageBox, QPlainTextEdit,
-                               QSizePolicy, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractScrollArea, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox,
+                               QDialog, QDialogButtonBox, QFrame, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
+                               QScrollBar, QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from core.image_utils import load_thumbnail
 
@@ -249,6 +250,52 @@ class ClickToDeselect(QObject):
                 keep.select(sm.model().index(i.row(), i.column(), i.parent()),
                             sm.model().index(i.row(), i.column(), i.parent()))
         sm.select(keep, QItemSelectionModel.ClearAndSelect)
+
+
+class WheelGuard(QObject):
+    """App-wide: the mouse wheel never changes a dropdown, number box or slider the pointer merely passes over while
+    a panel scrolls. Until the control has keyboard focus (click it, or Tab to it) the wheel scrolls the panel it
+    sits in instead; a focused control takes the wheel as usual. Installed once on the QApplication."""
+
+    _GUARDED = (QComboBox, QAbstractSpinBox, QAbstractSlider)
+
+    def _control(self, obj):
+        """The guarded control an event lands on (an editable combo's or a spin box's inner line edit counts as its
+        parent), or None. Scroll bars are sliders but are what scrolling is for: never guarded."""
+        if isinstance(obj, QLineEdit) and isinstance(obj.parent(), (QComboBox, QAbstractSpinBox)):
+            obj = obj.parent()
+        if isinstance(obj, self._GUARDED) and not isinstance(obj, QScrollBar):
+            return obj
+        return None
+
+    def eventFilter(self, obj, event):
+        t = event.type()
+        if t == QEvent.Polish:
+            w = self._control(obj)
+            if w is not None and w.focusPolicy() == Qt.WheelFocus:
+                w.setFocusPolicy(Qt.StrongFocus)          # a wheel pass no longer focuses (and so arms) it
+            return False
+        if t != QEvent.Wheel:
+            return False
+        w = self._control(obj)
+        if w is None or w.hasFocus():
+            return False
+        parent = w.parentWidget()
+        while parent is not None and not isinstance(parent, QAbstractScrollArea):
+            parent = parent.parentWidget()
+        if parent is not None:
+            delta = event.angleDelta()
+            horizontal = abs(delta.x()) > abs(delta.y())
+            bar = parent.horizontalScrollBar() if horizontal else parent.verticalScrollBar()
+            if bar is not None and bar.isVisible():
+                QApplication.sendEvent(bar, event)
+        return True                                        # the control itself never sees it
+
+
+def install_wheel_guard(app: QApplication) -> WheelGuard:
+    guard = WheelGuard(app)
+    app.installEventFilter(guard)
+    return guard
 
 
 def hint_label(text: str) -> QLabel:

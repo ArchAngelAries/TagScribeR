@@ -245,6 +245,8 @@ def main():
             pass
     app = QApplication(sys.argv)
     app.setApplicationName(APP_TITLE)
+    from tabs.common import install_wheel_guard
+    install_wheel_guard(app)            # a scrolling wheel never changes a setting it passes over
     icon = paths.resource("logo.ico") or paths.resource("logo.png")
     if icon:
         app.setWindowIcon(QIcon(str(icon)))

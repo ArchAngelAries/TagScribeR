@@ -83,5 +83,6 @@ the test suite. Widget tests need one offscreen `QApplication` for the whole ses
 - Orchestration (the owner's, 2026-10-19): the lead plans, integrates and does the final checks. Sonnet subagents
   take narrow, well-specified execution (recon, digests, mechanical ports, test writing, one file each). Fable
   subagents take the work that needs more judgement: parity audits, design of a non-trivial port, improvements, and
-  an objective review of finished work before it is committed (bugs, Fizgig mismatches, overstated claims). Run
+  an objective review of finished work before it is committed (bugs, Fizgig mismatches, overstated claims), and
+  adversarial bug and exploit hunts (malicious presets, run folders, model files, dataset file names). Run
   independent agents in parallel; never two agents on the same file.

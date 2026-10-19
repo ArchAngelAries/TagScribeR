@@ -1,6 +1,68 @@
 # Port plan: bringing TagScribeR's training level with current Fizgig
 
-Status on 2026-10-08. Development notes, not user documentation. Read `CLAUDE.md` first for the standing rules.
+Status on 2026-10-19. Development notes, not user documentation. Read `CLAUDE.md` first for the standing rules.
+
+This file is the ONE tracked roadmap: the Fizgig port, TagScribeR's own fixes and improvements, the longer-term
+roadmap, and the documentation ledger. Update it in the same commit as the work it describes.
+
+## Now (2026-10-19): Fizgig v8.7.1, fixes first
+
+Fizgig moved 738 commits from v7.0.1 to **v8.7.1 (commit `5d31b2f`)**; the checkout in `.claude/fizgig-src` is at
+that commit. **New port source: `5d31b2f`.** Stages 1-5 below were ported against `1c8ec88`. Seven read-only
+reports (2026-10-19) cover the delta and the app as a whole:
+
+- `audit/05_shared_layer_v8.md`: shared training layer. Numerics, quantisation, optimizers, EMA, Adaptive LR and key
+  formats are unchanged upstream since 7.0.1; the gaps are features and robustness.
+- `audit/06_existing_families_v8.md`: per-family drivers of Krea 2, Klein, Anima and H3 are byte-identical upstream;
+  the gaps are presets, preview recipes and memory figures. No text-cache revision bump is needed.
+- `audit/07_new_families_v8.md`: Z-Image Turbo (7.1.0), ACE-Step (7.3.0, audio), Flux 3 Image Klein (8.1.0),
+  MOSS-Image (8.5.0).
+- `audit/08_bug_and_security_review.md`, `09_app_core_review.md`, `10_inference_install_review.md`: bug and exploit
+  hunts over training, the app core / tabs, and inference / installer / network.
+- `IMPROVEMENT_IDEAS.md`: efficiency ideas for the app, captioning and training, with measurements.
+
+Order of work: (1) confirmed bugs (below), (2) the v8 catch-up for the existing families and shared layer, (3) the
+rest of stage 5 (fine-tune, DOP, Multi Concept), (4) new families, (5) improvements, interleaved where independent.
+
+### Fixes (from the reviews; each lands with a regression test)
+
+- [x] EXIF blocks written with a doubled / forbidden `Exif\0\0` header (09 #1): every metadata write.
+- [ ] Training (08): mid-run caption fix on an Edit LoRA run re-encodes without its reference (#1, high); latent
+  cache reused after an in-place edit (#2; Fizgig 8.4.0 re-encodes on mtime); a caption extension that names an image
+  type overwrites images (#3); image-pair slider previews never use the pairs' caption (#4); stale-cache glob can
+  delete another family's cache (#5); `run_dir_for` unvalidated (#6); resume `torch.load` without
+  `weights_only=True` (#8); path keys applied from an imported preset are named in the report (#7).
+- [ ] Shared layer (05 #1): block swap pairs a bare block with a LoRA-wrapped one (Fizgig #199) - H3 with swap.
+- [ ] App core (09 #2-#9): editor "Overwrite originals" convert without confirmation; collection copy overwrites a
+  caption; in-place edits drop PNG text / XMP and ignore the quality slider; 16-bit PNGs clipped; header-size guard
+  before decoding huge images; UTF-16 captions; file modes and fsync in atomic writers; assorted (inspector shows a
+  trashed image, `../` collection names, `.json` sidecars, caption extension in counts).
+- [ ] Inference (10): `trust_remote_code` per model, never global (#1); partial downloads shown as installed (#3); API
+  timeouts / retries / cancel and the blocking unload on close (#4); non-InferenceError aborts a batch (#5); the key
+  kept when the server URL changes (#7); `items_started` never emitted (#8); gated-model message (#9).
+- [ ] Owner-reported: a failed image's red outline hides the selection highlight (show both).
+
+### v8 catch-up, decided by the standing rules (recorded so later sessions do not ask)
+
+Mirrored (Fizgig corrected or improved it): Krea 2 NF4 1 MP memory 15.0 GB; Slider presets at rank 8 (Krea 2, Qwen,
+Anima); SDXL Strong / Standard 50 epochs; Krea 2 Turbo previews at strength 0.7, 10 steps (the strength box keeps
+1.0 one edit away); Anima previews on the Turbo LoRA by default (strength 1, CFG 1, 10 steps); Qwen's preview recipe
+(Comfy-Org Turbo LoRA, CFG 3 on the plain model, training adapter v2 with `replaces`); `wide_attention`'s fp32 path
+gated on ROCm (NVIDIA keeps SDPA; no change on the owner's card); resume-state save retry; latent re-encode on mtime;
+test compile before `compile_blocks` and eager previews under compile; per-step loss log and Sample now / Save now;
+slider override ignored and live prompt changes at epoch boundaries; multi-reference edit LoRAs (Klein 4, Qwen 10);
+H3's pre-sm_80 NVIDIA paths (unit-tested only, documented as unrun here).
+TagScribeR's own (not GPL code): pick the discrete GPU over integrated graphics in `core/hardware.py`, honouring a
+user-set `HIP_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES`.
+Kept as TagScribeR's: batch size above 1 (upstream added and reverted it); the window-only H3 LoRA (with the
+block-swap fix above); `retired_preview_defaults` until the Train tab follows 8.6.1's "Steps / CFG follow what
+previews render with" rule, then removed.
+Deferred: Qwen Turbo DiT previews (workbench stage); `sample_strengths` (only ACE-Step declares them).
+Stage 5 gains: DOP and Multi Concept on every family; LoRA Isolation after the fine-tune.
+New families, in this order: MOSS-Image, Flux 3 Image Klein (gated, non-commercial weights: a licence link on the
+row, no stored token; its forced cuDNN attention routed through `training/modules/sdpa.py` for ROCm), Z-Image Turbo.
+**Question for the owner:** ACE-Step is a music trainer (needs the stage-6 media layer, audio previews, ffmpeg); the
+recommendation is to leave it out of an image-dataset app unless asked.
 
 ## Where things stand
 
@@ -71,6 +133,13 @@ The H3 Slider preset waits for stage 5. Needs a real H3 run before any of it is 
 
 Left for later H3 work (audit B11 steps 4-10): HQQ, the H2D rings and upstream's own Auto plan, the 66 GB bf16 DiT and
 bf16 text encoder, clips, audio, voice, multi-concept, distillation, RefMods.
+
+## Stage 5 status (2026-10-11)
+
+Done: sliders (image pairs and prompt pairs) for every family, Fizgig 7.0.1's shared loop, cache flag, settings,
+checks, -1 / 0 / +1 previews, presets and per-family hooks (the slider presets move to rank 8 with the v8 catch-up).
+Unit-tested only. Left: the full fine-tune (`families/ft.py`; upstream still documents it NVIDIA-only: port with the
+streamer behind the CUDA guard and docs saying "not run on AMD"), DOP, Multi Concept, LoRA Isolation.
 
 ## Decisions the owner has made
 
@@ -158,7 +227,32 @@ each to `requirements.txt` and the installer in the stage that first needs it.
   - The H3 tokenizer: Fizgig bundles Qwen/Qwen3-VL-4B-Instruct's files unmodified (its `assets/qwen3vl_tokenizer/
     ATTRIBUTION.md`), the repo TagScribeR's helper files name - the audit's open question is closed.
   - Krea 2 extras beyond the audit: port them as their stages come.
+- **Orchestration (the owner, 2026-10-19):** see `CLAUDE.md`. The lead plans, integrates and checks; Sonnet for narrow
+  execution; Fable for audits, design, improvements, objective review before commits, and bug / exploit hunts.
+- **App features asked for by the owner:** camera EXIF presets in the Metadata tab (done 2026-10-19; the exact EXIF
+  strings of the presets marked "verify" in `core/camera_presets.py` still need checking against real camera files);
+  the mouse wheel never changes a setting it scrolls past (done 2026-10-19); failed-image outline plus selection
+  highlight (in the fixes list).
+- **Improvements** (`IMPROVEMENT_IDEAS.md`, Fable, 2026-10-19). First three: training diagnostics that measure the
+  owner's three speed leads on the real card (preview phases, allocator, a matmul probe); the health scan and
+  thumbnails (10-20x and up to 7x measured on CPU, no training numerics involved); the trimmed Krea 2 text cache with
+  a CPU-side gather (bit-identical DiT input, 7x smaller). Anything that could change what a run learns is opt-in or
+  proven bit-identical; defaults change only after the owner's measurements.
 - **README:** remove the roadmap line about a Fizgig tracker (it is a development aid, not a user feature), and keep
-  the "what has actually been run" section true as stages land.
+  the "what has actually been run" section true as stages land. The README roadmap also predates stage 2 (it still
+  lists the Klein Distilled previews and H3 Turbo previews as to do): refresh it with this plan.
 - **Longer-term roadmap** (after the port, see the README): image cleanup and background removal tools, bucket
   preview and a fit check before a run, dataset balance and caption consistency reports, a guided first run.
+
+## Documentation ledger
+
+Every user-visible change updates, in the same commit: tooltips, the Help Center (`tabs/help_content.py`), and where
+it applies `README.md` (features, roadmap, "what has actually been run"), `docs/TRAINING_PLAN.md` (training status
+per family), `docs/ARCHITECTURE.md` (new modules or layers) and `THIRD_PARTY_NOTICES.md` (ported files). Dev notes
+(this file, `docs/dev/audit/`) record decisions and status. Open documentation debts:
+
+- [ ] README: What's new and the roadmap for stages 2-5, the v8 catch-up, camera presets, the wheel fix.
+- [ ] README "what has actually been run": still only Krea 2 on real hardware.
+- [ ] `docs/TRAINING_PLAN.md`: sliders, the v8 catch-up per family.
+- [ ] `docs/ARCHITECTURE.md`: sliders in the loop, `core/camera_presets.py`, the wheel guard.
+- [ ] `THIRD_PARTY_NOTICES.md`: entries for each new family as it is ported.

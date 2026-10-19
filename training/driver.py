@@ -10,7 +10,8 @@
 # `save_preview`, `plan_run`, `auto_uncompiled_precision`, `load_planned` (+ `loads_quantized`, `int8_fp32_scales`), `alias_flat`,
 # `compile_targets` / `compile_blocks` / `compile_plan` (shared torch.compile, decided on the empty card),
 # `park_for_preview` / `load_preview_checkpoint` / `unpark_after_preview` (previews on a preview checkpoint),
-# `convert_lora_state_dict`. Not yet (they arrive with their features): sliders, fine-tune, clips,
+# `convert_lora_state_dict`; Fizgig 8.0.3's `practice_latent` (a prompt slider's practice item, the default being what
+# train.py used to inline). Not yet (they arrive with their features): sliders, fine-tune, clips,
 # legacy state order, `cache_stage`.
 """FamilyDriver: the one interface a new model family implements.
 
@@ -296,6 +297,14 @@ class FamilyDriver:
         pictures). Families whose previews are always stills need nothing."""
         import contextlib
         return contextlib.nullcontext()
+
+    def practice_latent(self, vae, latents, res):
+        """A prompt slider's practice item: generate()'s latents -> one training latent as the cache holds it,
+        (1, C, ...) on the CPU. Pictures go through the decoder and back (the cache's own encoding). Fizgig 8.0.3 hook:
+        a clip family overrides it to encode the render as a clip."""
+        import numpy as np
+        img = self.decode(vae, latents, res, res)
+        return self.encode_images(vae, [np.array(img)])[0][None].cpu()
 
     def slider_preview(self, frames, multipliers):
         """One preview's decoded results at each strength -> what save_preview writes, or None for the shared

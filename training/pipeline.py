@@ -11,8 +11,11 @@ edits made in the Train tab during a run cannot retarget it:
 
 Stages run as child processes with this interpreter: cache latents -> cache text -> train (the cache stages are
 skipped on resume or with cache preparation off). Control is file-based: .pause_requested (honoured at the next epoch
-boundary), .sample_override.json (the next preview), loss_log/caption_updates.json (caption fixes at the next
-boundary). Stop kills the process tree.
+boundary), .sample_override.json (the next preview; a slider run ignores it), .sample_now / .save_now (a preview round /
+a checkpoint at the next optimizer step), .slider_prompts.json (a prompt slider's new prompts at the next epoch
+boundary; answered in .slider_prompts_applied.json), loss_log/caption_updates.json (caption fixes at the next
+boundary). The trainer writes .tagscriber_loss_<name>.jsonl (the loss graph) and sample/.prompts_<name>.json (each
+preview round's prompts). Stop kills the process tree.
 """
 from __future__ import annotations
 
@@ -30,6 +33,10 @@ from training.dataset import IMAGE_EXTENSIONS, resolution_for_megapixels
 
 PAUSE_FILE = ".pause_requested"
 OVERRIDE_FILE = ".sample_override.json"
+SAMPLE_NOW_FILE = ".sample_now"
+SAVE_NOW_FILE = ".save_now"
+SLIDER_LIVE_FILE = ".slider_prompts.json"
+SLIDER_LIVE_APPLIED_FILE = ".slider_prompts_applied.json"
 PAUSED_SIDECAR = ".tagscriber_paused.json"
 
 
@@ -610,6 +617,18 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                     kw.update(preview_checkpoint=ck_path,
                               preview_checkpoint_cache=str(values.get("CACHE_SAMPLE_MODEL") or "auto"),
                               preview_int8=bool(values.get("PREVIEW_INT8")))
+                    if not slider_on(desc, values):
+                        # The checkpoint renders with its own recipe (Distilled: 4 steps, CFG 1) unless Steps / CFG
+                        # were typed (Fizgig 8.6.1). A box empty, 0 or still on the plain model's default is
+                        # "untouched" and is not sent; the trainer then takes the checkpoint's. This is what
+                        # Fizgig's form does on every load (web/static/app.js turboFollow: a box on any known default
+                        # is put to the tick's side), so a plain default typed for the checkpoint does not stick
+                        # there either. A typed CFG above 1 is sent and brings the negative prompt with it.
+                        if _num(values, "SAMPLE_STEPS", int) <= 0 or kw.get("sample_steps") == desc.preview_steps:
+                            kw.pop("sample_steps", None)
+                        if cfg <= 0 or abs(cfg - desc.preview_cfg) < 1e-9:
+                            kw.pop("sample_cfg_scale", None)
+                            kw.pop("sample_negative", None)
             if edit:
                 ref = str(values.get("FAMILY_EDIT_REF") or "").strip() or \
                     (edit_pairs(image_folder, str(values.get("FAMILY_EDIT_DIR") or ""))[2] or "")
@@ -664,6 +683,50 @@ def clear_pause(run_dir) -> None:
 
 def pause_requested(run_dir) -> bool:
     return Path(run_dir, PAUSE_FILE).exists()
+
+
+def request_sample_now(run_dir) -> None:
+    """Ask the trainer for a preview round at its next optimizer step (taken once; Fizgig's Sample now)."""
+    Path(run_dir, SAMPLE_NOW_FILE).write_text("", encoding="utf-8")
+
+
+def request_save_now(run_dir) -> None:
+    """Ask the trainer to save a checkpoint, <name>-stepNNNNNNN.safetensors, at its next optimizer step (taken once)."""
+    Path(run_dir, SAVE_NOW_FILE).write_text("", encoding="utf-8")
+
+
+def write_slider_prompts(run_dir, prompts: dict) -> None:
+    """A prompt slider's new prompts, {base, pos, neg, guidance} (all needed), taken at the next epoch boundary."""
+    from core.caption_io import atomic_write_text
+    atomic_write_text(Path(run_dir, SLIDER_LIVE_FILE), json.dumps({
+        "base": str(prompts.get("base") or ""), "pos": str(prompts.get("pos") or ""),
+        "neg": str(prompts.get("neg") or ""), "guidance": float(prompts.get("guidance") or 0)}))
+
+
+def read_applied_slider_prompts(run_dir) -> dict | None:
+    """What the trainer took of write_slider_prompts: {epoch, base, pos, neg, guidance, practice_rerendered, at}."""
+    try:
+        d = json.loads(Path(run_dir, SLIDER_LIVE_APPLIED_FILE).read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def read_step_log(run_dir, output_name, max_points: int = 4000) -> dict | None:
+    """The loss graph's data from .tagscriber_loss_<name>.jsonl: {"points": [[step, epoch, loss, lr|None], ...] (every
+    k-th once there are more than max_points, the last always kept), "epochs": [[epoch, first step], ...], "steps",
+    "stride"} or None before the first line is written."""
+    from training import step_log
+    return step_log.read(step_log.loss_path(str(run_dir), output_name), max_points)
+
+
+def read_preview_prompts(run_dir, output_name) -> dict:
+    """{epoch (int): [prompts]} each preview round was rendered from (sample/.prompts_<name>.json); {} if none."""
+    try:
+        d = json.loads(Path(run_dir, "sample", f".prompts_{output_name}.json").read_text(encoding="utf-8"))
+        return {int(k): [str(p) for p in v] for k, v in d.items()}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
 
 
 def write_sample_override(run_dir, prompt: str, seed: int = 1234, width: int = 1024, height: int = 1024) -> None:
@@ -731,7 +794,8 @@ def checkpoints(run_dir, output_name) -> list[Path]:
     d = Path(run_dir)
     if not d.is_dir():
         return []
-    pat = re.compile(rf"^{re.escape(output_name)}(-\d{{6}})?\.safetensors$")
+    # the plain final file, epoch checkpoints (-NNNNNN) and Save now's step checkpoints (-stepNNNNNNN)
+    pat = re.compile(rf"^{re.escape(output_name)}(-\d{{6}}|-step\d{{7}})?\.safetensors$")
     return sorted(p for p in d.iterdir() if pat.match(p.name))
 
 

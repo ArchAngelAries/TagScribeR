@@ -10,6 +10,8 @@
 # module for every family with compiles=True (it lived in training/families/krea2/), any block signature
 # (CheckpointedBlock(*args)), the block list from driver.compile_targets, fullgraph from the description,
 # compile_blocker for the generic Auto rule, and the two expected inductor notices silenced.
+# Brought level with Fizgig 8.3.1 (families/compile.py _compile_works): a test compile before any block is
+# compiled, with the Visual Studio Build Tools message (Fizgig's "restart Fizgig" reads "restart TagScribeR").
 """torch.compile of a family's transformer blocks, as Fizgig does it (Krea 2's rules measured first).
 
 Compile Blocks is Auto / On / Off (and "outside", a hand-set power value). Auto is a judgement, off wherever it is not
@@ -290,6 +292,41 @@ def find_host_compiler() -> bool:
     return False
 
 
+_COMPILE_WORKS = None
+
+
+def compile_works() -> bool:
+    """Compile and run one tiny function on the GPU: the whole chain a compiled block needs (inductor, Triton's kernel
+    build, and Triton's own C helper, which it builds and links with the host compiler the first time a kernel runs).
+    Finding a compiler is not enough - an old Visual Studio 2019 is found but fails that link, and the failure comes
+    from the first kernel launch, outside dynamo's suppress_errors, so it ended the run before step one (Fizgig 8.3.1).
+    Checked once per process; seconds the first time, cached by torch / Triton after that."""
+    global _COMPILE_WORKS
+    if _COMPILE_WORKS is not None:
+        return _COMPILE_WORKS
+    import torch       # local: the `import torch._dynamo` below would otherwise make the module-level name unbound here
+    if not torch.cuda.is_available():
+        _COMPILE_WORKS = True
+        return True
+    import torch._dynamo
+    try:
+        f = torch.compile(lambda x: (x * 2.0).sin() + 1.0)
+        f(torch.randn(64, device="cuda"))
+        torch.cuda.synchronize()
+        _COMPILE_WORKS = True
+    except Exception as e:  # noqa: BLE001 - any failure of the chain means "do not compile"
+        msg = str(e).strip().splitlines()
+        logger.warning("[compile] Compile Blocks can't run on this PC: a test compile failed (%s: %s). Training "
+                       "continues uncompiled, which is slower. To fix it on Windows (usually an old Visual Studio): "
+                       "install Visual Studio 2022 Build Tools from https://aka.ms/vs/17/release/vs_BuildTools.exe, "
+                       "tick 'Desktop development with C++' in the installer, then restart TagScribeR. Or set "
+                       "Compile Blocks to Off to skip this check.", type(e).__name__, msg[-1][:200] if msg else "")
+        _COMPILE_WORKS = False
+    finally:
+        torch._dynamo.reset()
+    return _COMPILE_WORKS
+
+
 def compile_blocks(dit, blocks_to_swap: int, fp8_scaled: bool = False, boundary: str = "inside", blocks=None,
                    fullgraph: bool = True) -> int:
     """Compile each transformer block of `blocks` (the driver's ModuleList, replaced in place; default dit.blocks).
@@ -345,6 +382,8 @@ def compile_blocks(dit, blocks_to_swap: int, fp8_scaled: bool = False, boundary:
         logger.warning("[compile] ignored - %s. Training continues uncompiled.", _why)
         return 0
     if not find_host_compiler():
+        return 0
+    if not compile_works():
         return 0
     import torch._dynamo
     # Raises the recompile ceiling (default 8, which a bucketed dataset exhausts immediately - after which dynamo

@@ -21,6 +21,14 @@ reports (2026-10-19) cover the delta and the app as a whole:
   hunts over training, the app core / tabs, and inference / installer / network.
 - `IMPROVEMENT_IDEAS.md`: efficiency ideas for the app, captioning and training, with measurements.
 
+**Baseline moved to v8.7.3 (commit `9162fb20`, local session 2026-10-19).** Fizgig moved 20 commits past `5d31b2f`;
+`audit/11_fizgig_v8_7_3_delta.md` digests them: nothing changes an objective, timestep sampling, LR or preset; the
+shared additions are `_record_prompts` (each preview round's prompts, `.prompts_<name>.json`), a fine-tune previewing
+on the model it trains instead of a preview checkpoint, and the description fields `ModelFile.fetch_choice`,
+`alt_size_gb`, `FamilyDescription.standard_base`. Everything else is MOSS-Image (the "Train attention only" label for
+`MOSS_LORA_SFT`, now also on fine-tunes; Kromoss as an alternative Base; `families/base_check.py`). Port the remaining
+work, MOSS-Image included, from `9162fb20`; audit line numbers from `5d31b2f` still hold for every unchanged file.
+
 **Handoff (2026-10-19, end of the cloud session):** all fix batches and catch-up wave 1 are done and merged to
 `main`; `docs/dev/NEXT_SESSION.md` lists what the owner should check on real hardware and the next work in order.
 

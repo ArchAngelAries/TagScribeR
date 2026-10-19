@@ -9,6 +9,10 @@
 # the way the Krea 2 DiT does (Fizgig parks the last n blocks on the CPU one at a time); the ConvRot int8 Linear keeps
 # its codes in `weight` (so the shared offloader can stream them) and runs the eager path only (no Triton kernels); the
 # loader reads the pruned ConvRot checkpoint (and a dense pruned one) and refuses the 66 GB bf16 release.
+# Pre-sm_80 NVIDIA cards (V100, T4): h3_attention's fp16 mem-efficient fallback for long items is ported from Fizgig
+# commit b94ffcaf (#172; Fizgig diff 1c8ec88..5d31b2f, minimax/model.py). Gated on real CUDA (never ROCm/HIP or CPU) below
+# compute capability 8.0 and on bf16 inputs; otherwise F.scaled_dot_product_attention exactly as before. Not run on real
+# pre-sm_80 hardware by TagScribeR: unit-tested on CPU with a faked device only.
 """MiniMax H3 DiT, pure PyTorch, for image (single latent frame) LoRA training and previews.
 
 A still image is one video frame (T = 1), so the packed sequence is [text | audio | video]. H3 always packs an audio
@@ -204,9 +208,65 @@ class Attention(nn.Module):
         q = q.transpose(0, 1).unsqueeze(0)                  # [S, H, D] -> [1, H, S, D]
         k = k.transpose(0, 1).unsqueeze(0)
         v = v.transpose(0, 1).unsqueeze(0)
-        out = F.scaled_dot_product_attention(q, k, v)
+        out = h3_attention(q, k, v)
         out = out.squeeze(0).transpose(0, 1).reshape(s, self.heads * self.head_dim)
         return self.out_proj(out)
+
+
+# ---- pre-sm_80 NVIDIA bf16 attention fallback (Fizgig b94ffcaf) -------------------------
+# Cards without a fast bf16 SDPA kernel (sm < 80) fall back to the math backend, which materialises the [1, H, S, S]
+# table (~16 bytes in flight per H*S^2 element, fwd+bwd, measured by Fizgig on a V100). Items whose S does not fit are
+# routed through the fp16 mem-efficient kernel (cast q/k/v, cast back); shorter items keep the original bf16 call. The
+# fit boundary is derived once from the live free VRAM at the first attention call.
+_BF16_SDPA = {"state": "unknown", "max_s": 0, "logged": set()}
+_BF16_SDPA_MATH_BYTES_PER_ELEM = 16
+_BF16_SDPA_FREE_FRACTION = 0.8
+
+
+def _is_nvidia_cuda(t) -> bool:
+    return bool(t.is_cuda) and not getattr(torch.version, "hip", None)
+
+
+def _resolve_bf16_sdpa_fit(q):
+    """'disabled' on sm_80+ (bf16 has a fast kernel); else 'active' with the longest S the math backend fits."""
+    st = _BF16_SDPA
+    cap = torch.cuda.get_device_capability(q.device.index)
+    if cap[0] >= 8:
+        st["state"] = "disabled"
+        return
+    free, _ = torch.cuda.mem_get_info(q.device.index)
+    st["max_s"] = int(math.sqrt(_BF16_SDPA_FREE_FRACTION * free / (_BF16_SDPA_MATH_BYTES_PER_ELEM * q.shape[1])))
+    st["state"] = "active"
+    logger.info("[h3] pre-sm_80 card (sm_%d%d): attention stays bf16 up to S=%s - longer items use the fp16 "
+                "mem-efficient kernel", cap[0], cap[1], f"{st['max_s']:,}")
+
+
+def _use_fp16_attention(q) -> bool:
+    """True when this [1, H, S, D] attention should run in fp16: NVIDIA CUDA, bf16, pre-sm_80, S beyond the fit."""
+    if not (_is_nvidia_cuda(q) and q.dtype == torch.bfloat16) or _BF16_SDPA["state"] == "disabled":
+        return False
+    if _BF16_SDPA["state"] == "unknown":
+        _resolve_bf16_sdpa_fit(q)
+    if _BF16_SDPA["state"] != "active":
+        return False
+    s = q.shape[2]
+    if s not in _BF16_SDPA["logged"] and len(_BF16_SDPA["logged"]) < 32:
+        _BF16_SDPA["logged"].add(s)
+        logger.info("[h3] S=%s %s the bf16 fit boundary (S<=%s)", f"{s:,}",
+                    "exceeds - this item's attention runs in fp16;" if s > _BF16_SDPA["max_s"] else "fits -",
+                    f"{_BF16_SDPA['max_s']:,}")
+    return s > _BF16_SDPA["max_s"]
+
+
+def _sdpa_fp16(q, k, v):
+    return F.scaled_dot_product_attention(q.half(), k.half(), v.half()).to(q.dtype)
+
+
+def h3_attention(q, k, v):
+    """[1, H, S, D] SDPA; on a pre-sm_80 NVIDIA card the fp16 kernel for a sequence the bf16 math backend cannot fit."""
+    if _use_fp16_attention(q):
+        return _sdpa_fp16(q, k, v)
+    return F.scaled_dot_product_attention(q, k, v)
 
 
 class MLP(nn.Module):

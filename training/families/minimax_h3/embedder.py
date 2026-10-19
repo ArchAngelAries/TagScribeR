@@ -7,6 +7,10 @@
 # replaced by a plain per-layer move: the packed layers stay on the CPU and each rides to the GPU for its own forward;
 # the tokenizer comes from a qwen3vl_tokenizer/ folder next to the checkpoint or the Hugging Face cache (Fizgig bundles
 # the files).
+# Pre-sm_80 NVIDIA cards (V100, T4): the chunked prefill (_plan_chunk, _text_forward) is ported from Fizgig commit b94ffcaf
+# ("MiniMax H3 text encoder: chunked prefill for long captions on pre-sm_80 cards", #172, v8.x; Fizgig diff 1c8ec88..5d31b2f).
+# Changes: gated on a real CUDA (not ROCm/HIP) device below compute capability 8.0; otherwise the original call. Never run on
+# real pre-sm_80 hardware by TagScribeR: unit-tested on tiny CPU models only.
 """MiniMax H3 text conditioning: Qwen3-VL-32B language model truncated to 50 layers.
 
 The DiT is conditioned on the UNNORMALISED hidden state after language layer 50 (no final norm - comfy applies none).
@@ -123,6 +127,24 @@ def build_qwen3_te(config_overrides=None):
     return model
 
 
+def _cfg_attr(cfg, name, default):
+    """A config attribute at the top level (Qwen3Model) or under text_config (Qwen3VLModel)."""
+    for cand in (cfg, getattr(cfg, "text_config", None)):
+        v = getattr(cand, name, None)
+        if isinstance(v, int) and v > 0:
+            return v
+    return default
+
+
+def is_pre_sm80_cuda(device) -> bool:
+    """True only for a real NVIDIA CUDA device with compute capability below 8.0 (V100, T4 ...). False on CPU, on
+    ROCm/HIP builds (which also answer torch.cuda.*) and on sm_80+ cards, where nothing changes."""
+    dev = torch.device(device)
+    if dev.type != "cuda" or getattr(torch.version, "hip", None):
+        return False
+    return torch.cuda.get_device_capability(dev.index)[0] < 8
+
+
 class H3TextEncoder:
     """Encodes captions to (L, 5120) bf16 on the CPU. Memoised by caption text."""
 
@@ -154,10 +176,65 @@ class H3TextEncoder:
         return 151643 if pid is None else int(pid)
 
     def _forward(self, ids):
-        if self.cpu_embed:
-            emb = self.model.embed_tokens(ids.to("cpu")).to(self.device)
-            return self.model(inputs_embeds=emb).last_hidden_state
-        return self.model(input_ids=ids.to(self.device)).last_hidden_state
+        """Hidden states [B, L, 5120]. Long sequences on pre-sm_80 NVIDIA cards are prefilled in L-chunks (see
+        _plan_chunk): SDPA there falls back to the math backend, which materialises the [B, H, L, L] score tensor per
+        layer. Chunk k passes the past_key_values of chunk k-1; causal attention makes this exact (each query sees the
+        same keys in the same single softmax) and right padding stays safe (a real token only looks left). Everywhere
+        else this is the original single call."""
+        chunk = self._plan_chunk(ids)
+        if chunk is None or chunk >= ids.shape[1]:
+            if self.cpu_embed:
+                emb = self.model.embed_tokens(ids.to("cpu")).to(self.device)
+                return self.model(inputs_embeds=emb).last_hidden_state
+            return self.model(input_ids=ids.to(self.device)).last_hidden_state
+        outs, past = [], None
+        for s in range(0, ids.shape[1], chunk):
+            e = min(s + chunk, ids.shape[1])
+            if self.cpu_embed:
+                kw = dict(inputs_embeds=self.model.embed_tokens(ids[:, s:e].to("cpu")).to(self.device))
+            else:
+                kw = dict(input_ids=ids[:, s:e].to(self.device))
+            kw["use_cache"] = True
+            if past is not None:
+                kw["past_key_values"] = past
+            r = self.model(**kw)
+            past = r.past_key_values
+            outs.append(r.last_hidden_state)
+        return torch.cat(outs, dim=1)
+
+    def _plan_chunk(self, ids):
+        """Prefill chunk size, or None for the single pass. None unless the device is a pre-sm_80 NVIDIA card and
+        B*L^2 > 1024^2. The per-layer math-SDPA peak is H*B*L^2 elements at (2*itemsize + 4) bytes (bf16 scores, mask
+        temporary, fp32 softmax); the chunk C is the largest keeping the [B, H, C, L] slice under the live free VRAM
+        minus the KV cache (needed: it is the exactness mechanism), MLP and hidden overhead and a 10% margin,
+        clamped to [128, 2048] (Fizgig b94ffcaf)."""
+        if not is_pre_sm80_cuda(self.device):
+            return None
+        B, L = ids.shape
+        if B * L * L <= 1024 * 1024:
+            return None
+        dev = torch.device(self.device)
+        free_b, _ = torch.cuda.mem_get_info(dev.index)
+        cfg = self.model.config
+        heads = _cfg_attr(cfg, "num_attention_heads", 64)
+        itemsize = torch.empty((), dtype=self.compute_dtype).element_size()
+        kv_heads = _cfg_attr(cfg, "num_key_value_heads", heads)
+        head_dim = _cfg_attr(cfg, "head_dim", _cfg_attr(cfg, "hidden_size", 5120) // heads)
+        layers = _cfg_attr(cfg, "num_hidden_layers", 50)
+        kv = B * kv_heads * L * head_dim * 2 * itemsize * layers
+        mlp = B * L * _cfg_attr(cfg, "intermediate_size", 0) * itemsize
+        extra = B * L * _cfg_attr(cfg, "hidden_size", 5120) * itemsize * 4
+        budget = free_b - kv - mlp - extra - int(0.10 * free_b)
+        if budget <= 0:
+            budget = int(0.25 * free_b)
+        c = max(128, min(2048, budget // max(1, B * heads * L * (2 * itemsize + 4))))
+        if not getattr(self, "_chunk_logged", False):
+            self._chunk_logged = True
+            logger.info("TE forward: B=%d L=%d single-pass peak ~%.2f GB > %.2f GB free (KV ~%.2f GB) - chunked "
+                        "prefill (C=%d, exact: causal attention over past_key_values)",
+                        B, L, (B * heads * L * L * (2 * itemsize + 4) + kv + mlp) / 2 ** 30,
+                        free_b / 2 ** 30, kv / 2 ** 30, min(c, L))
+        return min(c, L)
 
     def _tokens(self, caption):
         ids = self.tokenizer(caption, add_special_tokens=False, return_tensors="pt")["input_ids"][0]

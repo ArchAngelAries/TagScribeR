@@ -41,6 +41,19 @@ H3_BASES = ("First/last frame (fl2va) — standard", "Reference (ref2va)")
 H3_ADAPTERS = ("Circlestone — best for photos", "Ostris — best for videos", "Off")
 H3_RAMPS = ("Off", "0.003 (slow build)", "0.005 (recommended)", "0.01 (fast build)")
 
+# the Edit pairs card's "What the edit uses" choice, Fizgig's strings (8.1.1 families/launch.py); pipeline.py repeats
+# them (a test keeps the two equal) because it imports this module
+EDIT_PHOTO_ONLY, EDIT_WITH_EXTRAS = "The photo only", "The photo + extra pictures"
+
+# the Samples tick for a family's preview checkpoint: its description's preview_checkpoint_tick (Fizgig 8.x), else
+# Klein's wording, which is what TagScribeR has always shown
+SAMPLE_CHECKPOINT_TICK = "Use Distilled model for samples (4-step, matches ComfyUI)"
+
+
+def preview_checkpoint_tick(desc) -> str:
+    return str(getattr(desc, "preview_checkpoint_tick", "") or SAMPLE_CHECKPOINT_TICK)
+
+
 GROUPS = ("Output", "Training Parameters", "Loss watch", "Optimizer", "Memory & Precision", "Timesteps",
           "Dataset", "Caption augmentation (extension)", "Metadata", "Samples")
 
@@ -59,7 +72,7 @@ class Param:
     minimum: float | None = None
     maximum: float | None = None
     advanced: bool = False         # collapsed by default in the UI
-    family_only: str = ""          # "adapter" | "ema" | "precision" | "lokr" | "edit" | "speed" | "option": shown when the
+    family_only: str = ""          # "adapter" | "ema" | "precision" | "lokr" | "edit" | "edit_multi" | "speed" | "option": shown when the
     #                                family declares that feature
 
 
@@ -153,9 +166,27 @@ PARAMS: tuple[Param, ...] = (
       "Train only the blocks measured to carry a character's identity (Qwen Image 2.1: blocks 10-14). About 1.5x "
       "faster per step, with likeness very close to a full-model LoRA. For characters and faces, not styles. Not "
       "used for an Edit LoRA.", family_only="fast_id"),
+    # Edit LoRAs with extra reference pictures (Fizgig 8.1.1 / 8.1.2), for families whose description has
+    # edit_references > 1 (Klein 4, Qwen Image 2.1 10); the strings are pipeline.EDIT_PHOTO_ONLY / EDIT_WITH_EXTRAS
+    P("FAMILY_EDIT_PICTURES", "What the edit uses", CHOICE, EDIT_PHOTO_ONLY, "Training Parameters",
+      "The photo only: an edit that changes how a photo looks (a grade, a relight, a retouch). The photo + extra "
+      "pictures: an edit that brings something from other pictures into it (a person, an object, a place).\n"
+      "Your edited photos and their captions are in the dataset folder (photo.png, photo.txt). The Originals folder "
+      "holds photo.png at the same crop. The Extra pictures folder holds photo_1.png, photo_2.png ... (any size or "
+      "shape; each is resized to the target's pixel count in its own shape). Up to 3 extras for Klein, 9 for Qwen "
+      "Image 2.1. Extras may also sit in the Originals folder. Names are not case-sensitive.",
+      options=(EDIT_PHOTO_ONLY, EDIT_WITH_EXTRAS), strict=True, family_only="edit_multi"),
     P("FAMILY_EDIT_DIR", "Originals folder", DIR, "", "Training Parameters",
       "Edit LoRA: the folder of original ('before') images, each named like its edited version.",
       family_only="edit"),
+    P("FAMILY_EDIT_EXTRAS_DIR", "Extra pictures folder", DIR, "", "Training Parameters",
+      "The pictures to bring into the edits (a person, an object, a place). Name each after the photo it belongs "
+      "to, adding _1, _2 ...: for beach.png its extras are beach_1.png, beach_2.png. The number is the order the "
+      "model sees them in (beach_1 is the second picture after the original): say so in the edit instruction, e.g. "
+      "'Put the man from the second picture into this scene.' A photo can have none (it trains as a normal pair) "
+      "or up to 3 extras for Klein, 9 for Qwen Image 2.1. Any size or file type. The edit preview photo's own "
+      "extras are test_1.png, test_2.png ... in this folder (for test.png). Names are not case-sensitive.",
+      family_only="edit_multi"),
     # ---- loss watch -------------------------------------------------------------------------------
     P("KREA2_LOSS_WATCH", "Detect problem images", BOOL, False, "Loss watch",
       "Watch each image's loss through the run (normalised for the noise level) and flag images that never learn "
@@ -395,11 +426,13 @@ PARAMS: tuple[Param, ...] = (
       "The Turbo LoRA's strength in previews, in percent (75 is the pairing fast ComfyUI renders use). 0 = previews "
       "without it, at the plain Steps. Clamped to 200.", preset=False, minimum=0.0, family_only="turbo_pace"),
     # Klein's Distilled previews (Fizgig 7.0.1 "Use Distilled model for samples", CACHE_SAMPLE_MODEL, inference INT8)
-    P("SAMPLE_USE_DISTILLED", "Use Distilled model for samples (4-step, matches ComfyUI)", BOOL, True, "Samples",
+    P("SAMPLE_USE_DISTILLED", SAMPLE_CHECKPOINT_TICK, BOOL, True, "Samples",
       "Render previews on the Distilled model (set its file under Model files): 4 steps, no CFG, ComfyUI's Euler "
       "simple schedule, so they look like ComfyUI renders of your LoRA. The training model steps aside while they "
-      "render. Steps, CFG and the negative prompt apply only to Base previews. Without the file, previews use the "
-      "training model.", preset=False, family_only="preview_ckpt"),
+      "render. Ticking it (with its file set) moves Steps and CFG to the Distilled's own 4 and 1; unticking it moves "
+      "them back to the training model's. A Steps or CFG you typed is kept, unless it equals one of the two defaults "
+      "(the plain model's or the Distilled's), which the tab and the trainer treat as untouched, as Fizgig does. "
+      "CFG above 1 brings the negative prompt. Without the file, previews use the training model.", preset=False, family_only="preview_ckpt"),
     P("CACHE_SAMPLE_MODEL", "Keep the sample model in RAM", CHOICE, "auto", "Samples",
       "Keeps the ~10 GB Distilled model in system RAM between epochs so it isn't read from disk every time (a few "
       "seconds per epoch saved). auto = only when at least 18 GB of RAM is free; off = reload each time. Only used "
@@ -470,7 +503,7 @@ def match_option(value, options) -> str | None:
 
 
 # Keys whose value is a place on disk. A preset that sets one is worth a note (presets.apply).
-PATH_KEYS = ("LORA_OUTPUT_DIR", "FAMILY_EDIT_DIR", "FAMILY_SLIDER_DIR", "CONTEXT_LORA_PATH", "METADATA_THUMBNAIL")
+PATH_KEYS = ("LORA_OUTPUT_DIR", "FAMILY_EDIT_DIR", "FAMILY_EDIT_EXTRAS_DIR", "FAMILY_SLIDER_DIR", "CONTEXT_LORA_PATH", "METADATA_THUMBNAIL")
 
 # Image file extensions a caption file must never use (writing a caption there would overwrite the picture).
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".jxl", ".avif"}
@@ -532,6 +565,8 @@ def family_shows(param: Param, desc) -> bool:
         return "lokr" in desc.network_types
     if f == "edit":
         return bool(desc.edit_training)
+    if f == "edit_multi":
+        return bool(desc.edit_training and int(getattr(desc, "edit_references", 1)) > 1)
     if f == "preview_ckpt":
         return bool(desc.train_preview_checkpoint)
     if f == "fast_id":

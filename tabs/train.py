@@ -6,6 +6,7 @@ samples strip. Pause / preview override / caption fixes are files in the run fol
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -21,11 +22,11 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, Q
 
 from core.config import settings
 from tabs.common import ClickToDeselect, CollapsibleSection, confirm, hint_label
-from tabs import memory_bar
-from tabs.train_dialogs import LossChart, ProblemImagesDialog, SampleOverrideDialog
+from tabs import icons, memory_bar
+from tabs.train_dialogs import LossChart, ProblemImagesDialog, SampleOverrideDialog, SliderPromptsDialog
 from tabs.workspace.context import workspace
 from training import params as P
-from training import pipeline, presets
+from training import pipeline, presets, step_log
 from training.progress import TrainingProgressTracker
 from training.registry import training_families
 
@@ -42,7 +43,29 @@ IDLE, RUNNING, PAUSING, PAUSED = "idle", "running", "pausing", "paused"
 # What "simple mode" shows; the preset decides everything else.
 SIMPLE_KEYS = {"LORA_OUTPUT_DIR", "LORA_NAME", "MAX_TRAIN_EPOCHS", "DATASET_MEGAPIXELS", "SAMPLE_ENABLED",
                "SAMPLE_PROMPT"}
+# the Edit rows' labels when extra pictures are chosen (Fizgig families/form.py:376-389 and :884-891)
+EDIT_STEP_LABELS = {"FAMILY_EDIT_DIR": "1. Originals folder (before editing)",
+                    "FAMILY_EDIT_EXTRAS_DIR": "2. Extra pictures folder",
+                    "FAMILY_EDIT_CAPTION": "4. Edit instruction", "FAMILY_EDIT_REF": "5. Test photo (optional)"}
+SAMPLE_NOW_TIP = ("Render a preview round right after the current step, with the LoRA as it is now. The pictures show "
+                   "under the epoch in progress in Samples (Ctrl+Shift+S). Needs previews set up: Every N epochs "
+                   "above 0 and a prompt. Not while the dataset is being cached.")
+SAVE_NOW_TIP = ("Save the LoRA as it is right after the current step, as <name>-stepNNNNNNN.safetensors beside the "
+                "epoch checkpoints (Ctrl+Shift+D). It is a checkpoint only: it carries no resume state. Not while "
+                "the dataset is being cached.")
 _ACTIVE: list = []          # running TrainTabs (main.py asks before quitting)
+
+
+def run_previews_set_up(run_dir) -> bool:
+    """Whether a run folder's frozen config has previews: a Sample Every N above 0 and at least one prompt (what Sample
+    now can render). False for a missing or unreadable folder."""
+    try:
+        cfg = json.loads(Path(run_dir, "train_config.json").read_text(encoding="utf-8"))
+        every = int((cfg.get("train") or {}).get("sample_every_n_epochs") or 0)
+        prompts = Path(run_dir, "sample_prompts.txt").read_text(encoding="utf-8").strip()
+    except (OSError, ValueError, TypeError):
+        return False
+    return every > 0 and bool(prompts)
 
 
 def any_running() -> bool:
@@ -72,6 +95,11 @@ class TrainTab(QWidget):
         self._progress_line = ""       # the trainer's step bar, shown as ONE console line that updates in place
         self._stopped = False          # Stop was pressed: the kill's exit code is not a failure
         self._loading = False
+        self._loss_sig = None          # (path, mtime, size) of the step log the chart shows
+        self._chart_key = None         # the run (folder, name) the chart is drawn for
+        self._follow_live = None       # whether the Distilled tick was following the checkpoint's recipe last time
+        self._samples_sig = None
+        self._slider_dlg = None
 
         root = QHBoxLayout(self)
         split = QSplitter()
@@ -83,6 +111,9 @@ class TrainTab(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._refresh_samples)
         self.timer.start(5000)
+        self.loss_timer = QTimer(self)                  # the per-step loss graph while a run trains
+        self.loss_timer.timeout.connect(self._refresh_loss)
+        self.loss_timer.start(4000)
         self.save_timer = QTimer(self)
         self.save_timer.setSingleShot(True)
         self.save_timer.timeout.connect(self._persist_values)
@@ -91,6 +122,12 @@ class TrainTab(QWidget):
         sc = QShortcut(QKeySequence("Ctrl+Return"), self)
         sc.setContext(Qt.WidgetWithChildrenShortcut)
         sc.activated.connect(self.start)
+        # Sample now / Save now / slider prompts: only while their button is enabled
+        for seq, btn in (("Ctrl+Shift+S", self.btn_sample_now), ("Ctrl+Shift+D", self.btn_save_now),
+                         ("Ctrl+Shift+L", self.btn_slider)):
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(lambda b=btn: b.click() if b.isEnabled() and b.isVisibleTo(self) else None)
 
         last = self.cfg.get("training.family", "")
         idx = next((i for i, d in enumerate(self.families) if d.key == last), 0)
@@ -241,6 +278,8 @@ class TrainTab(QWidget):
         if p.kind == P.BOOL:
             w = QCheckBox(p.label)
             w.toggled.connect(self._changed)
+            if p.key == "SAMPLE_USE_DISTILLED":
+                w.toggled.connect(self._on_distilled_toggled)      # Steps / CFG follow the tick
             form.addRow(w)
             label = None
         else:
@@ -334,6 +373,8 @@ class TrainTab(QWidget):
         finally:
             self._loading = False
         self.values = self.collect()
+        self._follow_update(loading=True)
+        self.values = self.collect()
         self._update_visibility()
 
     def collect(self) -> dict:
@@ -360,6 +401,7 @@ class TrainTab(QWidget):
         adaptive = bool(self.values.get("ADAPTIVE_LR"))
         lokr = str(self.values.get("NETWORK_TYPE", "")).startswith("LoKR")
         edit = bool(self.values.get("FAMILY_EDIT"))
+        extras = str(self.values.get("FAMILY_EDIT_PICTURES") or "").strip() == P.EDIT_WITH_EXTRAS
         for key, (w, label) in self.widgets.items():
             p = P.BY_KEY[key]
             show = P.family_shows(p, self.desc) and (not simple or key in SIMPLE_KEYS)
@@ -367,8 +409,12 @@ class TrainTab(QWidget):
                 show = show and not lokr
             if key == "LOKR_FACTOR":
                 show = show and lokr
-            if key in ("FAMILY_EDIT_DIR", "FAMILY_EDIT_REF", "FAMILY_EDIT_CAPTION"):
+            if key in ("FAMILY_EDIT_DIR", "FAMILY_EDIT_REF", "FAMILY_EDIT_CAPTION", "FAMILY_EDIT_PICTURES"):
                 show = show and edit
+            if key == "FAMILY_EDIT_EXTRAS_DIR":          # only with "The photo + extra pictures" chosen
+                show = show and edit and extras
+            if key in EDIT_STEP_LABELS and label is not None:      # Fizgig's numbered steps once extras join
+                label.setText((EDIT_STEP_LABELS[key] if extras else P.BY_KEY[key].label) + ":")
             for x in (w if p.kind not in (P.PATH, P.DIR) else w.parentWidget(), label):
                 if x is not None:
                     x.setVisible(show)
@@ -393,6 +439,60 @@ class TrainTab(QWidget):
             except ValueError:
                 pass
 
+    # ---- the Distilled tick's Steps / CFG follow (Fizgig form.py "follow" + app.js turboFollow) ---------------
+    def _follow_sides(self):
+        """({key: value} when the preview checkpoint renders, {key: value} when the training model does), or None for
+        a family without a preview checkpoint recipe."""
+        d = self.desc
+        ck = getattr(d, "preview_checkpoint_sampling", None) if d is not None else None
+        if d is None or not d.train_preview_checkpoint or ck is None:
+            return None
+        return ({"SAMPLE_STEPS": ck.steps, "SAMPLE_CFG_SCALE": ck.cfg},
+                {"SAMPLE_STEPS": d.preview_steps, "SAMPLE_CFG_SCALE": d.preview_cfg})
+
+    def _checkpoint_live(self) -> bool:
+        """The preview checkpoint will render the previews: its tick is on and its file is set."""
+        d = self.desc
+        ck = d.preview_checkpoint() if d is not None else None
+        if ck is None or "SAMPLE_USE_DISTILLED" not in self.widgets:
+            return False
+        e = self.model_edits.get(ck[0].pref_key)
+        return bool(self._get_widget("SAMPLE_USE_DISTILLED") and e is not None and os.path.isfile(e.text().strip()))
+
+    def _follow_update(self, loading=False):
+        """Steps and CFG follow the Distilled tick: the checkpoint's own recipe while it renders the previews (tick on
+        and its file set), the training model's when not. Only a box that is empty (0 = the family default) or still on
+        one of those two recipes moves, so a value typed by hand is never replaced. The boxes move when the switch
+        changes, and when a form loads (which also puts right one saved on the other side's default)."""
+        sides = self._follow_sides()
+        if sides is None or "SAMPLE_STEPS" not in self.widgets:
+            self._follow_live = None
+            return
+        live = self._checkpoint_live()
+        if not loading and live == self._follow_live:
+            return
+        self._follow_live = live
+        want = sides[0] if live else sides[1]
+        for key, val in want.items():
+            cur = self._get_widget(key)
+            try:
+                cur_f = float(cur)
+            except (TypeError, ValueError):
+                cur_f = 0.0                                  # empty / not a number: nothing typed
+            known = [float(sides[0][key]), float(sides[1][key])]
+            if cur_f <= 0 or (abs(cur_f - float(val)) > 1e-9 and any(abs(cur_f - k) < 1e-9 for k in known)):
+                self._set_widget(key, val)
+
+    def _on_distilled_toggled(self, *_):
+        if not self._loading:
+            self._follow_update()
+
+    def _apply_tick_label(self):
+        """The Samples tick's text from the family (its description's preview_checkpoint_tick); Klein's wording
+        otherwise."""
+        w = self.widgets["SAMPLE_USE_DISTILLED"][0]
+        w.setText(P.preview_checkpoint_tick(self.desc))
+
     # ---- family / presets ---------------------------------------------------------------------------
     def _on_family(self, idx):
         if idx < 0 or idx >= len(self.families):
@@ -410,6 +510,7 @@ class TrainTab(QWidget):
             w.addItems(list(P.options_for(P.BY_KEY[key], self.desc)))
             w.blockSignals(False)
         self._build_model_rows()
+        self._apply_tick_label()
         self._refresh_presets()
         notes = [f"Native resolution about {self.desc.native_megapixels:g} MP", f"{len(self.desc.presets)} presets"]
         if self.desc.training_adapter_note:
@@ -443,6 +544,8 @@ class TrainTab(QWidget):
             tip = f.note + (f"\nDownload: huggingface.co/{f.repo} - {f.path} ({f.size_gb:g} GB)" if f.repo else "")
             e.setToolTip(tip)
             e.textChanged.connect(lambda t, k=f.pref_key: self.cfg.set(pipeline.model_setting_key(k), t.strip()))
+            if f.role == "preview_dit":                  # the Distilled's file being set is part of the tick's follow
+                e.textChanged.connect(lambda _t: self._follow_update())
             holder = QWidget()
             hl = QHBoxLayout(holder)
             hl.setContentsMargins(0, 0, 0, 0)
@@ -621,6 +724,21 @@ class TrainTab(QWidget):
             b.clicked.connect(fn)
             row.addWidget(b)
         lay.addLayout(row)
+        row = QHBoxLayout()                       # between-epoch actions on the running trainer (control files)
+        self.btn_sample_now = QPushButton("Sample now")
+        self.btn_sample_now.setToolTip(SAMPLE_NOW_TIP)
+        self.btn_sample_now.clicked.connect(self.sample_now)
+        self.btn_save_now = QPushButton("Save now")
+        self.btn_save_now.setToolTip(SAVE_NOW_TIP)
+        self.btn_save_now.clicked.connect(self.save_now)
+        self.btn_slider = QPushButton("Slider prompts…")
+        self.btn_slider.setToolTip("Change the base prompt, what each end adds and the push strength of the prompt "
+                                   "slider that is training (taken at the end of the epoch) (Ctrl+Shift+L)")
+        self.btn_slider.clicked.connect(self.open_slider_prompts)
+        for b, ic in ((self.btn_sample_now, "camera"), (self.btn_save_now, "save"), (self.btn_slider, "tag")):
+            icons.set(b, ic)
+            row.addWidget(b)
+        lay.addLayout(row)
         self.lbl_status = QLabel("Idle")
         self.lbl_status.setWordWrap(True)
         lay.addWidget(self.lbl_status)
@@ -639,6 +757,11 @@ class TrainTab(QWidget):
         self.samples.itemDoubleClicked.connect(lambda it: QDesktopServices.openUrl(QUrl.fromLocalFile(
             it.data(Qt.UserRole))))
         tabs.addTab(self.samples, "Samples")
+        self.checkpoints = QListWidget()
+        self.checkpoints.setToolTip("The LoRA files in the run folder: the final one, each epoch's, and the ones Save "
+                                    "now made (<name>-step0000123). Double-click to show the folder.")
+        self.checkpoints.itemDoubleClicked.connect(lambda _it: self.open_run_folder())
+        tabs.addTab(self.checkpoints, "Checkpoints")
         qw = QWidget()
         ql = QVBoxLayout(qw)
         ql.addWidget(hint_label("Runs waiting to start. Start while a run is going adds the current settings here; "
@@ -695,13 +818,13 @@ class TrainTab(QWidget):
     def _set_state(self, state):
         self.state = state
         running = state in (RUNNING, PAUSING)
-        from tabs import icons
         self.btn_start.setText("Queue this run" if running else "Start Training")
         icons.set(self.btn_start, "add" if running else "run")
         self.btn_pause.setEnabled(state == RUNNING and self.stage_label() == "Training")
         self.btn_stop.setEnabled(running)
         self.btn_resume.setVisible(state == PAUSED)
         self.combo_family.setEnabled(not running)
+        self._update_now_buttons()
 
     def stage_label(self):
         if self.run and self.stage_index < len(self.run.stages):
@@ -771,12 +894,21 @@ class TrainTab(QWidget):
                          "training.captioner_model": self.inp_cap_model.text().strip(),
                          "training.captioner_prompt": self.inp_cap_prompt.text().strip()})
         pipeline.clear_paused(self.run.run_dir)
+        if not resume:                  # a fresh run starts on its own slider prompts, not the last run's
+            for name in (pipeline.SLIDER_LIVE_FILE, pipeline.SLIDER_LIVE_APPLIED_FILE):
+                try:
+                    Path(self.run.run_dir, name).unlink()
+                except OSError:
+                    pass
         try:
             self._log_file = open(self.run.run_dir / "run.log", "a", encoding="utf-8")
         except OSError:
             self._log_file = None
+        self._chart_key, self._loss_sig = (str(self.run.run_dir), self.run.output_name), None
         if not resume:
             self.chart.clear()
+        else:
+            self.chart.set_steps(pipeline.read_step_log(self.run.run_dir, self.run.output_name))
         self.tracker.reset(self.run.total_epochs)
         self._progress_line, self._stopped = "", False
         memory_bar.reset_all_peaks()      # the window's VRAM / RAM bar: peaks are per training run
@@ -895,11 +1027,12 @@ class TrainTab(QWidget):
         self._next_in_queue()
 
     def _end(self, message, state=IDLE):
+        self.proc = None
+        self._refresh_loss(force=True)        # the last steps the trainer flushed on its way out
         self.lbl_status.setText(message)
         self._console(f"=== {message}")
         self.progress.setRange(0, 1)
         self.progress.setValue(1 if state == IDLE else 0)
-        self.proc = None
         if self._log_file:
             self._log_file.close()
             self._log_file = None
@@ -910,6 +1043,64 @@ class TrainTab(QWidget):
             pipeline.request_pause(self.run.run_dir)
             self._set_state(PAUSING)
             self._console("[pause] requested - the run saves its state and stops after the current epoch")
+
+    # ---- Sample now / Save now / slider prompts (control files the trainer takes between steps) ---------
+    def _training_stage(self) -> bool:
+        """The train stage (not the cache stages) of a live run is going."""
+        return self.run is not None and self.state in (RUNNING, PAUSING) and self.stage_label() == "Training"
+
+    def _slider_prompt_run(self) -> bool:
+        ctx = getattr(self, "_run_ctx", None)
+        return bool(ctx and self._training_stage() and pipeline.slider_on(ctx[0], ctx[1], "prompts"))
+
+    def _update_now_buttons(self):
+        live = self._training_stage()
+        previews = live and run_previews_set_up(self.run.run_dir)
+        self.btn_save_now.setEnabled(live)
+        self.btn_sample_now.setEnabled(previews)
+        self.btn_sample_now.setToolTip(SAMPLE_NOW_TIP if previews or not live else
+                                       "Previews are not set up for this run (Every N epochs is 0 or there is no "
+                                       "prompt), so there is nothing to render. " + SAMPLE_NOW_TIP)
+        slider = self._slider_prompt_run()
+        self.btn_slider.setVisible(slider)
+        self.btn_slider.setEnabled(slider)
+        if not slider and self._slider_dlg is not None:      # the slider run is over: its window goes too
+            self._slider_dlg.close()
+
+    def sample_now(self):
+        if not self.btn_sample_now.isEnabled() or self.run is None:
+            return
+        pipeline.request_sample_now(self.run.run_dir)
+        self._console("[sample now] requested - previews are rendered after the current step and show under the "
+                      "epoch in progress")
+
+    def save_now(self):
+        if not self.btn_save_now.isEnabled() or self.run is None:
+            return
+        pipeline.request_save_now(self.run.run_dir)
+        self._console(f"[save now] requested - the LoRA is saved after the current step as "
+                      f"{self.run.output_name}-stepNNNNNNN.safetensors")
+        QTimer.singleShot(6000, self, self._refresh_checkpoints)
+
+    def open_slider_prompts(self):
+        ctx = getattr(self, "_run_ctx", None)
+        if not self._slider_prompt_run() or ctx is None:
+            return
+        desc, v, _folder = ctx
+        try:
+            g = float(v.get("FAMILY_SLIDER_GUIDANCE") or 0)
+        except (TypeError, ValueError):
+            g = 0.0
+        cur = {"base": str(v.get("FAMILY_SLIDER_BASE") or ""), "pos": str(v.get("FAMILY_SLIDER_POS") or ""),
+               "neg": str(v.get("FAMILY_SLIDER_NEG") or ""), "guidance": g if g > 0 else desc.slider_guidance}
+        if self._slider_dlg is not None:                     # one window: bring the open one forward
+            self._slider_dlg.raise_()
+            self._slider_dlg.activateWindow()
+            return
+        dlg = self._slider_dlg = SliderPromptsDialog(str(self.run.run_dir), cur, self,
+                                                     is_live=self._slider_prompt_run)
+        dlg.destroyed.connect(lambda *_: setattr(self, "_slider_dlg", None))
+        dlg.show()
 
     def resume_paused(self):
         info = pipeline.read_paused(self.run.run_dir) if self.run else None
@@ -1031,28 +1222,82 @@ class TrainTab(QWidget):
         rd.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(rd)))
 
+    def _output_name(self) -> str:
+        return self.run.output_name if self.run else str(self.values.get("LORA_NAME") or "").strip()
+
+    def _refresh_loss(self, force=False):
+        """The per-step loss curve from the run folder's step log: polled while a run trains (the log changes every
+        few steps), and read once for a finished, paused or earlier run that is shown. Nothing is read while the
+        cache stages run (the file is the previous run's until the trainer restarts it) or when it has not changed."""
+        if not force and not self.isVisible():
+            return
+        if self.state in (RUNNING, PAUSING) and self.proc is not None and self.stage_label() != "Training":
+            return
+        rd, name = self._run_dir(), self._output_name()
+        if rd is None or not name:
+            return
+        key = (str(rd), name)
+        if key != self._chart_key:                 # another run is shown: its own curve, not the last one's
+            self._chart_key, self._loss_sig = key, None
+            self.chart.clear()
+        path = step_log.loss_path(str(rd), name)
+        try:
+            st = os.stat(path)
+            sig = (path, st.st_mtime_ns, st.st_size)
+        except OSError:
+            sig = (path, None, None)
+        if sig == self._loss_sig:
+            return
+        self._loss_sig = sig
+        self.chart.set_steps(pipeline.read_step_log(rd, name) if sig[1] is not None else None)
+
+    def _refresh_checkpoints(self):
+        rd, name = self._run_dir(), self._output_name()
+        if rd is None or not name:
+            return
+        rows = []
+        for f in pipeline.checkpoints(rd, name):
+            try:
+                rows.append(f"{f.name}   ({f.stat().st_size / 1024 ** 2:.0f} MB)")
+            except OSError:
+                pass
+        if rows != [self.checkpoints.item(i).text() for i in range(self.checkpoints.count())]:
+            self.checkpoints.clear()
+            self.checkpoints.addItems(rows)
+
     def _refresh_samples(self):
         if not self.isVisible():
             return
         rd = self._run_dir()
         if rd is None:
             return
+        self._refresh_checkpoints()
         files = list(reversed(pipeline.samples(rd)))[:60]
-        have = [self.samples.item(i).data(Qt.UserRole) for i in range(self.samples.count())]
-        if have == [str(p) for p in files]:
+        prompts = pipeline.read_preview_prompts(rd, self._output_name())     # {epoch: [the prompts that round used]}
+        sig = ([str(p) for p in files], sorted(prompts.items()))
+        if sig == self._samples_sig:
             return
+        self._samples_sig = sig
         self.samples.clear()
         for p in files:
             parsed = pipeline.parse_sample_name(p.name)
+            prompt = ""
+            if parsed:
+                used = prompts.get(parsed[0]) or []
+                prompt = used[parsed[1]] if parsed[1] < len(used) else ""
+            label = f"epoch {parsed[0]} #{parsed[1]}" if parsed else p.name
+            if prompt:
+                label += "\n" + (prompt if len(prompt) <= 48 else prompt[:45] + "...")
             it = QListWidgetItem(QIcon(QPixmap(str(p)).scaled(192, 192, Qt.KeepAspectRatio,
-                                                               Qt.SmoothTransformation)),
-                                 f"epoch {parsed[0]} #{parsed[1]}" if parsed else p.name)
+                                                               Qt.SmoothTransformation)), label)
             it.setData(Qt.UserRole, str(p))
-            it.setToolTip(f"{p.name}\nseed {parsed[2]}" if parsed else p.name)
+            it.setToolTip((f"{p.name}\nseed {parsed[2]}" if parsed else p.name)
+                          + (f"\nPrompt: {prompt}" if prompt else ""))
             self.samples.addItem(it)
 
     def showEvent(self, e):
         super().showEvent(e)
         self._update_dataset_label()
         self._refresh_samples()
+        self._refresh_loss()
 

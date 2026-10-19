@@ -30,6 +30,9 @@ HOTKEYS: list[tuple[str, str, str]] = [
     ("Image Editor", "Ctrl+R / Ctrl+Shift+R", "Rotate selected right / left"),
     ("Datasets", "Ctrl+N", "New collection"),
     ("Train", "Ctrl+Enter", "Start training (queues it while a run is going)"),
+    ("Train", "Ctrl+Shift+S", "Sample now: render a preview round after the current step (while Training runs)"),
+    ("Train", "Ctrl+Shift+D", "Save now: save the LoRA after the current step as <name>-stepNNNNNNN"),
+    ("Train", "Ctrl+Shift+L", "Slider prompts: change a prompt slider's prompts while it trains"),
     ("Datasets", "F5", "Refresh collections"),
 ]
 
@@ -410,8 +413,8 @@ the paths are remembered.</li>
 the rest. Tick <b>Show all settings</b> for full control of every option.</li>
 <li>Set the <b>LoRA name</b> (and output folder), check the <b>preview prompts</b> (Samples section), then
 <b>Start Training</b> (Ctrl+Enter).</li>
-<li>Watch the <b>Loss</b> chart and the <b>Samples</b>. Every saved epoch is a usable LoRA: pick the best-looking one,
-not necessarily the last.</li>
+<li>Watch the <b>Loss</b> chart and the <b>Samples</b> (see <i>Watching and steering a run</i>: per-step loss, Sample
+now, Save now). Every saved epoch is a usable LoRA: pick the best-looking one, not necessarily the last.</li>
 </ol>
 <h3>What happens when you press Start</h3>
 <ul>
@@ -539,6 +542,96 @@ more; the negative prompt then applies too.</li>
 <li>Preview time is left out of the speed shown on the progress bar.</li>
 <li>A family's <b>Turbo LoRA</b> (if you set its file) makes previews much faster. Strength 0 turns it off; -1 uses the
 family default.</li>
+</ul>
+"""),
+    "train_live": ("Watching and steering a run", "Train", """
+<h2>Watching and steering a run</h2>
+<p>These came with Fizgig v8 and are unit-tested on tiny test models only. They have <b>not yet been run on real
+hardware</b>: if one misbehaves on a real run, please tell us.</p>
+<h3>The loss graph</h3>
+<ul>
+<li>The <b>Loss</b> tab now draws the loss of <b>every step</b> as it trains (a faint line), with a bright
+<b>smoothed</b> line over it, the <b>average of each epoch</b> (green dots), the <b>learning rate</b> (dashed orange,
+its own scale) and a faint line where each epoch starts (e1, e2...). Point at the graph to read a step: its number,
+epoch, loss and learning rate.</li>
+<li>A smooth line going down is what you want, but loss alone doesn't tell you when the LoRA is best. Judge by the
+sample previews.</li>
+<li>The graph updates every few seconds while a run trains, and shows the curve of a finished, paused or earlier run
+with the same LoRA name too. A resumed run carries on its own curve.</li>
+<li>Very long runs are thinned to a few thousand points so the graph stays quick ("every 4th drawn").</li>
+</ul>
+<h3>Sample now and Save now</h3>
+<ul>
+<li><b>Sample now</b> (Ctrl+Shift+S) renders a preview round straight away, after the current step, with the LoRA as
+it is now. The pictures show in <b>Samples</b> under the epoch in progress.</li>
+<li><b>Save now</b> (Ctrl+Shift+D) saves the LoRA right after the current step, as
+<code>&lt;name&gt;-step0000123.safetensors</code> beside the epoch files. It shows in the <b>Checkpoints</b> tab. It is
+a LoRA file only, not a resume state: use Pause to be able to continue.</li>
+<li>Both are only available while the <b>Training</b> stage runs (not while latents and captions are cached).
+Sample now also needs previews to be set up: <i>Every N epochs</i> above 0 and a prompt.</li>
+<li>The console confirms the request, and the trainer logs <code>[sample now]</code> / <code>[save now]</code> when it
+acts.</li>
+</ul>
+<h3>Prompt sliders: change the prompts while it trains</h3>
+<ul>
+<li>While a <b>prompt-pair slider</b> (Slider LoRA from prompts) trains, <b>Slider prompts...</b> (Ctrl+Shift+L)
+opens its base prompt, what each end adds and the push strength. Apply hands them to the run, which takes them at the
+end of the epoch. A new base prompt makes the model render its practice pictures again (a short pause).</li>
+<li>The window shows what the trainer last applied: from which epoch, and whether the practice pictures were rendered
+again. The saved LoRA records the history of its prompts.</li>
+<li>Image-pair sliders have no live prompts. A slider run <b>ignores the sample override</b> (Preview override...): its previews are
+always the dial at -1, 0 and +1 on the base prompt.</li>
+</ul>
+<h3>Which prompt made this preview?</h3>
+<ul>
+<li>Each picture in <b>Samples</b> shows the prompt it was rendered from under its label, and in full in its tooltip,
+so a picture from before a Preview override or a slider prompt change still shows the prompt that made it.</li>
+</ul>
+<h3>Klein: the Distilled tick and Steps / CFG</h3>
+<ul>
+<li>With Klein's <b>Use Distilled model for samples</b> ticked and the Distilled file set under Model files, the
+<b>Steps</b> and <b>CFG</b> boxes move to the Distilled's own recipe (4 steps, CFG 1); unticked, they go back to the
+training model's. A value you typed yourself is never replaced.</li>
+<li>A Steps or CFG you typed is kept, unless it equals one of the two defaults (the plain model's or the
+checkpoint's), which the tab and the trainer treat as untouched, as Fizgig does. CFG above 1 brings the negative
+prompt.</li>
+</ul>
+<h3>Edit LoRAs with extra pictures</h3>
+<ul>
+<li>For families whose edit takes several pictures (<b>Klein</b>: up to 4, <b>Qwen Image 2.1</b>: up to 10), the Edit
+card (Show all settings, Edit LoRA on) asks <b>What the edit uses</b>. <b>The photo only</b> is an edit that changes how
+a photo looks (a grade, a relight, a retouch). <b>The photo + extra pictures</b> brings something from other pictures
+into it (a person, an object, a place).</li>
+<li>Your <b>edited photos and their captions</b> are the dataset folder: <code>photo.png</code>,
+<code>photo.txt</code>. The <b>Originals folder</b> holds <code>photo.png</code> at the same crop. The <b>Extra
+pictures folder</b> holds <code>photo_1.png</code>, <code>photo_2.png</code> ... (any size or shape; each is resized to
+the target's pixel count in its own shape). Up to <b>3 extras for Klein, 9 for Qwen Image 2.1</b>. A photo can have
+none (it trains as a normal pair). Extras may also sit in the Originals folder.</li>
+<li>The number is the order the model sees them in: say so in the edit instruction ("Put the man from the second
+picture into this scene").</li>
+<li>For previews, the edit preview photo's own extras are <code>test_1.png</code>, <code>test_2.png</code> ... in the
+Extra pictures folder (for <code>test.png</code>); without a test photo, the first original's extras are used.</li>
+<li>File names are not case-sensitive.</li>
+</ul>
+<h3>For power users: the files a run writes</h3>
+<ul>
+<li><code>.tagscriber_loss_&lt;name&gt;.jsonl</code> in the run folder: one line a step,
+<code>{"s": step, "e": epoch, "l": loss, "lr": rate}</code> (the rate only now and then). A resumed run keeps the lines
+up to its resume step and carries on.</li>
+<li><code>&lt;name&gt;-step0000123.safetensors</code>: what Save now writes.</li>
+<li><code>sample/.prompts_&lt;name&gt;.json</code>: the prompts each preview round used, by epoch
+(<code>{"0": [...], "3": [...]}</code>; a Sample now uses the epoch in progress).</li>
+<li><code>.sample_now</code>, <code>.save_now</code>, <code>.slider_prompts.json</code> (answered in
+<code>.slider_prompts_applied.json</code>), <code>.pause_requested</code> and <code>.sample_override.json</code>: the
+control files. The trainer takes each once, between steps or at an epoch boundary.</li>
+</ul>
+<h3>Also new in this trainer</h3>
+<ul>
+<li>A failed <b>resume-state save</b> no longer ends a run: it is tried twice, a half-written state folder is
+removed, and the run warns and trains on. A Pause whose save fails still stops loudly, because you asked for a state
+to resume from.</li>
+<li>With <b>Compile Blocks</b> on, a quick test compile runs first, and previews are rendered <b>uncompiled</b>
+(eager), so the first preview no longer waits minutes for the compiler; training keeps its compiled graphs.</li>
 </ul>
 """),
     "train_memory": ("Training memory & speed", "Train", """

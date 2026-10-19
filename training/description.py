@@ -37,6 +37,11 @@ class ModelFile:
     # the download button fetches it only with the optional tick; None = not required -> optional
     # (Fizgig families/description.py:49-52)
     fetch_optional: Optional[bool] = None
+    # a pick between this file and an alternative build of it (names for the two, e.g. ("MOSS-Image Base",
+    # "Kromoss")) and the alternative's size; the Model files row offers both (Fizgig 8.7.3 families/description.py:
+    # 45-48). () = no alternative
+    fetch_choice: tuple = ()
+    alt_size_gb: float = 0.0
 
     @property
     def fetch_is_optional(self) -> bool:
@@ -222,6 +227,18 @@ class FamilyDescription:
     # folder or the Extra pictures folder): the first is the original at the same crop, the others are extra
     # references at their own shape. 1 = one original only (Fizgig 8.1.1 families/description.py:457-460)
     edit_references: int = 1
+    # a full fine-tune of the base model is offered (the driver's ft_spec, training/ft.py); ft_learning_rate is the
+    # rate choosing Fine-tune sets; ft_regularisation: a regularisation set of the broad class is offered (Fizgig
+    # 8.7.3 families/description.py:404-408)
+    finetune: bool = False
+    ft_learning_rate: float = 1e-5
+    ft_regularisation: bool = True
+    # Multi Concept (several dataset folders, one subject each) and the Subjects card's DOP / Isolation are offered
+    # (Fizgig 8.4.0-8.5.7 families/description.py:331-340: on for every family)
+    multi_concept: bool = True
+    subject_isolation: bool = True
+    # an orange line under the model picker ("new and improving daily"); "" = none (Fizgig :304)
+    status_note: str = ""
     # Slider LoRAs (Fizgig 7.0.1): the LoRA's strength is a dial between two looks, trained from image pairs (the
     # driver's training_loss diff_ref) or from prompts (noise_latents / predict). slider_guidance: a prompt slider's
     # default push strength; slider_ultra_blocks: the block ids an "Ultra mode" slider trains (() = no Ultra mode)
@@ -243,6 +260,14 @@ class FamilyDescription:
     # own recipe, the training model parked meanwhile (Fizgig 7.0.1 train_preview_checkpoint)
     train_preview_checkpoint: bool = False
     preview_checkpoint_sampling: Optional[SamplingSettings] = None
+    # the Samples tab's tick for it: its label, whether it starts ticked, the Steps note (Fizgig 8.7.3 :424-430)
+    preview_checkpoint_tick: str = "Use Distilled model for samples (4-step, matches ComfyUI)"
+    preview_checkpoint_on: bool = True
+    preview_checkpoint_steps_note: str = "Base samples only - Distilled is locked at 4 steps"
+    # (tensor name, sum) that identifies the family's own released Base DiT: with any other Base (a fine-tune of it)
+    # the preview-checkpoint tick starts off, so previews render on the model the LoRA will be used on (Fizgig 8.7.3
+    # families/base_check.py). () = no check
+    standard_base: tuple = ()
     preview_speed_steps: int = 0      # preview steps with it (0 = the SpeedLoRA's own)
     # the Samples tab sets the speed LoRA's steps in a box of their own (FAMILY_TURBO_STEPS; MiniMax H3's "N steps
     # at M%" row) and the Steps box stays the plain-model count

@@ -71,6 +71,15 @@ is a dataset studio with training built in.
   inaccurate. TagScribeR computes that one layer itself. Measured on an RX 7900 XT against a CPU reference, the encode
   error fell from about 0.04-0.06 to 0.005.
 
+**Training, wave 2 (Fizgig v8)** - unit-tested on tiny test models only, not yet run on real hardware
+
+- **A loss graph of every step**, smoothed, with the epoch averages, the learning rate and the epoch starts.
+- **Sample now and Save now** (Ctrl+Shift+S / Ctrl+Shift+D) while a run trains, a **Checkpoints** list, and the
+  **prompt each preview was made with** shown under it.
+- **Prompt sliders: change the prompts while they train** (Ctrl+Shift+L).
+- **Edit LoRAs with extra pictures** (Klein up to 3, Qwen Image 2.1 up to 9) and Klein's Steps / CFG following the
+  Distilled tick.
+
 **Everyday use**
 
 - **Ctrl+K command palette, a searchable Help Center** (F1 opens help for the current tab) and tooltips on every

@@ -160,6 +160,27 @@ The options as originally presented:
     owner decided to include it (2026-10-05); `THIRD_PARTY_NOTICES.md` records the provenance. This is separate
     from the model weights' licence.
 
+- **Fizgig v8 wave 2, Train tab side (2026-10-19, unit-tested only, not yet run on real hardware).** The trainer side is
+  in `training/train.py`, `training/step_log.py` and `training/pipeline.py`; the tab's side:
+  - *Step log.* The trainer writes `.tagscriber_loss_<name>.jsonl` (one `{"s","e","l","lr"}` line a step, `lr` now and
+    then). `LossChart` draws it from `pipeline.read_step_log` (thinned by the reader) beside the epoch averages and
+    the learning rate, polled every 4 s while a run trains and read once for a finished or paused run.
+  - *Control files.* Sample now / Save now (`.sample_now`, `.save_now`; Ctrl+Shift+S / Ctrl+Shift+D) are enabled only
+    while the train stage runs, Sample now only with previews set up. A Save now file
+    `<name>-stepNNNNNNN.safetensors` shows in the new Checkpoints list. A prompt-pair slider's prompts can be changed
+    live (`.slider_prompts.json`, answered in `.slider_prompts_applied.json`; Ctrl+Shift+L). Samples show their prompt
+    from `sample/.prompts_<name>.json`.
+  - *Distilled tick.* Steps / CFG follow the tick (with the Distilled file set) as Fizgig's `turboFollow`; typed values
+    are never replaced. The tick's label comes from the description's `preview_checkpoint_tick` when it has one.
+  - *Multi-reference edits* (Fizgig 8.1.1 / 8.1.2): `FAMILY_EDIT_PICTURES` and `FAMILY_EDIT_EXTRAS_DIR` for families
+    with `edit_references > 1` (Klein 4, Qwen Image 2.1 10): photo.png in the dataset folder, the same crop in the
+    Originals folder, photo_1.png, photo_2.png ... in the Extra pictures folder (or the Originals folder).
+  - Differences from Fizgig: the follow also runs when a preset or the last run is applied (the tab shows what the
+    trainer will render), where Fizgig's runs on form load only; the extras rows are numbered as Fizgig's only when
+    extras are chosen (the Edited folder step is the Dataset folder here); no "Found: N photos with extra pictures" readout on the extras row yet; the Distilled
+    tick keeps TagScribeR's wording for Klein; the loss graph has fixed smoothing (0.9) and no log-scale or
+    outlier switches.
+
 ## 6. Verification policy
 
 The owner runs all real training. Development verification uses:

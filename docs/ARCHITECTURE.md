@@ -130,9 +130,19 @@ Adding a family means a package under `training/families/` plus one line in `reg
   `--stage text`, then `training.train`. It reads their stdout (`training.progress` parses the lines).
 - Control goes through files in the run folder:
   - `.pause_requested`: save state at the next epoch boundary and exit 0;
-  - `.sample_override.json`: the prompt for the next preview;
+  - `.sample_override.json`: the prompt for the next preview (a slider run ignores it);
+  - `.sample_now` / `.save_now`: a preview round / a `<name>-stepNNNNNNN.safetensors` checkpoint after the next
+    optimizer step (taken once; the Train tab's Sample now / Save now);
+  - `.slider_prompts.json`: a prompt slider's new prompts at the next epoch boundary, answered in
+    `.slider_prompts_applied.json`;
   - `loss_log/caption_updates.json`: caption fixes, applied at the next boundary.
 - Stop kills the process tree.
+- The trainer writes two things the tab reads while a run is live: `.tagscriber_loss_<name>.jsonl` (one line a step,
+  `training/step_log.py`; the loss graph polls it and the reader thins it) and `sample/.prompts_<name>.json` (the
+  prompts of each preview round, shown with the pictures).
+- An Edit LoRA on a family with `edit_references > 1` (Klein, Qwen Image 2.1) may take extra pictures:
+  `FAMILY_EDIT_PICTURES` / `FAMILY_EDIT_EXTRAS_DIR` (`photo_1.png`, `photo_2.png` ... for `photo.png`;
+  `pipeline.edit_extras` / `preview_extras`).
 
 **Data.** Training reads caches, never images. Cache files use Fizgig's naming in
 `user_data/training_cache/<folder>-<hash>/`. A re-cache skips latents that are still valid and captions that haven't

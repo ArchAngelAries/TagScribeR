@@ -375,6 +375,12 @@ def test_should_compile_decision_table(machine):
     assert sc(2000, "nf4", 0, vram_gb=40, mp=1.0)[0] is True
 
 
+def test_nf4_one_megapixel_memory_is_fizgigs_15_gb():
+    # FZ 8.7.1 families/krea2.py:125-129 (#185, v7.3.0): NF4 at 1 MP peaked 14.9 / 15.2 GB, not the old 13.4
+    from training.families.krea2.description import KREA2
+    assert KREA2.train_memory["nf4"] == (((0.25, 11.4), (1.0, 15.0)), 0.0)
+
+
 def test_should_compile_environment_gates(machine):
     machine.setattr(C, "is_rocm", lambda: True)
     ok, why = C.should_compile(10 ** 6, "int8", 0, vram_gb=32)

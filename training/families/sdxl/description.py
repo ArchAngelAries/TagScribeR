@@ -61,8 +61,9 @@ def _presets(name):
         # Fizgig's (Peter, 5 Oct 2026): the first is a first visit's preset. alpha at half the rank ("SDXL LoRAs gain
         # from the halved alpha"); 5e-5 "clearly better results than 1e-4 in his comparisons". The Fine-tune presets
         # wait for that mode (port plan stage 5)
-        (f"✨ {name} Strong (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16)),
-        (f"✨ {name} Standard (rank 16, alpha 8, 5e-5)", _fizgig_preset(16, 8)),
+        # 50 epochs for both (FZ 8.7.1 families/sdxl.py:170-171; the _preset default stays 20, the Slider keeps 30)
+        (f"✨ {name} Strong (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16, epochs=50)),
+        (f"✨ {name} Standard (rank 16, alpha 8, 5e-5)", _fizgig_preset(16, 8, epochs=50)),
         # Slider: the default's rank 32 / alpha 16 at 5e-5 (Fizgig, 5 Oct 2026; "not yet measured on SDXL")
         (f"✨ {name} Slider (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16, epochs=30, slider=True)),
         # TagScribeR's earlier presets, community starting points (not measured)

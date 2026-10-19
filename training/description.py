@@ -31,6 +31,37 @@ class ModelFile:
     #                                   "preview_dit" (a second checkpoint previews render on) | ""
     default_to: str = ""              # role whose file stands in when this row is left empty (SDXL: the VAE and the text
     #                                   encoders live inside the checkpoint, so an empty row means "use the checkpoint")
+    # earlier versions of this file (file names): a stored path still pointing at one is moved to this file by
+    # migrate(), where any other file is the user's own choice and kept (Fizgig 8.7.1 families/description.py:46-48)
+    replaces: tuple = ()
+    # the download button fetches it only with the optional tick; None = not required -> optional
+    # (Fizgig families/description.py:49-52)
+    fetch_optional: Optional[bool] = None
+
+    @property
+    def fetch_is_optional(self) -> bool:
+        """Whether a "download models for me" button leaves this file to the optional tick. A training adapter is never
+        optional by default: it isn't required to start a run, but training without it is the wrong run
+        (Fizgig families/description.py:60-69)."""
+        if self.fetch_optional is not None:
+            return bool(self.fetch_optional)
+        return not self.required and self.role != "training_adapter"
+
+    def migrate(self, stored: str, exists=None) -> str:
+        """A stored path whose file name is one of `replaces` becomes the path of the current file name in the same
+        folder; any other path is returned unchanged (Fizgig's fetch_models / updater rule, 7.3.1). TagScribeR has no
+        downloader that fetches the new file first, so pass `exists` (e.g. os.path.isfile): the path moves only when
+        the new file is there, so a working setup never points at a missing file."""
+        if not stored or not self.replaces or not self.path:
+            return stored
+        norm = stored.replace("\\", "/")
+        folder, _, name = norm.rpartition("/")
+        if name.lower() not in {r.lower() for r in self.replaces}:
+            return stored
+        new = (self.local_name or self.path.rsplit("/", 1)[-1])
+        sep = "\\" if "\\" in stored and "/" not in stored else "/"
+        out = new if not folder else folder.replace("/", sep) + sep + new
+        return out if exists is None or exists(out) else stored
 
 
 @dataclass(frozen=True)
@@ -214,12 +245,6 @@ class FamilyDescription:
     samples_turbo_pace: bool = False
     preview_speed_strength: Optional[float] = None   # preview strength for it (None = the SpeedLoRA's own; 0 = off
     # by default: previews render without it until the Samples tab's Turbo strength is raised)
-    # (steps, strength) preview defaults an older release shipped; the Samples tab replaces them with the current
-    # ones, so a setting saved under the old default moves on instead of sticking
-    retired_preview_defaults: tuple = ()
-    # a one-time reset: when this tag is new to a user, the Samples tab replaces their saved preview steps and turbo
-    # strength with the current defaults once (the tag is remembered, so later choices stick). Change it to reset again.
-    preview_reset: str = ""
 
     # built-in Training-tab presets: ((name, {GUI setting key: value}), ...); the first is applied on a first visit
     presets: tuple = ()

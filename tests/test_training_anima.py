@@ -64,7 +64,7 @@ def test_description_is_valid(desc):
     assert desc.precisions == ("bf16", "int8", "nf4") and desc.network_types == ("lora", "lokr")   # Fizgig 7.0.1
     assert desc.train_memory["nf4"][0] == ((0.5, 6.6), (1.0, 6.6)) and desc.modelspec_arch == "anima"
     assert (desc.preview_steps, desc.preview_cfg, desc.text_cache_rev) == (20, 4.5, "1")
-    assert desc.preview_speed().pref_key == "anima_turbo_lora" and desc.preview_speed_defaults() == (20, 0.0)
+    assert desc.preview_speed().pref_key == "anima_turbo_lora" and desc.preview_speed_defaults() == (10, 1.0)   # FZ 8.7.1 families/anima.py:138-141
     assert desc.lora.kohya and desc.lora.file_prefix == "lora_unet_" and len(desc.lora.block_modules) == 10
     assert {desc.pref_for(r) for r in ("dit", "vae", "text_encoder", "speed_lora")} == set(desc.pref_keys)
     assert desc.default_sampling().options == (("shift", 3.0),) and desc.experimental

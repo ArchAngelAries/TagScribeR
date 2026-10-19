@@ -33,6 +33,8 @@ def _preset(rank, epochs, adaptive, lo, hi):
         "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": True,
         "KREA2_AUTO_RECAPTION": False, "KREA2_WARMUP_LOOK": False,
         "KREA2_EMA": "0.98 (recommended)",                 # lora_trainer_gui.py:1004-1005
+        # FZ 8.7.1 families/krea2.py:14-30: every Krea 2 preset carries the slider push strength (read for sliders only)
+        "FAMILY_SLIDER_GUIDANCE": "3",
     }
 
 
@@ -105,7 +107,8 @@ KREA2 = FamilyDescription(
     auto_precisions=("int8", "nf4"),
     # Fizgig's figures (families/krea2.py train_memory, v7.0.1): the original trainer's measured 0.25 MP peaks
     # (utils/capabilities.py: 5090, batch 1, rank 32; 0.42 GB saved per swapped INT8 block) and the driver's measured
-    # growth to 1 MP on full-size photos (5090, rank 8, previews off): INT8 +2.9 GB, NF4 13.4 GB at 1 MP. "The
+    # growth to 1 MP on full-size photos (5090, rank 8, previews off): INT8 +2.9 GB, NF4 13.4 GB at 1 MP (since
+    # Fizgig 7.3.0 NF4 at 1 MP is 15.0, see the figures below). "The
     # original's +0.25 GB/MP under-plans 1 MP: INT8 + 16 swapped blocks ran out on a 12 GB card." bf16 measured on the
     # driver, rank 8, 0.25 MP, 26.0 GB; its 1 MP point carries INT8's growth. Max swap 26 (28 blocks, 2 stay resident);
     # NF4 cannot swap. Batch: +2.4 GB per extra image (not modelled by the Auto plan: use batch 1 on a tight card).
@@ -114,7 +117,10 @@ KREA2 = FamilyDescription(
     # Fizgig 7.0.1 caches one caption per forward (krea2/driver.py encode_text); caches written in batches of 8 are
     # re-encoded once
     text_cache_rev="1",
-    train_memory={"int8": (((0.25, 16.2), (1.0, 19.1)), 0.42), "nf4": (((0.25, 11.4), (1.0, 13.4)), 0.0),
+    # NF4 at 1 MP is 15.0, not 13.4 (FZ 8.7.1 families/krea2.py:125-129, #185, v7.3.0): rank 16 with previews on peaked
+    # 14.9 training / 15.2 previewing on a simulated 16 GB card; the old 13.4 (rank 8, previews off) put 16 GB cards on
+    # NF4 at 1 MP and filled them. INT8 + 16 swapped blocks peaked 12.7 / 12.9 on the same run.
+    train_memory={"int8": (((0.25, 16.2), (1.0, 19.1)), 0.42), "nf4": (((0.25, 11.4), (1.0, 15.0)), 0.0),
                   "bf16": (((0.25, 26.0), (1.0, 28.9)), 0.84), "fp8": (((0.25, 18.7), (1.0, 21.6)), 0.42)},
     # Fizgig's Krea 2 list is its whole optimizer catalogue (optimizers.available_optimizers). Automagic v3 runs as
     # Fizgig runs it (krea2/trainer.py:2559-2594): the LoRA split into txtfusion / attn / mlp / io groups that each
@@ -158,7 +164,10 @@ KREA2 = FamilyDescription(
     # "RAW + Turbo LoRA" engine, audit 8.3); without the file they render the RAW model at 28 steps / CFG 4.5 (Fizgig
     # 7.0.1's RAW recipe; its own no-Turbo preview default is 8 steps / CFG 1, which TagScribeR does not copy).
     preview_speed_lora="Krea 2 Turbo (rank 64 LoRA)",
-    preview_speed_steps=8,
+    # With the Turbo LoRA file set, previews render at Turbo 0.7, 10 steps, CFG 1 (FZ 8.7.1 families/krea2.py:164-168,
+    # "Peter's setup"); the bias deltas follow the load strength as in Fizgig.
+    preview_speed_steps=10,
+    preview_speed_strength=0.7,
     preview_steps=28,
     preview_cfg=4.5,
     preview_width=1024,                                      # audit 4.4: SAMPLE_WIDTH per-family default Krea 2 1024
@@ -178,11 +187,11 @@ KREA2 = FamilyDescription(
         # ceiling 2e-4 because the watcher probes up on steady descent and style overbakes at 4e-4 (the start is 1e-4,
         # the LR the Krea 2 ecosystem defaults to). Every epoch is saved: scrub for the sweet spot.
         ("✨ Krea 2 Style (rank 16, gentle LR)", _preset(16, 64, True, "5e-5", "2e-4")),
-        # Slider (Fizgig 7.0.1 families/krea2.py, its keys and values verbatim): hot and short, as Qwen's (rank 4,
-        # 2e-4, 0.5 MP); a happy/sad prompt slider (16 practice pictures, guidance 2) was right at 20 epochs and had
+        # Slider (FZ 8.7.1 families/krea2.py:177-180, rank 8 since v7.3.0, its keys and values verbatim): hot and short,
+        # as Qwen's (2e-4, 0.5 MP); a happy/sad prompt slider (16 practice pictures, guidance 2) was right at 20 epochs and had
         # turned +1 into an illustration by 25. The loss watch and Adaptive LR stand down for sliders
-        ("✨ Krea 2 Slider (rank 4, 2e-4)", {
-            "NETWORK_DIM": 4, "NETWORK_ALPHA": 4, "NETWORK_TYPE": "LoRA (standard)", "LEARNING_RATE": 2e-4,
+        ("✨ Krea 2 Slider (rank 8, 2e-4)", {
+            "NETWORK_DIM": 8, "NETWORK_ALPHA": 8, "NETWORK_TYPE": "LoRA (standard)", "LEARNING_RATE": 2e-4,
             "MAX_TRAIN_EPOCHS": 20, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42, "FAMILY_SLIDER": True,
             "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-4", "ADAPTIVE_LR_MAX": "4e-4",
             "OPTIMIZER_TYPE": "adamw8bit", "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0,

@@ -1,7 +1,8 @@
 # Ported from Fizgig (https://github.com/shootthesound/Fizgig) src/fizgig/qwen_image21/driver.py
 # Copyright 2026 Peter Neill. Licensed under the Apache License, Version 2.0 (see THIRD_PARTY_NOTICES.md).
 # Changes for TagScribeR: import paths; otherwise unchanged. Fizgig 7.0.1's compile_targets and slider hooks
-# (training_loss diff_ref / diff_weight, noise_latents, predict) added.
+# (training_loss diff_ref / diff_weight, noise_latents, predict) added. Fizgig 8.7.1: generate() passes
+# opts["dynamic_shift"] (qwen_image21/driver.py:253-258).
 """Qwen Image 2.1 driver for the training family layer (training/driver.py).
 
 Everything Qwen-specific the generic cache/train/preview code needs, behind the FamilyDriver interface:
@@ -180,7 +181,8 @@ class QwenImage21Driver(FamilyDriver):
         if sigmas is not None and len(sigmas) != steps:
             sigmas = None                   # an explicit schedule only applies at its own step count
         return S.sample(dit, cond["hidden_states"], height, width, steps=steps, seed=seed, cfg=cfg, neg_emb=neg,
-                        device=device, sigmas=sigmas, shift_terminal=shift_terminal, noise=noise, on_step=on_step,
+                        device=device, sigmas=sigmas, shift_terminal=shift_terminal,
+                        dynamic_shift=bool(opts.get("dynamic_shift", True)), noise=noise, on_step=on_step,
                         text_mask=cond.get("mask"), neg_mask=neg_mask, ref_latents=refs or None,
                         ref_mask=cond.get("ref_mask"), neg_ref_mask=neg_cond.get("ref_mask") if neg is not None else None)
 

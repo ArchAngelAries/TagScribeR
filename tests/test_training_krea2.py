@@ -64,7 +64,8 @@ def test_description_is_valid_and_registered_first(desc):
     assert {desc.pref_for(r) for r in ("dit", "vae", "text_encoder", "speed_lora")} == set(desc.pref_keys)
     sp = desc.preview_speed()
     assert (sp.strength, sp.settings.steps, sp.settings.cfg) == (1.0, 8, 1.0) and dict(sp.settings.options)["mu"] == 1.15
-    assert desc.preview_speed_defaults() == (8, 1.0)
+    assert desc.preview_speed_defaults() == (10, 0.7)               # FZ 8.7.1 families/krea2.py:164-168
+    assert desc.train_memory["nf4"][0] == ((0.25, 11.4), (1.0, 15.0))                   # FZ :125-129 (#185)
 
 
 def test_preset_keys_are_known_or_migrated(desc):
@@ -123,8 +124,8 @@ def test_train_kwargs_map_precision_ema_adaptive_and_turbo(desc, tmp_path):
     assert kw["ema_decay"] == 0.98 and kw["adaptive_lr"] is True
     assert (kw["adaptive_lr_min"], kw["adaptive_lr_max"]) == (2e-4, 4e-4) and kw["network_type"] == "lora"
     assert kw["log_per_image_loss"] is True and kw["per_image_lr"] is True and kw["optimizer_type"] == "adamw8bit"
-    assert prompts and kw["speed_lora"] == str(turbo) and "speed_lora_strength" not in kw
-    assert kw["sample_steps"] == 8                                          # the Turbo LoRA's own steps, not 28
+    assert prompts and kw["speed_lora"] == str(turbo) and kw["speed_lora_strength"] == 0.7   # the family default reaches the trainer
+    assert kw["sample_steps"] == 10                                         # the Turbo previews' default steps (FZ krea2.py:165), not 28
     vals["SAMPLE_STEPS"] = 12
     assert pipeline.train_kwargs(desc, vals, tmp_path / "run", models)[0]["sample_steps"] == 12
     new, _ = presets.apply({"QUANT_4BIT_MODE": "int8", "KREA2_EMA": "0.99 (stronger)"}, vals, desc)

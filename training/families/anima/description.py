@@ -124,8 +124,9 @@ ANIMA = FamilyDescription(
                   role="text_encoder"),
         ModelFile("anima_turbo_lora", "Anima Turbo LoRA (previews)", False, _LORAS,
                   "anima-turbo-lora-v0.2.safetensors", 0.15,
-                  "Optional: fast previews (about 10 steps, no CFG). Previews still start on the plain model "
-                  "(Turbo strength 0); raise Turbo strength under Samples to use it.", role="speed_lora"),
+                  "Optional: fast previews (about 10 steps, no CFG). With this file set, previews render on it "
+                  "by default (Turbo strength 1, CFG 1, 10 steps); set Turbo strength to 0 under Samples to preview the "
+                  "plain model.", role="speed_lora"),
     ),
     text_encoder_label="Qwen3-0.6B",
     vae_label="Qwen-Image VAE",
@@ -199,10 +200,10 @@ ANIMA = FamilyDescription(
         ),
     ),
     preview_speed_lora="Anima Turbo LoRA v0.2",
-    # Fizgig 7.0.1: with the Turbo LoRA file set, previews still default to the plain model (strength 0), so its steps
-    # are the plain model's 20
-    preview_speed_steps=20,
-    preview_speed_strength=0.0,
+    # With the Turbo LoRA file set, previews render on it by default (strength 1, CFG 1) at its card's 10 steps (FZ 8.7.1
+    # families/anima.py:138-141: "Peter, 13 Oct: down from 20"). Fizgig leaves preview_speed_strength unset, so it is the
+    # SpeedLoRA's own 1.0 (strength=1.0 above, FZ :126); here too (None). Turbo strength 0 still previews the plain model.
+    preview_speed_steps=10,
     preview_steps=20,                                        # Fizgig 7.0.1 (the community's 16-20; CFG 4.5)
     preview_cfg=4.5,
     preview_negative=("worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, "
@@ -218,8 +219,9 @@ ANIMA = FamilyDescription(
         ("✨ Anima Character (rank 16, 1e-4)", _fizgig_preset(16, 1e-4, epochs=50)),
         ("✨ Anima Style (rank 16, 5e-5)", _fizgig_preset(16, 5e-5)),
         ("✨ Anima Official (rank 32, 2e-5)", _fizgig_preset(32, 2e-5)),
-        # Slider: Qwen's slider recipe (rank 4, 2e-4, 30 epochs); "not yet measured on Anima" (Fizgig)
-        ("✨ Anima Slider (rank 4, 2e-4)", _fizgig_preset(4, 2e-4, slider=True)),
+        # Slider: Qwen's slider recipe (rank 8 since Fizgig 7.3.0, 2e-4, 30 epochs; FZ 8.7.1 families/anima.py:159-160);
+        # "not yet measured on Anima" (Fizgig)
+        ("✨ Anima Slider (rank 8, 2e-4)", _fizgig_preset(8, 2e-4, slider=True)),
         # TagScribeR's earlier presets: community starting points. The model author's own guidance: "a light touch" - rank 32
         # starts at LR 2e-5 (model card); sd-scripts' documented example is rank 8, LR 1e-4 at alpha 1 (a 1/8 scale -
         # these presets use alpha = rank, scale 1, so they start lower).

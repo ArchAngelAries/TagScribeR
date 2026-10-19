@@ -61,8 +61,7 @@ Deferred: Qwen Turbo DiT previews (workbench stage); `sample_strengths` (only AC
 Stage 5 gains: DOP and Multi Concept on every family; LoRA Isolation after the fine-tune.
 New families, in this order: MOSS-Image, Flux 3 Image Klein (gated, non-commercial weights: a licence link on the
 row, no stored token; its forced cuDNN attention routed through `training/modules/sdpa.py` for ROCm), Z-Image Turbo.
-**Question for the owner:** ACE-Step is a music trainer (needs the stage-6 media layer, audio previews, ffmpeg); the
-recommendation is to leave it out of an image-dataset app unless asked.
+ACE-Step (a music trainer): skipped (the owner, 2026-10-19). Do not port it unless the owner asks again.
 
 ## Where things stand
 

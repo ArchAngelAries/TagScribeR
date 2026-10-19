@@ -62,14 +62,19 @@ class CardDelegate(QStyledItemDelegate):
         path.addRoundedRect(QRectF(r), 8, 8)
         painter.fillPath(path, CARD_HOVER if hover and not selected else CARD_BG)
         job = self.job_state.get(e.key)
-        if job == "working":
-            painter.setPen(QPen(UNSAVED, 2.5))
-            painter.drawPath(path)
-        elif job == "failed":
-            painter.setPen(QPen(MISSING, 2.5))
-            painter.drawPath(path)
-        elif selected:
+        job_color = UNSAVED if job == "working" else MISSING if job == "failed" else None
+        if selected:
+            # selection outline on the card edge; a job outline (red when failed) sits just inside it,
+            # so a failed and selected card shows both
             painter.setPen(QPen(ACCENT, 2.5))
+            painter.drawPath(path)
+            if job_color is not None:
+                inner = QPainterPath()
+                inner.addRoundedRect(QRectF(r.adjusted(3, 3, -3, -3)), 6, 6)
+                painter.setPen(QPen(job_color, 2.5))
+                painter.drawPath(inner)
+        elif job_color is not None:
+            painter.setPen(QPen(job_color, 2.5))
             painter.drawPath(path)
 
         # Thumbnail

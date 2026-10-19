@@ -40,7 +40,7 @@ rest of stage 5 (fine-tune, DOP, Multi Concept), (4) new families, (5) improveme
 - [ ] Inference (10): `trust_remote_code` per model, never global (#1); partial downloads shown as installed (#3); API
   timeouts / retries / cancel and the blocking unload on close (#4); non-InferenceError aborts a batch (#5); the key
   kept when the server URL changes (#7); `items_started` never emitted (#8); gated-model message (#9).
-- [ ] Owner-reported: a failed image's red outline hides the selection highlight (show both).
+- [x] Owner-reported: a failed image's red outline hides the selection highlight (now both show).
 
 ### v8 catch-up, decided by the standing rules (recorded so later sessions do not ask)
 

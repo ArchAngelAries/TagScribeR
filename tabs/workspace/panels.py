@@ -119,6 +119,21 @@ class InspectorPanel(QWidget):
             self.lbl_tags_title.setText(f"<b>Shared tags</b> ({len(self._common)})")
             self.tag_editor.set_tags(captions.join_tags(self._common))
 
+    def drop_entries(self, keys) -> bool:
+        """Forget entries whose files are gone (trashed / removed from the session). Returns True if any were shown.
+
+        A model reset clears the selection without a selectionChanged signal, so the owner of the session must call
+        this (or show_entries) when it removes entries; otherwise the inspector keeps editing a deleted image.
+        """
+        gone = set(keys)
+        if not any(e.key in gone for e in self.entries):
+            return False
+        self._typing_timer.stop()
+        self._pending_old = None
+        self._loading_key = ""
+        self.show_entries([e for e in self.entries if e.key not in gone])
+        return True
+
     def refresh_from_entries(self) -> None:
         """Re-sync after an external change (undo, batch op) without losing cursor when unchanged."""
         if len(self.entries) == 1:

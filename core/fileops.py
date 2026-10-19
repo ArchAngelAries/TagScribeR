@@ -20,6 +20,12 @@ log = logging.getLogger(__name__)
 CAPTION_SIDECAR_EXTS = (".txt", ".caption", ".json")
 
 
+def valid_collection_name(name: str) -> bool:
+    """A collection / folder name that stays inside its parent: no path separators, no '..', not empty."""
+    n = name.strip()
+    return bool(n) and n not in (".", "..") and not any(c in n for c in ("/", "\\", "\0", ":")) and ".." not in n
+
+
 def unique_path(dest: Path) -> Path:
     """Return ``dest`` or ``name (n).ext`` if it already exists."""
     if not dest.exists():
@@ -78,7 +84,9 @@ def copy_image_with_caption(src: Path, dest_dir: Path, on_conflict: str = "renam
             report.skipped.append(src)
             return None
         stem = src.stem
-        if (dest_dir / src.name).exists():
+        # A clash is the image name OR any caption sidecar of that stem (a.png must not replace the a.txt that
+        # belongs to an existing a.jpg).
+        if (dest_dir / src.name).exists() or any((dest_dir / f"{stem}{e}").exists() for e in CAPTION_SIDECAR_EXTS):
             if on_conflict == "skip":
                 report.skipped.append(src)
                 return None

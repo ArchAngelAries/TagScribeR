@@ -65,6 +65,7 @@ class WorkspaceContext(QObject):
     entries_changed = Signal(list)      # keys whose caption / state changed
     dimensions_loaded = Signal(list)    # keys whose width/height became known
     dirty_changed = Signal()
+    entries_removed = Signal(list)      # keys whose files left the dataset (trashed, moved)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -274,6 +275,7 @@ class WorkspaceContext(QObject):
         self.undo_stack.clear()  # history may reference removed images
         self.model.remove_keys(keys)
         self.dirty_changed.emit()
+        self.entries_removed.emit(list(keys))
 
     # ------------------------------------------------------------------ job badges
     def set_job_state(self, keys: list[str], state: str | None) -> None:
@@ -294,6 +296,10 @@ class WorkspaceContext(QObject):
         name, ok = QInputDialog.getItem(parent, "Copy to Collection", "Collection name (new or existing):",
                                         existing, 0, True)
         if not ok or not name.strip():
+            return
+        if not fileops.valid_collection_name(name.strip()):
+            QMessageBox.warning(parent, "Copy to Collection", f"'{name.strip()}' can't be a collection name: use a "
+                                "plain folder name (no slashes, no '..').")
             return
         if self.session and any(self.session.get(k) and self.session.get(k).dirty for k in keys):
             if not self.save(parent, keys):

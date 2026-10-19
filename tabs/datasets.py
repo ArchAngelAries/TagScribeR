@@ -29,6 +29,7 @@ def collections_root() -> Path:
 
 def _collection_stats(root: Path) -> list[tuple[str, int, int]]:
     out = []
+    ext = settings().get("caption.extension") or caption_io.DEFAULT_CAPTION_EXT
     if not root.is_dir():
         return out
     for d in sorted((p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")),
@@ -37,7 +38,7 @@ def _collection_stats(root: Path) -> list[tuple[str, int, int]]:
             imgs = dataset.scan_images(d)
         except OSError:
             continue
-        out.append((d.name, len(imgs), sum(1 for i in imgs if caption_io.has_caption(i))))
+        out.append((d.name, len(imgs), sum(1 for i in imgs if caption_io.has_caption(i, ext))))
     return out
 
 

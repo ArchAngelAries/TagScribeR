@@ -34,6 +34,7 @@ class ExportOptions:
     rename: bool = False
     name_prefix: str = "img"
     caption_ext: str = ".txt"
+    source_caption_ext: str = ".txt"     # the dataset's own caption extension (Settings: caption.extension)
     trigger: str = ""                # prepended to captions if not already present
     skip_uncaptioned: bool = True
 
@@ -65,7 +66,7 @@ def _bucket_resize(img: Image.Image, resolution: int, allow_upscale: bool) -> Im
 def export_one(src: str | os.PathLike, index: int, opts: ExportOptions) -> Path:
     """Export one image (+ caption). Returns the written image path. Raises SkipImage to skip."""
     src = Path(src)
-    caption = caption_io.read_caption(src)
+    caption = caption_io.read_caption(src, opts.source_caption_ext)
     if opts.skip_uncaptioned and not caption.strip():
         raise image_ops.SkipImage("no caption")
     img = image_ops.open_upright(src)

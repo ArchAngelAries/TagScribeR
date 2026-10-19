@@ -107,6 +107,7 @@ class GalleryTab(QWidget):
         self.ctx.entries_changed.connect(self._on_entries_changed)
         self.ctx.session_changed.connect(self._on_session_changed)
         self.ctx.dimensions_loaded.connect(lambda _k: self.inspector.refresh_from_entries())
+        self.ctx.entries_removed.connect(self.inspector.drop_entries)     # never show a trashed image
 
         for seq, fn in (("Ctrl+Down", lambda: self.browser.navigate(1)),
                         ("Ctrl+Up", lambda: self.browser.navigate(-1)),

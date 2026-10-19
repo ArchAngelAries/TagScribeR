@@ -33,7 +33,7 @@ rest of stage 5 (fine-tune, DOP, Multi Concept), (4) new families, (5) improveme
   delete another family's cache (#5); `run_dir_for` unvalidated (#6); resume `torch.load` without
   `weights_only=True` (#8); path keys applied from an imported preset are named in the report (#7).
 - [ ] Shared layer (05 #1): block swap pairs a bare block with a LoRA-wrapped one (Fizgig #199) - H3 with swap.
-- [ ] App core (09 #2-#9): editor "Overwrite originals" convert without confirmation; collection copy overwrites a
+- [x] App core (09 #2-#9; and the review's findings: export leaked XMP, XMP orientation, 16-bit orientation; caption writes refuse image names): editor "Overwrite originals" convert without confirmation; collection copy overwrites a
   caption; in-place edits drop PNG text / XMP and ignore the quality slider; 16-bit PNGs clipped; header-size guard
   before decoding huge images; UTF-16 captions; file modes and fsync in atomic writers; assorted (inspector shows a
   trashed image, `../` collection names, `.json` sidecars, caption extension in counts).

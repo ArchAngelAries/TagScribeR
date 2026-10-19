@@ -67,6 +67,8 @@ every tab, so you can switch between tagging, AI captioning and editing without 
 <li><b>Train</b> a LoRA on the open folder in the <i>Train</i> tab (Ctrl+6). See <i>Training a LoRA</i>.</li>
 </ol>
 <p>Captions are stored the way trainers expect: <code>image.png</code> + <code>image.txt</code> in the same folder.</p>
+<p>Caption files in other encodings (UTF-16 as Notepad writes it, with a byte-order mark; Windows-1252) are read
+correctly; when you edit one it is saved back as UTF-8, which every trainer reads.</p>
 <p><b>Tip:</b> press <b>Ctrl+K</b> anywhere for the command palette — type a few letters (e.g. “miss cap”, “health”,
 “save”) to run any action, apply a filter, open a recent folder or jump to a help topic.</p>
 """),
@@ -169,6 +171,10 @@ sets how similar images must be (strict → loose).</li>
 size. Many tiny buckets with 1–2 images train less efficiently; consider cropping outliers to common shapes in the
 Image Editor (<i>Crop to aspect ratio</i>).</li>
 </ul>
+<p>PNG, WebP and TIFF images above 80 megapixels are listed as unreadable ("too large to analyse") and left out of the
+sharpness, resolution, crop and similarity checks (exact duplicates are still found), so a huge or hostile file can't
+exhaust memory; thumbnails show them as unreadable too. Large JPEGs are read at reduced size and checked as usual. The
+Image Editor still opens everything.</p>
 <p>Click a result (or a group under it) to select those images. Compare them in <i>Inspect</i>, then move unwanted copies
 to the Recycle Bin with <b>Shift+Del</b>. Cards show purple badges, and you can filter with <code>flag:duplicate</code>,
 <code>flag:similar</code>, <code>flag:blurry</code>, <code>flag:lowres</code>, <code>flag:crop</code> or <code>flag:any</code>.</p>
@@ -253,7 +259,16 @@ for its linear attention yet — output is correct).</td></tr>
 <ul><li><b>Precision</b> — Auto picks bfloat16 on GPUs that support it (RX 7000+, RTX 30+), else float16.</li>
 <li><b>Quantization</b> — 8-bit/4-bit need bitsandbytes (installed by default; run <code>update.bat</code> if it is missing).</li>
 <li><b>Allow reasoning mode</b> — lets Qwen3.5+ “think” first. Slower; rarely better for captions.</li>
-<li><b>Allow custom model code</b> — only for models from sources you trust.</li></ul>
+<li><b>Allow this model to run its own code</b> — shown only for a model that needs it, asked for and remembered per
+model (and revision). Models built on Transformers' own architectures never run code from their repository. Only for
+sources you trust.</li>
+<li>A download that stopped partway shows <i>incomplete</i>; <b>Download (resume)</b> continues it.</li>
+<li><b>Gated models</b> (Gemma): accept the licence on the model page, then run <code>hf auth login</code> or set
+<code>HF_TOKEN</code>.</li>
+<li><b>API servers:</b> each profile has a timeout and a retry count (automatic: a local server is not retried after
+a timeout, so a slow reply is never captioned twice). Changing the server address clears the API key, and a key that
+would travel over plain http to another machine is warned about. A reply the app can't read fails only that image;
+the batch continues.</li></ul>
 """),
     "api": ("API & local servers", "AI", """
 <h2>API / Server</h2>
@@ -295,8 +310,12 @@ buckets). <b>Crop to exact size</b> cuts a fixed rectangle. <i>Keep</i> chooses 
 <h3>Where results go</h3>
 <ul><li><b>Save edited copies</b> (default): <code>Image Edits\\&lt;source folder&gt;\\</code>. Originals are untouched, names never
 collide, and each copy gets its caption file. <i>Open</i> shows the folder.</li>
-<li><b>Overwrite originals</b> asks first. Color profiles and EXIF data are kept; photo rotation is applied to the pixels.
-Converting with overwrite selected writes the new file next to the original — originals are never deleted.</li></ul>
+<li><b>Overwrite originals</b> asks first whenever an original will be replaced, including <i>Convert</i> to the
+file's own format. Color profiles and EXIF are kept; for PNG, JPG and WebP so are XMP, JPEG comments and PNG text
+(A1111 / ComfyUI prompts). Photo rotation is applied to the pixels (and the orientation tags reset to match). Converting to another format writes the new file next to the original (originals
+are never deleted); a PNG converted to JPG or WebP loses its prompt text, which those formats can't hold.</li></ul>
+<p>The <b>Quality</b> slider applies to every JPG and WebP save, edits in place included. 16-bit PNGs are scaled to
+8 bits for JPG, WebP and BMP (they stay 16-bit as PNG).</p>
 <p>Edits run in the background with a progress bar and <b>Cancel</b>. Skipped images are listed with the reason.</p>
 """),
     "datasets": ("Dataset Collections", "Tools", """
@@ -400,7 +419,9 @@ not necessarily the last.</li>
 <li>They are frozen into a run folder (<code>&lt;output&gt;/&lt;LoRA name&gt;/</code>), so changing the tab during a run
 can't affect it.</li>
 <li>Training runs as separate processes, so the app stays responsive and a crash can't take it down.</li>
-<li>Stages: <b>caching latents</b> → <b>caching captions</b> → <b>training</b>. Caching only encodes what
+<li>Stages: <b>caching latents</b> → <b>caching captions</b> → <b>training</b>. A picture (or its edit / slider partner)
+edited in place since it was cached is re-encoded on the next run (by its saved modified time and size). Caching only
+encodes what
 changed since the last run.</li>
 <li><b>Edit LoRA</b> (Qwen Image 2.1 and FLUX.2 Klein): tick it and pick the <i>Originals folder</i>. The dataset
 folder holds the edited ("after") images, the originals folder the matching "before" images with the same file names.
@@ -431,7 +452,8 @@ run starts without an internet connection.</li>
 <h3>Pause, Stop, Resume, Queue</h3>
 <ul>
 <li><b>Pause</b> finishes the current epoch, saves a resumable state and exits cleanly; <b>Resume</b> continues exactly
-there. <b>Stop</b> ends the run immediately (saved epochs stay).</li>
+there. <b>Stop</b> ends the run immediately (saved epochs stay). Only state folders written by TagScribeR's trainer
+can be resumed (they are loaded as plain tensors, never as arbitrary Python objects).</li>
 <li>To train more epochs on a finished LoRA: raise <i>Epochs</i>, click <i>Latest</i> under Resume, Start. The
 finished LoRA is also saved under its epoch number (for example <code>name-000030.safetensors</code>), so extending a
 run never overwrites its last epoch.</li>
@@ -450,6 +472,10 @@ epochs, resolution) and can't be changed or deleted.</li>
 <li><b>Save…</b> stores the current settings as your own preset, in
 <code>user_data/training_presets/&lt;family&gt;/</code>. Presets never contain the model family, so loading one can't
 switch your model. Preview settings and Resume aren't part of presets either.</li>
+<li>A preset that sets a folder or file (output folder, originals folder, slider -1 end folder, Context LoRA, thumbnail)
+is named in the console when you load it: check those paths, especially in a preset someone else made.</li>
+<li><b>Caption extension</b> (Dataset, Show all settings) must start with a dot, like <code>.txt</code> or
+<code>.caption</code>; an image extension is refused, since a caption written there would replace the picture.</li>
 <li><b>Import…</b> adds a preset file. Fizgig preset files work as they are (same setting names).</li>
 <li>When a preset holds a value this family doesn't offer (an optimizer, a learning-rate bound, a precision), that
 setting is kept as it was and the console says so. Settings this version doesn't know are ignored.</li>
@@ -714,7 +740,8 @@ in VRAM (ComfyUI, Forge).</li>
 <li><b>“Model has not been downloaded yet”.</b> Use Download (the size is shown first) or pick an installed model.</li>
 <li><b>“Could not connect to the API server”.</b> Is LM Studio / the server running? Does the URL end in <code>/v1</code>?
 Use <i>List</i> to test.</li>
-<li><b>A model needs custom code.</b> Enable “Allow custom model code” in Model options — only for trusted sources.</li>
+<li><b>A model needs custom code.</b> Tick “Allow this model to run its own code” in Model options (it appears only
+for models that need it) — only for trusted sources.</li>
 </ul>
 """),
 }

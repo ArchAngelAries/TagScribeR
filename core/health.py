@@ -17,6 +17,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
+from core.image_ops import to_8bit
+
+# Health metrics decode (a draft of) every image; above this many pixels after JPEG draft reduction an image is
+# reported as unreadable instead (a small PNG can claim hundreds of megapixels).
+MAX_ANALYZE_PIXELS = 80_000_000
+
 FLAG_DUPLICATE = "duplicate"
 FLAG_NEAR_DUPLICATE = "similar"
 FLAG_BLURRY = "blurry"
@@ -45,10 +51,14 @@ def analyze(path: str | os.PathLike) -> ImageStats:
                 h.update(chunk)
         s.file_hash = h.hexdigest()
         with Image.open(path) as im:
+            w0, h0 = im.size   # header only; nothing decoded yet
             im.draft("L", (768, 768))
+            if im.size[0] * im.size[1] > MAX_ANALYZE_PIXELS:
+                s.width, s.height = w0, h0
+                raise ValueError(f"{w0}\u00d7{h0} ({w0 * h0 / 1e6:.0f} Mpx) is too large to analyse")
             im = ImageOps.exif_transpose(im)
             s.width, s.height = _true_size(path)
-            gray = im.convert("L")
+            gray = to_8bit(im).convert("L")
             gray.thumbnail((512, 512), Image.Resampling.BILINEAR)
             s.dhash = dhash(gray)
             s.sharpness = laplacian_variance(np.asarray(gray, dtype=np.float32))

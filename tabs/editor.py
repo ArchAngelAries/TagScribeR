@@ -73,7 +73,9 @@ class EditorTab(QWidget):
         self.rad_copies.setChecked(True)
         self.rad_overwrite = QRadioButton("Overwrite originals (asks first)")
         self.rad_copies.setToolTip("Copies keep their caption files and never overwrite anything.")
-        self.rad_overwrite.setToolTip("Replaces the original files. Color profile and EXIF data are kept.")
+        self.rad_overwrite.setToolTip("Replaces the original files. Color profile, EXIF data, PNG text chunks "
+                                     "(AUTOMATIC1111 / ComfyUI prompts), XMP and JPEG comments are kept (PNG, JPG, WebP). "
+                                     "JPEG and WebP are re-encoded at the Quality slider's value.")
         out_row = QHBoxLayout()
         self.lbl_out = hint_label("")
         b_open = QPushButton("Open")
@@ -184,8 +186,9 @@ class EditorTab(QWidget):
         b.clicked.connect(lambda: self.run(self._convert_op()))
         f.addRow("Format:", self.combo_format)
         f.addRow("Quality:", qrow)
-        f.addRow(hint_label("Quality applies to JPG/WEBP. Converted files sit next to the originals when "
-                            "overwriting is chosen — originals are never deleted."))
+        f.addRow(hint_label("Quality applies to JPG/WEBP. With overwriting chosen, converting to another format "
+                            "writes the new file next to the original (originals are never deleted); converting "
+                            "to the file's own format replaces it, after asking."))
         f.addRow(b)
         pl.addWidget(g)
 
@@ -356,18 +359,28 @@ class EditorTab(QWidget):
             return
         overwrite = self.rad_overwrite.isChecked()
         convert = op.kind == "convert"
-        if overwrite and not convert and not confirm(
-                self, "Overwrite originals?",
-                f"{op.describe()} will permanently change {len(keys)} original image(s). This can't be undone.\n\n"
-                "Tip: choose 'Save edited copies' to keep originals untouched.", destructive=True):
-            return
-        out_dir = self._output_dir()
         fmt = op.params.get("format") if convert else None
-        quality = op.params.get("quality", 92)
+        # Which originals will really be replaced? Every file for a normal edit; for Convert only the files
+        # that already have the target extension (they are re-encoded in place, the others get a new file).
+        in_place = [k for k in keys if not fmt or FORMATS[fmt][1] == Path(k).suffix.lower()] if overwrite else []
+        if in_place:
+            if convert:
+                text = (f"Convert to {fmt} will re-encode and REPLACE {len(in_place)} original image(s) that are "
+                        f"already {fmt} files"
+                        + (f" (at quality {op.params.get('quality', 92)})" if fmt in ("JPG", "WEBP") else "")
+                        + ". This can't be undone.\n\n"
+                        "Tip: choose 'Save edited copies' to keep originals untouched.")
+            else:
+                text = (f"{op.describe()} will permanently change {len(in_place)} original image(s). "
+                        "This can't be undone.\n\nTip: choose 'Save edited copies' to keep originals untouched.")
+            if not confirm(self, "Overwrite originals?", text, destructive=True):
+                return
+        out_dir = self._output_dir()
+        quality = op.params.get("quality") or self.slider_quality.value()   # the slider applies to every lossy save
 
         def process(src: str) -> Path:
             srcp = Path(src)
-            img = image_ops.open_upright(srcp)
+            img = image_ops.open_upright(srcp, keep_extras=True)
             result = image_ops.apply(img, op)
             if overwrite:
                 dest = srcp
@@ -387,15 +400,22 @@ class EditorTab(QWidget):
         self.progress.setValue(0)
         self.btn_cancel.setEnabled(True)
         self.lbl_status.setText(f"{op.describe()} — {len(keys)} image(s)…")
-        self._last_overwrite = overwrite and not convert
-        self._created_in_place = overwrite and convert
+        self._last_overwrite = bool(in_place)
+        self._created_in_place = overwrite and convert and len(in_place) < len(keys)
+        self._created = 0
         self._modified: list[str] = []
         self._skipped: list[tuple[str, str]] = []
         self.job = start_file_job(keys, process, op.describe())
         self.job.item_skipped.connect(lambda src, why: self._skipped.append((src, why)))
         self.job.progress.connect(lambda d, t: self.progress.setValue(d))
-        self.job.item_done.connect(lambda src, dest: self._modified.append(src) if dest == src else None)
+        self.job.item_done.connect(self._on_item_done)
         self.job.finished.connect(self._finished)
+
+    def _on_item_done(self, src, dest):
+        if os.path.normcase(os.path.normpath(dest)) == os.path.normcase(os.path.normpath(src)):
+            self._modified.append(src)
+        else:
+            self._created += 1
 
     def _finished(self, summary):
         self.job = None
@@ -404,6 +424,10 @@ class EditorTab(QWidget):
             self.ctx.images_modified(self._modified)
         where = "" if self._last_overwrite or self._created_in_place else f" → {self._output_dir()}"
         parts = [f"{summary.done} done"]
+        if self._last_overwrite and self._created_in_place:
+            parts.append(f"{len(self._modified)} originals replaced, {self._created} new file(s) created")
+        elif self._last_overwrite:
+            parts.append("originals replaced")
         if summary.skipped:
             parts.append(f"{summary.skipped} skipped")
         if summary.failed:
@@ -417,8 +441,8 @@ class EditorTab(QWidget):
             more = f"\n…and {len(self._skipped) - 15} more" if len(self._skipped) > 15 else ""
             QMessageBox.information(self, "Some images were skipped",
                                     f"{len(self._skipped)} image(s) were left unchanged:\n\n{lines}{more}")
-        if self._created_in_place and summary.done:
+        if self._created_in_place and self._created:
             if confirm(self, "Converted files created",
-                       f"{summary.done} converted file(s) were saved next to the originals. Reload the folder to "
+                       f"{self._created} converted file(s) were saved next to the originals. Reload the folder to "
                        "show them?"):
                 self.ctx.rescan(self)

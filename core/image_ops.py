@@ -5,6 +5,10 @@
 * Saving keeps the ICC color profile and EXIF metadata when the target format
   supports them (orientation is reset, since pixels are already upright).
 * Transparent images saved as JPEG are flattened onto white instead of black.
+* ``open_upright(path, keep_extras=True)`` additionally carries PNG text chunks (A1111 / ComfyUI prompts), XMP and
+  JPEG comments, and ``save`` writes them back where the target format has a place for them.
+* 16-bit greyscale images are scaled to 8 bit (``to_8bit``) instead of being clipped.
+* Image files are written atomically and fsynced; an existing file keeps its permission bits.
 """
 from __future__ import annotations
 
@@ -13,9 +17,19 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PIL import Image, ImageOps
+import numpy as np
+from PIL import Image, ImageOps, PngImagePlugin
+
+from core.caption_io import apply_mode
 
 Image.MAX_IMAGE_PIXELS = 300_000_000
+
+# info keys that always travel with an image through apply(); the "extras" only exist when open_upright was asked
+# to keep them (the in-place editor does; export does not, so its "strip metadata" option keeps meaning what it says).
+_CORE_INFO = ("icc_profile", "exif", "dpi")
+EXTRA_INFO = ("xmp", "comment", "png_text")
+CARRY_INFO = _CORE_INFO + EXTRA_INFO
+XMP_PNG_KEY = "XML:com.adobe.xmp"
 
 FOCUS_POINTS = {
     "Center": (0.5, 0.5), "Top": (0.5, 0.0), "Bottom": (0.5, 1.0), "Left": (0.0, 0.5), "Right": (1.0, 0.5),
@@ -58,13 +72,44 @@ class Operation:
         return self.kind
 
 
-def open_upright(path: str | os.PathLike) -> Image.Image:
+def to_8bit(im: Image.Image) -> Image.Image:
+    """16-bit greyscale (I;16 / I;16L / I;16B / I) scaled to 8-bit "L"; every other mode is returned unchanged.
+
+    Pillow clips these modes at 255 when converting, which turns a 16-bit gradient into black and white.
+    """
+    if im.mode not in ("I;16", "I;16L", "I;16B", "I;16N", "I"):
+        return im
+    arr = np.asarray(im).astype(np.int64)
+    top = int(arr.max()) if arr.size else 0
+    if im.mode == "I" and top <= 255:
+        return im.convert("L")                          # 32-bit data already in 0-255 (a 16-bit mode never is)
+    divisor = 257.0 if top <= 65535 else top / 255.0   # 65535 / 257 == 255
+    out = np.clip(np.rint(np.clip(arr, 0, None) / divisor), 0, 255).astype(np.uint8)
+    return Image.fromarray(out, "L")
+
+
+def _png_text_of(im: Image.Image) -> dict:
+    text = getattr(im, "text", None) or {}
+    return {k: v for k, v in text.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def open_upright(path: str | os.PathLike, keep_extras: bool = False) -> Image.Image:
+    """Open with EXIF orientation applied. ``keep_extras`` also carries PNG text, XMP and JPEG comments."""
     with Image.open(path) as im:
-        info = dict(im.info)
         fmt = im.format
+        im.load()
+        # XMP rides in out.info (below), patched by exif_transpose; PNG text never holds orientation
+        png_text = {k: v for k, v in _png_text_of(im).items() if k != XMP_PNG_KEY} if keep_extras else {}
         out = ImageOps.exif_transpose(im)
         out.load()
-    out.info.update({k: v for k, v in info.items() if k in ("icc_profile", "exif", "dpi")})
+    # REPLACE the info, never add to it: exif_transpose's copy carries the source's whole info (XMP, comments ...),
+    # and export's "strip metadata" must not leak them. Taken AFTER the transpose, so EXIF and XMP orientation
+    # describe the rotated pixels
+    post = dict(out.info)
+    wanted = CARRY_INFO + (XMP_PNG_KEY,) if keep_extras else _CORE_INFO
+    out.info = {k: v for k, v in post.items() if k in wanted}
+    if png_text:
+        out.info["png_text"] = png_text
     out.format = fmt
     return out
 
@@ -79,7 +124,7 @@ def _focus_box(w: int, h: int, cw: int, ch: int, focus: str) -> tuple[int, int, 
 def apply(img: Image.Image, op: Operation) -> Image.Image:
     p = op.params
     w, h = img.size
-    keep = {k: v for k, v in img.info.items() if k in ("icc_profile", "exif", "dpi")}
+    keep = {k: v for k, v in img.info.items() if k in CARRY_INFO}
     if op.kind == "rotate":
         out = img.transpose({"cw": Image.Transpose.ROTATE_270, "ccw": Image.Transpose.ROTATE_90,
                              "180": Image.Transpose.ROTATE_180}[p.get("direction", "cw")])
@@ -138,6 +183,47 @@ def _exif_reset_orientation(exif_bytes: bytes | None) -> bytes | None:
         return None
 
 
+def _extras_for(img: Image.Image, pil_fmt: str) -> dict:
+    """Save keywords that carry PNG text, XMP and the JPEG comment into the target format."""
+    info = img.info
+    xmp = info.get("xmp") or info.get(XMP_PNG_KEY)       # a PNG source's XMP iTXt, patched by exif_transpose
+    if isinstance(xmp, str):
+        xmp = xmp.encode("utf-8")
+    kw: dict = {}
+    if pil_fmt == "PNG":
+        text = dict(info.get("png_text") or {})
+        if xmp and XMP_PNG_KEY not in text:
+            text[XMP_PNG_KEY] = xmp.decode("utf-8", "replace")
+        if text:
+            meta = PngImagePlugin.PngInfo()
+            for k, v in text.items():
+                try:
+                    meta.add_text(k, v)
+                except (UnicodeError, ValueError):
+                    meta.add_itxt(k, v)
+            kw["pnginfo"] = meta
+    elif pil_fmt == "JPEG":
+        if xmp:
+            kw["xmp"] = xmp
+        comment = info.get("comment")
+        if comment:
+            kw["comment"] = comment
+    elif pil_fmt == "WEBP":
+        if xmp:
+            kw["xmp"] = xmp
+        elif info.get("png_text", {}).get(XMP_PNG_KEY):
+            kw["xmp"] = info["png_text"][XMP_PNG_KEY].encode("utf-8")
+    return kw
+
+
+def _fsync_path(path) -> None:
+    fd = os.open(path, os.O_RDWR if os.name == "nt" else os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def save(img: Image.Image, dest: Path, fmt_name: str | None = None, quality: int = 92) -> Path:
     """Save atomically next to ``dest``. ``fmt_name`` is a key of FORMATS or None (keep extension)."""
     dest = Path(dest)
@@ -148,7 +234,7 @@ def save(img: Image.Image, dest: Path, fmt_name: str | None = None, quality: int
         ext = dest.suffix.lower()
         pil_fmt = {".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".webp": "WEBP", ".bmp": "BMP",
                    ".tif": "TIFF", ".tiff": "TIFF"}.get(ext, img.format or "PNG")
-    out = img
+    out = to_8bit(img) if pil_fmt in ("JPEG", "WEBP", "BMP") else img   # PNG / TIFF keep 16 bits
     if pil_fmt in ("JPEG", "BMP") and out.mode in ("RGBA", "LA", "P", "PA"):
         rgba = out.convert("RGBA")
         bg = Image.new("RGB", rgba.size, (255, 255, 255))
@@ -162,6 +248,7 @@ def save(img: Image.Image, dest: Path, fmt_name: str | None = None, quality: int
     exif = _exif_reset_orientation(img.info.get("exif"))
     if exif and pil_fmt in ("JPEG", "PNG", "WEBP", "TIFF"):
         kwargs["exif"] = exif
+    kwargs.update(_extras_for(img, pil_fmt))
     if pil_fmt in ("JPEG", "WEBP"):
         kwargs["quality"] = int(quality)
     if pil_fmt == "JPEG":
@@ -171,6 +258,8 @@ def save(img: Image.Image, dest: Path, fmt_name: str | None = None, quality: int
     os.close(fd)
     try:
         out.save(tmp, format=pil_fmt, **kwargs)
+        _fsync_path(tmp)
+        apply_mode(dest, tmp)
         os.replace(tmp, dest)
     except BaseException:
         try:

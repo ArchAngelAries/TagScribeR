@@ -121,7 +121,8 @@ class ExportDialog(QDialog):
             allow_upscale=self.chk_upscale.isChecked(), fmt=self.combo_fmt.currentData(),
             strip_metadata=self.chk_strip.isChecked(), rename=self.chk_rename.isChecked(),
             name_prefix=self.inp_prefix.text().strip() or "img", caption_ext=self.combo_ext.currentText(),
-            trigger=self.inp_trigger.text().strip(), skip_uncaptioned=self.chk_skip.isChecked())
+            trigger=self.inp_trigger.text().strip(), skip_uncaptioned=self.chk_skip.isChecked(),
+            source_caption_ext=self.cfg.get("caption.extension") or ".txt")
 
     def _start(self):
         opts = self.options()

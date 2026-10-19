@@ -80,3 +80,8 @@ the test suite. Widget tests need one offscreen `QApplication` for the whole ses
 - When delegating to subagents: give each its own files, tell it to mirror Fizgig and to report anything it cannot
   do as a question, and check the parts that would silently ruin a real run (objective, timestep sampling, presets,
   key formats, defaults) against the source yourself before calling the work done.
+- Orchestration (the owner's, 2026-10-19): the lead plans, integrates and does the final checks. Sonnet subagents
+  take narrow, well-specified execution (recon, digests, mechanical ports, test writing, one file each). Fable
+  subagents take the work that needs more judgement: parity audits, design of a non-trivial port, improvements, and
+  an objective review of finished work before it is committed (bugs, Fizgig mismatches, overstated claims). Run
+  independent agents in parallel; never two agents on the same file.

@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 NAMES = {
     # navigation
     "gallery": "mdi6.view-grid-outline", "caption": "mdi6.robot-outline", "editor": "mdi6.image-edit-outline",
-    "datasets": "mdi6.folder-multiple-image", "metadata": "mdi6.information-outline", "settings": "mdi6.cog-outline", "train": "mdi6.school-outline",
+    "datasets": "mdi6.folder-multiple-image", "metadata": "mdi6.information-outline", "camera": "mdi6.camera-outline", "settings": "mdi6.cog-outline", "train": "mdi6.school-outline",
     "help": "mdi6.help-circle-outline",
     # files / editing
     "open": "mdi6.folder-open-outline", "folder": "mdi6.folder-outline", "save": "mdi6.content-save-outline",

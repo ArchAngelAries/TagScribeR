@@ -9,13 +9,17 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import struct
 import tempfile
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
+from fractions import Fraction
 from pathlib import Path
 
 from PIL import ExifTags, Image
+from PIL.TiffImagePlugin import IFDRational
 
 # EXIF tag ids
 ORIENTATION, MAKE, MODEL, SOFTWARE, DATETIME, ARTIST, COPYRIGHT, DESCRIPTION = (
@@ -281,7 +285,8 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
         raise
 
 
-def _filter_exif(exif_bytes: bytes | None, opts: StripOptions | None, author: Authorship | None) -> bytes | None:
+def _filter_exif(exif_bytes: bytes | None, opts: StripOptions | None, author: Authorship | None,
+                 camera: "CameraData | None" = None) -> bytes | None:
     """Return new EXIF bytes (or None if nothing should remain)."""
     ex = Image.Exif()
     if exif_bytes:
@@ -322,9 +327,11 @@ def _filter_exif(exif_bytes: bytes | None, opts: StripOptions | None, author: Au
             value = getattr(author, key).strip()
             if value:
                 ex[tag] = exif_ascii(value)
+    if camera is not None:
+        _apply_camera_tags(ex, camera)
     if not len(ex.keys()):
         return None
-    return ex.tobytes()
+    return _tiff_bytes(ex)
 
 
 # ---------------------------------------------------------------------------- JPEG
@@ -352,6 +359,14 @@ def _is_exif_seg(marker: int, seg: bytes) -> bool:
     return marker == 0xE1 and seg[4:10] == EXIF_HEADER
 
 
+def _tiff_bytes(ex: Image.Exif) -> bytes:
+    """The bare TIFF block of an Exif: what PNG eXIf and WebP EXIF chunks hold, and what follows the Exif\\0\\0 header
+    in a JPEG APP1. Pillow's Exif.tobytes() already starts with that header; written as is, JPEGs carried it twice and
+    PNG / WebP carried a header their containers forbid (Pillow reads past it, other readers do not)."""
+    raw = ex.tobytes()
+    return raw[len(EXIF_HEADER):] if raw.startswith(EXIF_HEADER) else raw
+
+
 def _jpeg_app1(exif: bytes) -> bytes:
     payload = EXIF_HEADER + exif
     return bytes([0xFF, 0xE1]) + struct.pack(">H", len(payload) + 2) + payload
@@ -369,10 +384,11 @@ def _assemble_jpeg(segs: list[tuple[int, bytes]], new_exif: bytes | None) -> byt
     return b"".join(out)
 
 
-def _rewrite_jpeg(data: bytes, opts: StripOptions | None, author: Authorship | None) -> bytes:
+def _rewrite_jpeg(data: bytes, opts: StripOptions | None, author: Authorship | None,
+                  camera: "CameraData | None" = None) -> bytes:
     segs = list(_jpeg_segments(data))
     exif_src = next((seg[10:] for m, seg in segs if _is_exif_seg(m, seg)), None)
-    new_exif = _filter_exif(exif_src, opts, author)
+    new_exif = _filter_exif(exif_src, opts, author, camera)
     kept = []
     for marker, seg in segs:
         if opts is not None:
@@ -413,11 +429,12 @@ def _png_text_key(body: bytes) -> str:
     return body.split(NUL, 1)[0].decode("latin-1", "replace")
 
 
-def _rewrite_png(data: bytes, opts: StripOptions | None, author: Authorship | None) -> bytes:
+def _rewrite_png(data: bytes, opts: StripOptions | None, author: Authorship | None,
+                 camera: "CameraData | None" = None) -> bytes:
     out = [PNG_SIG]
     chunks = list(_png_chunks(data))
     exif_src = next((body for ct, _raw, body in chunks if ct == b"eXIf"), None)
-    new_exif = _filter_exif(exif_src, opts, author) if (exif_src or author) else None
+    new_exif = _filter_exif(exif_src, opts, author, camera) if (exif_src or author or camera) else None
     author_keys = {k for k, f in AUTHOR_TEXT_KEYS.items() if author and getattr(author, f, "").strip()}
     for ctype, raw, body in chunks:
         if ctype == b"eXIf":
@@ -452,7 +469,8 @@ def _rewrite_png(data: bytes, opts: StripOptions | None, author: Authorship | No
 
 
 # ---------------------------------------------------------------------------- WebP
-def _rewrite_webp(data: bytes, opts: StripOptions | None, author: Authorship | None) -> bytes:
+def _rewrite_webp(data: bytes, opts: StripOptions | None, author: Authorship | None,
+                  camera: "CameraData | None" = None) -> bytes:
     if data[:4] != b"RIFF" or data[8:12] != b"WEBP":
         raise ValueError("not a WebP")
     chunks = []
@@ -463,7 +481,7 @@ def _rewrite_webp(data: bytes, opts: StripOptions | None, author: Authorship | N
         chunks.append((ctype, data[i + 8:i + 8 + size]))
         i += 8 + size + (size & 1)
     exif_src = next((b for c, b in chunks if c == b"EXIF"), None)
-    new_exif = _filter_exif(exif_src, opts, author) if (exif_src or author) else None
+    new_exif = _filter_exif(exif_src, opts, author, camera) if (exif_src or author or camera) else None
     kept = []
     for ctype, body in chunks:
         if ctype == b"EXIF":
@@ -489,14 +507,15 @@ def _rewrite_webp(data: bytes, opts: StripOptions | None, author: Authorship | N
 
 
 # ---------------------------------------------------------------------------- public writers
-def _rewrite(path: Path, opts: StripOptions | None, author: Authorship | None) -> bool:
+def _rewrite(path: Path, opts: StripOptions | None, author: Authorship | None,
+             camera: "CameraData | None" = None) -> bool:
     data = path.read_bytes()
     if data[:2] == SOI:
-        new = _rewrite_jpeg(data, opts, author)
+        new = _rewrite_jpeg(data, opts, author, camera)
     elif data.startswith(PNG_SIG):
-        new = _rewrite_png(data, opts, author)
+        new = _rewrite_png(data, opts, author, camera)
     elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        new = _rewrite_webp(data, opts, author)
+        new = _rewrite_webp(data, opts, author, camera)
         if not new:
             raise ValueError("this simple WebP can't store EXIF; convert it to PNG/JPEG first")
     else:
@@ -515,6 +534,191 @@ def strip_metadata(path: str | os.PathLike, opts: StripOptions) -> bool:
 def apply_authorship(path: str | os.PathLike, author: Authorship) -> bool:
     """Write artist / copyright / description / software (values entered by the user)."""
     return _rewrite(Path(path), None, author)
+
+
+# ---------------------------------------------------------------------------- camera data
+# Sub-IFD (Exif) tag ids used by the camera presets. Serial numbers, owner name, unique image id and GPS are
+# deliberately never written: mimicking a camera model must not invent a trackable device.
+EXPOSURE_TIME, F_NUMBER, EXPOSURE_PROGRAM, ISO_SPEED = 0x829A, 0x829D, 0x8822, 0x8827
+EXPOSURE_BIAS, METERING_MODE, FLASH, FOCAL_LENGTH = 0x9204, 0x9207, 0x9209, 0x920A
+WHITE_BALANCE, FOCAL_35MM, EXIF_VERSION = 0xA403, 0xA405, 0x9000
+
+EXPOSURE_PROGRAMS = {0: "Not defined", 1: "Manual", 2: "Program AE", 3: "Aperture priority", 4: "Shutter priority",
+                     5: "Creative", 6: "Action", 7: "Portrait", 8: "Landscape"}
+METERING_MODES = {0: "Unknown", 1: "Average", 2: "Center-weighted", 3: "Spot", 4: "Multi-spot",
+                  5: "Multi-segment (pattern)", 6: "Partial"}
+FLASH_MODES = {0: "No flash", 16: "Flash off (compulsory)", 24: "Flash off (auto)", 1: "Flash fired",
+               25: "Flash fired (auto)"}
+WHITE_BALANCES = {0: "Auto", 1: "Manual"}
+
+
+@dataclass
+class CameraData:
+    """EXIF values mimicking a camera. Everything is text; a blank field is left unchanged in the file."""
+    make: str = ""
+    model: str = ""
+    lens_make: str = ""
+    lens_model: str = ""
+    software: str = ""             # firmware string the camera writes
+    f_number: str = ""             # "2.8"
+    exposure_time: str = ""        # "1/250" or seconds ("0.5")
+    iso: str = ""
+    focal_length: str = ""         # mm
+    focal_length_35mm: str = ""    # mm
+    exposure_program: str = ""     # EXIF code, see EXPOSURE_PROGRAMS
+    metering_mode: str = ""        # EXIF code, see METERING_MODES
+    flash: str = ""                # EXIF code, see FLASH_MODES
+    white_balance: str = ""        # 0 auto / 1 manual
+    exposure_bias: str = ""        # EV, "0", "-0.7", "+1", "-2/3"
+    date_time_original: str = ""   # "YYYY:MM:DD HH:MM:SS" (also accepts "-" and "T")
+
+    def is_empty(self) -> bool:
+        return not any(str(v).strip() for v in vars(self).values())
+
+
+@dataclass
+class Variation:
+    """Per-image jitter inside ranges, written as text ('1/2000-1/125', '100-3200', '2.8-5.6')."""
+    shutter: str = ""
+    iso: str = ""
+    f_number: str = ""
+
+
+@dataclass
+class TimeSeries:
+    """Timestamps start, start+step, start+2*step ... (one per image, in the order given)."""
+    start: str = ""                # "YYYY-MM-DD HH:MM:SS"
+    step_seconds: int = 60
+
+
+def _fraction(text: str) -> Fraction:
+    t = str(text).strip().replace("−", "-").replace(",", ".")
+    t = t.lstrip("+") if t.startswith("+") else t
+    try:
+        return Fraction(t)
+    except (ValueError, ZeroDivisionError):
+        raise ValueError(f"'{text}' is not a number") from None
+
+
+def _rational(text: str) -> IFDRational:
+    f = _fraction(text).limit_denominator(1000)
+    return IFDRational(f.numerator, f.denominator)
+
+
+def _u16(text: str, what: str) -> int:
+    try:
+        v = int(float(str(text).strip()))
+    except ValueError:
+        raise ValueError(f"{what} '{text}' is not a whole number") from None
+    if not 0 <= v <= 65535:
+        raise ValueError(f"{what} {v} is out of range")
+    return v
+
+
+def _exif_datetime(text: str) -> str:
+    t = text.strip().replace("T", " ")
+    try:
+        return datetime.strptime(t.replace("-", ":").replace("/", ":"), "%Y:%m:%d %H:%M:%S").strftime("%Y:%m:%d %H:%M:%S")
+    except ValueError:
+        raise ValueError(f"date/time '{text}' must look like 2026-01-31 14:05:09") from None
+
+
+def _apply_camera_tags(ex: "Image.Exif", cam: CameraData) -> None:
+    """Write the non-blank camera fields into an Exif object (IFD0 + Exif sub-IFD)."""
+    for tag, value in ((MAKE, cam.make), (MODEL, cam.model), (SOFTWARE, cam.software)):
+        if value.strip():
+            ex[tag] = exif_ascii(value.strip())
+    sub: dict = {}
+    for tag, value in ((LENS_MAKE, cam.lens_make), (LENS_MODEL, cam.lens_model)):
+        if value.strip():
+            sub[tag] = exif_ascii(value.strip())
+    for tag, value in ((F_NUMBER, cam.f_number), (EXPOSURE_TIME, cam.exposure_time),
+                       (FOCAL_LENGTH, cam.focal_length), (EXPOSURE_BIAS, cam.exposure_bias)):
+        if value.strip():
+            sub[tag] = _rational(value)
+    for tag, value, what in ((ISO_SPEED, cam.iso, "ISO"), (FOCAL_35MM, cam.focal_length_35mm, "35mm focal length"),
+                             (EXPOSURE_PROGRAM, cam.exposure_program, "exposure program"),
+                             (METERING_MODE, cam.metering_mode, "metering mode"), (FLASH, cam.flash, "flash"),
+                             (WHITE_BALANCE, cam.white_balance, "white balance")):
+        if value.strip():
+            sub[tag] = _u16(value, what)
+    if cam.date_time_original.strip():
+        sub[DT_ORIGINAL] = sub[DT_DIGITIZED] = _exif_datetime(cam.date_time_original)
+    if sub:
+        ifd = ex.get_ifd(EXIF_IFD)
+        ifd.setdefault(EXIF_VERSION, b"0232")
+        ifd.update(sub)
+
+
+# Standard third-stop scales used when jittering.
+_SHUTTERS = sorted({Fraction(1, d) for d in (8000, 6400, 5000, 4000, 3200, 2500, 2000, 1600, 1250, 1000, 800, 640,
+                                              500, 400, 320, 250, 200, 160, 125, 100, 80, 60, 50, 40, 30, 25, 20,
+                                              15, 13, 10, 8, 6, 5, 4, 3)} | {Fraction(2, 5), Fraction(1, 2), Fraction(4, 5),
+                                                                           Fraction(1), Fraction(2)})
+_ISOS = [50, 64, 80, 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600, 2000, 2500, 3200, 4000,
+         5000, 6400, 8000, 10000, 12800, 16000, 20000, 25600, 32000, 40000, 51200, 64000, 80000, 102400]
+_APERTURES = [1.0, 1.1, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.5, 2.8, 3.2, 3.5, 4.0, 4.5, 5.0, 5.6, 6.3, 7.1, 8.0,
+              9.0, 10.0, 11.0, 13.0, 14.0, 16.0, 18.0, 20.0, 22.0]
+
+
+def _range(text: str) -> tuple[Fraction, Fraction] | None:
+    t = text.strip()
+    if not t:
+        return None
+    parts = t.replace("–", "-").replace(" ", "").split("-")
+    if len(parts) != 2 or not all(parts):  # "1/2000-1/125": exactly one dash, no negative numbers
+        raise ValueError(f"'{text}' is not a range like 100-3200")
+    a, b = _fraction(parts[0]), _fraction(parts[1])
+    return (a, b) if a <= b else (b, a)
+
+
+def vary_camera(cam: CameraData, name: str, var: Variation) -> CameraData:
+    """Copy of ``cam`` with exposure time, ISO and f-number picked from standard third-stop values inside the
+    ranges. Seeded from the file name, so applying again gives the same values."""
+    rng = random.Random(zlib.crc32(Path(name).name.lower().encode("utf-8")))
+    out = replace(cam)
+    r = _range(var.shutter)
+    if r:
+        pool = [s for s in _SHUTTERS if r[0] <= s <= r[1]] or [r[0]]
+        pick = rng.choice(pool)
+        out.exposure_time = f"{pick.numerator}/{pick.denominator}"
+    r = _range(var.iso)
+    if r:
+        pool = [i for i in _ISOS if r[0] <= i <= r[1]] or [int(r[0])]
+        out.iso = str(rng.choice(pool))
+    r = _range(var.f_number)
+    if r:
+        pool = [a for a in _APERTURES if r[0] <= Fraction(str(a)) <= r[1]] or [float(r[0])]
+        out.f_number = f"{rng.choice(pool):g}"
+    return out
+
+
+def series_time(series: TimeSeries, index: int) -> str:
+    start = datetime.strptime(_exif_datetime(series.start), "%Y:%m:%d %H:%M:%S")
+    return (start + timedelta(seconds=int(series.step_seconds) * index)).strftime("%Y:%m:%d %H:%M:%S")
+
+
+def validate_camera(data: CameraData, variation: Variation | None = None, series: TimeSeries | None = None) -> None:
+    """Raise ValueError with a readable message if any field can't be written (checked before touching files)."""
+    cam = vary_camera(data, "check.jpg", variation) if variation else replace(data)
+    if series is not None and series.start.strip():
+        cam.date_time_original = series_time(series, 0)
+    _apply_camera_tags(Image.Exif(), cam)
+
+
+def apply_camera(path: str | os.PathLike, data: CameraData, variation: Variation | None = None,
+                 series: TimeSeries | None = None, index: int = 0) -> bool:
+    """Write camera EXIF (make/model/lens/exposure...) losslessly. Blank fields are left unchanged.
+
+    ``variation`` jitters exposure time / ISO / f-number per file name (deterministic); ``series`` replaces the
+    fixed date/time by start + index * step. Never writes serial numbers, owner, image ids or GPS."""
+    p = Path(path)
+    cam = vary_camera(data, p.name, variation) if variation else replace(data)
+    if series is not None and series.start.strip():
+        cam.date_time_original = series_time(series, index)
+    if cam.is_empty():
+        return False
+    return _rewrite(p, None, None, cam)
 
 
 def set_text_field(path: str | os.PathLike, key: str, value: str) -> None:
@@ -543,7 +747,7 @@ def set_exif_text(path: str | os.PathLike, tag: int, value: str) -> None:
         ex[tag] = value
     elif tag in ex:
         del ex[tag]
-    new_exif = ex.tobytes() if len(ex.keys()) else None
+    new_exif = _tiff_bytes(ex) if len(ex.keys()) else None
     if data[:2] == SOI:
         _atomic_write_bytes(p, _assemble_jpeg(list(_jpeg_segments(data)), new_exif))
     elif data.startswith(PNG_SIG):

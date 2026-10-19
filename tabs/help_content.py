@@ -342,6 +342,23 @@ and the color profile is kept unless you tick the option to remove it.</li>
 <p>Write your artist name, copyright / license, description and the software you used to the standard EXIF and PNG
 fields — exactly the values you enter. Save them as a <b>template</b> to reuse. EXIF can only hold plain ASCII, so “©” is
 written as “(c)” there; PNG keeps the exact text.</p>
+<h3>Camera data</h3>
+<p>Write EXIF that mimics a real camera. Pick one of the built-in presets (Canon, Sony, Nikon, Fujifilm, Panasonic,
+OM System, Leica, Ricoh, iPhone, Pixel, Galaxy, a DJI drone ...), adjust any field, and <b>Apply camera data</b> to the
+selected or all shown images. It writes Make, Model, firmware, lens, aperture, shutter, ISO, focal length (real and
+35&nbsp;mm equivalent), exposure mode, metering, flash, white balance, exposure bias and the date taken. Blank fields
+are left unchanged. Your own presets can be saved and deleted; built-in ones can't be changed.</p>
+<ul>
+<li><b>Per-image variation</b> (off by default) picks shutter, ISO and aperture on the usual third-stop scales inside
+the ranges you set. It is seeded from the file name, so applying again gives identical values.</li>
+<li><b>Timestamp series</b> gives the first image your start time and every following image one more step, in grid order.</li>
+<li>Lossless like the other tools: pixels, orientation and color profile are untouched. JPEG, PNG and WebP (a plain
+WebP without a metadata header must be converted first).</li>
+<li>Serial numbers, owner name, image IDs and GPS are never written. <i>Privacy → device</i> removes what this adds.</li>
+<li>The built-in strings are typical values written from general knowledge; entries marked "verify" in
+<code>core/camera_presets.py</code> have not been checked against a file from that camera.</li>
+<li>The values describe a camera that did not take the picture. Use it for style or testing, not to pass an image off as a photograph.</li>
+</ul>
 <h3>Prompts → captions</h3>
 <p>Images from A1111 / Forge, ComfyUI, NovelAI or InvokeAI often contain the prompt that generated them. Use it as a
 starting caption for images without one (or replace existing captions). Results are unsaved and undoable until you Save.</p>
@@ -354,6 +371,8 @@ Restart TagScribeR to apply.</li>
 <li><b>Thumbnail size</b> — Size slider, Ctrl + mouse wheel, Ctrl+= / Ctrl+- in any image grid. Larger cards load sharper
 thumbnails and slightly larger caption text.</li>
 <li><b>Themes</b> — light and dark themes in Settings → Appearance.</li>
+<li><b>Scrolling never changes a setting.</b> The mouse wheel over a dropdown, number box or slider scrolls the
+panel it sits in; click the control first (or Tab to it) to change it with the wheel.</li>
 <li>Every tool can be driven from the keyboard — see <i>Keyboard shortcuts</i>.</li>
 </ul>
 """),

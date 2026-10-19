@@ -6,6 +6,7 @@
   IDs, AI generation data, XMP history and more. Lossless: pixels untouched.
 * Authorship — apply your own artist / copyright / description / software
   from reusable templates.
+* Camera data — write EXIF that mimics a real camera (presets, optional per-image variation).
 * Prompts → captions — reuse A1111/ComfyUI/NovelAI/InvokeAI prompts as captions.
 """
 from __future__ import annotations
@@ -17,11 +18,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout,
                                QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QMessageBox, QPushButton, QRadioButton, QScrollArea, QSplitter, QTableWidget,
+                               QMessageBox, QPushButton, QRadioButton, QScrollArea, QSpinBox, QSplitter, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from core import metadata as md
-from core.presets import PresetError, metadata_presets
+from core.presets import PresetError, camera_presets, metadata_presets
+from tabs import icons
 from tabs.common import confirm, hint_label, run_in_background, show_job_summary
 from tabs.workspace.browser import DatasetBrowser
 from tabs.workspace.context import workspace
@@ -59,10 +61,12 @@ class MetadataTab(QWidget):
         self.side.addTab(self._build_inspect(), "Inspect")
         self.side.addTab(_scroll(self._build_clean()), "Privacy")
         self.side.addTab(_scroll(self._build_author()), "Authorship")
+        self.side.addTab(_scroll(self._build_camera()), "Camera")
         self.side.addTab(_scroll(self._build_prompts()), "Prompts")
         for i, tip in enumerate(("Everything stored in the selected image",
                                  "Audit and remove location, device IDs, AI data and more (lossless)",
                                  "Write your artist / copyright / license to images",
+                                 "Write EXIF data that mimics a real camera (lossless)",
                                  "Use embedded generation prompts as captions")):
             self.side.setTabToolTip(i, tip)
         from tabs.help import help_button
@@ -199,6 +203,131 @@ class MetadataTab(QWidget):
         lay.addWidget(hint_label("Blank fields are left unchanged. Combine with Privacy & cleanup to remove other data."))
         lay.addStretch()
         self._fill_author_presets()
+        return w
+
+    # Camera field name -> (label, placeholder, tooltip)
+    CAMERA_TEXT = (
+        ("make", "Make:", "e.g. SONY", "EXIF Make, exactly as the camera writes it"),
+        ("model", "Model:", "e.g. ILCE-7M4", "EXIF Model, exactly as the camera writes it"),
+        ("lens_make", "Lens make:", "optional", "EXIF LensMake"),
+        ("lens_model", "Lens model:", "e.g. FE 24-70mm F2.8 GM II", "EXIF LensModel"),
+        ("software", "Firmware:", "e.g. ILCE-7M4 v1.10", "EXIF Software: the firmware string the camera writes"),
+        ("f_number", "Aperture (f):", "e.g. 2.8", "f-number, e.g. 2.8"),
+        ("exposure_time", "Shutter:", "e.g. 1/250 or 0.5", "Exposure time as a fraction (1/250) or in seconds (0.5)"),
+        ("iso", "ISO:", "e.g. 200", "ISO speed (whole number)"),
+        ("focal_length", "Focal length (mm):", "e.g. 50", "Real focal length in millimetres"),
+        ("focal_length_35mm", "35 mm equivalent (mm):", "e.g. 50",
+         "Focal length in 35 mm film terms (phones and small sensors differ a lot from the real focal length)"),
+    )
+    CAMERA_CODES = (
+        ("exposure_program", "Exposure mode:", md.EXPOSURE_PROGRAMS, "How the camera chose the exposure"),
+        ("metering_mode", "Metering:", md.METERING_MODES, "Metering mode"),
+        ("flash", "Flash:", md.FLASH_MODES, "Flash status"),
+        ("white_balance", "White balance:", md.WHITE_BALANCES, "Auto or manual white balance"),
+    )
+
+    def _build_camera(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.addWidget(hint_label("Make your images look like they came from a real camera: pick a preset, adjust "
+                                 "anything, and write it to the files' EXIF. Lossless (pixels, orientation and color "
+                                 "profile are untouched). Serial numbers, owner names, image IDs and GPS are never "
+                                 "written, and Privacy → device removes this data again."))
+        self.cam_presets = camera_presets()
+        row = QHBoxLayout()
+        self.combo_camera = QComboBox()
+        self.combo_camera.setToolTip("Built-in camera presets first, then your own saved ones")
+        self.combo_camera.activated.connect(lambda _i: self._load_camera(self.combo_camera.currentData()))
+        b_save = QPushButton("Save…")
+        b_save.setToolTip("Save these fields as your own camera preset (built-in presets can't be overwritten)")
+        b_save.clicked.connect(self._save_camera)
+        b_del = QPushButton("Delete")
+        b_del.setToolTip("Delete the selected preset. Built-in presets can't be deleted")
+        b_del.clicked.connect(self._delete_camera)
+        row.addWidget(self.combo_camera, 1)
+        row.addWidget(b_save)
+        row.addWidget(b_del)
+        lay.addLayout(row)
+        self.lbl_camera_note = hint_label("")
+        lay.addWidget(self.lbl_camera_note)
+
+        self.cam_inputs: dict[str, QLineEdit] = {}
+        self.cam_combos: dict[str, QComboBox] = {}
+        f = QFormLayout()
+        for key, label, ph, tip in self.CAMERA_TEXT:
+            e = QLineEdit()
+            e.setPlaceholderText(ph)
+            e.setToolTip(tip + ". Blank = leave unchanged.")
+            self.cam_inputs[key] = e
+            f.addRow(label, e)
+        for key, label, table, tip in self.CAMERA_CODES:
+            c = QComboBox()
+            c.addItem("(unchanged)", "")
+            for code, name in table.items():
+                c.addItem(name, str(code))
+            c.setToolTip(tip + ". (unchanged) = leave as is.")
+            self.cam_combos[key] = c
+            f.addRow(label, c)
+        e = QLineEdit()
+        e.setPlaceholderText("e.g. 0, -0.7, +1")
+        e.setToolTip("Exposure compensation in EV (0, -0.7, +1 or -2/3). Blank = leave unchanged.")
+        self.cam_inputs["exposure_bias"] = e
+        f.addRow("Exposure bias (EV):", e)
+        e = QLineEdit()
+        e.setPlaceholderText("e.g. 2026-05-14 16:30:00")
+        e.setToolTip("Date and time taken (DateTimeOriginal and DateTimeDigitized), YYYY-MM-DD HH:MM:SS. "
+                     "Blank = leave unchanged. Ignored when the timestamp series below is on.")
+        self.cam_inputs["date_time_original"] = e
+        f.addRow("Date taken:", e)
+        lay.addLayout(f)
+
+        g = QGroupBox("Per-image variation")
+        gl = QVBoxLayout(g)
+        self.chk_cam_vary = QCheckBox("Vary shutter, ISO and aperture a little for every image")
+        self.chk_cam_vary.setToolTip("Picks realistic values on the standard third-stop scales inside the ranges "
+                                     "below. Seeded from each file name, so applying again gives the same values.")
+        gl.addWidget(self.chk_cam_vary)
+        fv = QFormLayout()
+        self.cam_ranges: dict[str, QLineEdit] = {}
+        for key, label, ph in (("shutter_range", "Shutter range:", "1/2000-1/60"), ("iso_range", "ISO range:", "100-3200"),
+                               ("f_range", "Aperture range:", "2.8-8")):
+            r = QLineEdit()
+            r.setPlaceholderText(ph + " (blank = no variation)")
+            r.setToolTip("Lowest-highest value, e.g. " + ph + ". Leave blank to keep the fixed value above "
+                         "(phone cameras have a fixed aperture).")
+            self.cam_ranges[key] = r
+            fv.addRow(label, r)
+        gl.addLayout(fv)
+        self.chk_cam_series = QCheckBox("Timestamp series instead of one fixed date")
+        self.chk_cam_series.setToolTip("Image 1 gets the start time, image 2 start + step, and so on, in the "
+                                       "order shown in the grid.")
+        gl.addWidget(self.chk_cam_series)
+        srow = QHBoxLayout()
+        self.inp_cam_start = QLineEdit()
+        self.inp_cam_start.setPlaceholderText("start: 2026-05-14 16:30:00")
+        self.inp_cam_start.setToolTip("Time of the first image, YYYY-MM-DD HH:MM:SS")
+        self.spin_cam_step = QSpinBox()
+        self.spin_cam_step.setRange(0, 86400 * 30)
+        self.spin_cam_step.setValue(45)
+        self.spin_cam_step.setSuffix(" s apart")
+        self.spin_cam_step.setToolTip("Seconds between consecutive images")
+        srow.addWidget(self.inp_cam_start, 1)
+        srow.addWidget(self.spin_cam_step)
+        gl.addLayout(srow)
+        lay.addWidget(g)
+
+        self.rad_cam_sel, self.rad_cam_shown = self._scope_row(lay)
+        b_apply = QPushButton("Apply camera data…")
+        icons.set(b_apply, "camera", "#ffffff")
+        b_apply.setStyleSheet("background-color: #00b894; color: white; font-weight: bold; padding: 6px;")
+        b_apply.setToolTip("Write these camera fields to the chosen image files (JPEG, PNG, WebP)")
+        b_apply.clicked.connect(self.apply_camera)
+        lay.addWidget(b_apply)
+        lay.addWidget(hint_label("Blank fields are left unchanged. This is for stylistic or testing use: the values "
+                                 "describe a camera that did not take the picture, so don't present it as a real "
+                                 "photograph."))
+        lay.addStretch()
+        self._fill_camera_presets()
         return w
 
     def _build_prompts(self) -> QWidget:
@@ -418,6 +547,91 @@ class MetadataTab(QWidget):
             return
         if confirm(self, "Apply authorship", f"Write these authorship fields to {len(keys)} image file(s)?"):
             self._run_file_job(keys, lambda k: (md.apply_authorship(k, a), None)[1], "Authorship")
+
+    # ------------------------------------------------------------------ camera data
+    def _camera_values(self) -> dict:
+        v = {k: e.text().strip() for k, e in self.cam_inputs.items()}
+        v.update({k: c.currentData() or "" for k, c in self.cam_combos.items()})
+        return v
+
+    def _camera(self) -> md.CameraData:
+        return md.CameraData(**self._camera_values())
+
+    def _variation(self) -> md.Variation | None:
+        if not self.chk_cam_vary.isChecked():
+            return None
+        r = {k: e.text().strip() for k, e in self.cam_ranges.items()}
+        return md.Variation(shutter=r["shutter_range"], iso=r["iso_range"], f_number=r["f_range"])
+
+    def _series(self) -> md.TimeSeries | None:
+        if not self.chk_cam_series.isChecked():
+            return None
+        return md.TimeSeries(start=self.inp_cam_start.text(), step_seconds=self.spin_cam_step.value())
+
+    def _fill_camera_presets(self, select: str = ""):
+        self.combo_camera.clear()
+        self.combo_camera.addItem("(no preset)", "")
+        for name in self.cam_presets.names():
+            self.combo_camera.addItem(name if self.cam_presets.is_builtin(name) else f"{name}  (mine)", name)
+        self.combo_camera.setCurrentIndex(max(0, self.combo_camera.findData(select)))
+
+    def _load_camera(self, name: str):
+        data = self.cam_presets.get(name) if name else None
+        self.lbl_camera_note.setText(str((data or {}).get("note", "")))
+        if not data:
+            return
+        for key, e in self.cam_inputs.items():
+            e.setText(str(data.get(key, "")))
+        for key, c in self.cam_combos.items():
+            c.setCurrentIndex(max(0, c.findData(str(data.get(key, "")))))
+        for key, e in self.cam_ranges.items():
+            e.setText(str(data.get(key, "")))
+
+    def _save_camera(self):
+        current = self.combo_camera.currentData() or ""
+        name, ok = QInputDialog.getText(self, "Save camera preset", "Preset name:", text=current)
+        if not ok or not name.strip():
+            return
+        data = self._camera_values()
+        data.update({k: e.text().strip() for k, e in self.cam_ranges.items()})
+        try:
+            saved = self.cam_presets.save(name, data)
+        except PresetError as e:
+            QMessageBox.warning(self, "Save camera preset", str(e))
+            return
+        self._fill_camera_presets(saved)
+
+    def _delete_camera(self):
+        name = self.combo_camera.currentData()
+        if not name:
+            return
+        if self.cam_presets.is_builtin(name):
+            QMessageBox.information(self, "Delete camera preset", "Built-in presets can't be deleted.")
+            return
+        if confirm(self, "Delete camera preset", f"Delete the camera preset '{name}'?"):
+            self.cam_presets.delete(name)
+            self._fill_camera_presets()
+
+    def apply_camera(self):
+        cam, var, series = self._camera(), self._variation(), self._series()
+        if cam.is_empty() and not (series and series.start.strip()):
+            QMessageBox.information(self, "Camera data", "Pick a preset or fill in at least one field.")
+            return
+        try:
+            md.validate_camera(cam, var, series)
+        except ValueError as e:
+            QMessageBox.warning(self, "Camera data", str(e))
+            return
+        keys = self._scope_keys(self.rad_cam_shown)
+        if not keys:
+            QMessageBox.information(self, "Camera data", "Select images first.")
+            return
+        if not confirm(self, "Apply camera data", f"Write these camera EXIF fields to {len(keys)} image file(s)?\n\n"
+                       "Pixels are not touched. Existing values in the filled fields are replaced."):
+            return
+        order = {k: i for i, k in enumerate(keys)}
+        self._run_file_job(keys, lambda k: (md.apply_camera(k, cam, var, series, order.get(k, 0)), None)[1],
+                           "Camera data")
 
     # ------------------------------------------------------------------ prompts → captions
     def prompts_to_captions(self, keys: list[str], replace: bool):

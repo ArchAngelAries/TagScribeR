@@ -205,6 +205,20 @@ def metadata_presets() -> PresetStore:
     return _metadata_store
 
 
+_camera_store: PresetStore | None = None
+
+
+def camera_presets() -> PresetStore:
+    """Camera EXIF presets: the built-in camera table first, then the user's own (same keys, see
+    ``core.camera_presets``)."""
+    global _camera_store
+    if _camera_store is None:
+        from core import paths
+        from core.camera_presets import CAMERA_PRESETS
+        _camera_store = PresetStore(paths.CAMERA_PRESETS_FILE, CAMERA_PRESETS)
+    return _camera_store
+
+
 def _migrate_legacy_custom_prompt(store: PresetStore) -> None:
     """Earlier versions kept one 'Custom' prompt in settings; keep it as a named preset."""
     from core.config import settings

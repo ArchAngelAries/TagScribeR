@@ -736,6 +736,8 @@ class TrainTab(QWidget):
             moved = f.migrate(stored, os.path.isfile)
             if moved != stored:
                 self.cfg.set(key, moved)
+                if f.pref_key in self.model_edits:          # the Model files row shows (and keeps) the new path
+                    self.model_edits[f.pref_key].setText(moved)
                 log.info("[models] %s: %s -> %s (the newer file replaces it)", f.label, stored, moved)
             out[f.pref_key] = moved
         return out

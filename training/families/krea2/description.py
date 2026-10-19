@@ -63,8 +63,9 @@ KREA2 = FamilyDescription(
                   role="text_encoder"),
         ModelFile("krea2_turbo_lora", "Krea 2 Turbo LoRA (previews)", False, _REPO,
                   "loras/krea2_turbo_lora_rank_64_bf16.safetensors", 0.47,
-                  "Optional: RAW + this LoRA at 1.0 samples like the Turbo model (8 steps, no CFG), so previews "
-                  "run on the training model itself. Frozen, off during training.", role="speed_lora"),
+                  "Optional: previews run on the training model itself with this LoRA at 0.7 (10 steps, no CFG), "
+                  "Fizgig's preview setup. Frozen, off during training.", role="speed_lora",
+                  fetch_optional=False),                     # FZ 8.7.1 families/krea2.py:49-51
     ),
     text_encoder_label="Qwen3-VL-4B",
     vae_label="Qwen-Image VAE",
@@ -160,8 +161,8 @@ KREA2 = FamilyDescription(
             source=f"{_FETCH}; Fizgig krea2/trainer.py _apply_turbo_lora",
         ),
     ),
-    # Previews run on the live RAW training model with the Turbo LoRA at 1.0, 8 steps, CFG 1 (Fizgig's default
-    # "RAW + Turbo LoRA" engine, audit 8.3); without the file they render the RAW model at 28 steps / CFG 4.5 (Fizgig
+    # Previews run on the live RAW training model with the Turbo LoRA (Fizgig's default "RAW + Turbo LoRA" engine,
+    # audit 8.3; strength and steps below); without the file they render the RAW model at 28 steps / CFG 4.5 (Fizgig
     # 7.0.1's RAW recipe; its own no-Turbo preview default is 8 steps / CFG 1, which TagScribeR does not copy).
     preview_speed_lora="Krea 2 Turbo (rank 64 LoRA)",
     # With the Turbo LoRA file set, previews render at Turbo 0.7, 10 steps, CFG 1 (FZ 8.7.1 families/krea2.py:164-168,
@@ -208,7 +209,7 @@ KREA2 = FamilyDescription(
                                                   "vocab.json")),),
 
     notes=(
-        ("Train on the RAW checkpoint. Previews use the same RAW model with the Turbo LoRA at strength 1.0 (8 steps, "
+        ("Train on the RAW checkpoint. Previews use the same RAW model with the Turbo LoRA at strength 0.7 (10 steps, "
          "CFG 1), so no second 13 GB model is loaded.", "Fizgig krea2/trainer.py _apply_turbo_lora"),
         ("Text conditioning is the stack of 12 hidden-state layers (2, 5, ..., 35) of Qwen3-VL-4B under a fixed "
          "descriptor template, padded to 512 tokens, with a validity mask; the DiT folds the stack itself. A cached "

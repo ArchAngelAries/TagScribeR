@@ -12,8 +12,8 @@ The fast kernels were never meant for heads that wide (on CUDA PyTorch falls bac
 ROCm build runs them anyway. The Qwen-Image VAE (Krea 2, Qwen Image 2.1) has one 384-wide head and the FLUX.2 VAE
 (Klein) one 512-wide head over every latent position, so on ROCm each encode and decode went through the broken
 path: decoded previews carried bright horizontal streaks at fixed heights, and cached latents were off by a few
-percent. Fizgig v7.1.0 has the same method (src/fizgig/modules/wide_attention.py), gated on ROCm; here it is applied on
-every platform. The behaviour below is TagScribeR's own and is unchanged.
+percent. Fizgig v7.1.0 has the same method (src/fizgig/modules/wide_attention.py), and like it the hand-computed path
+runs on ROCm only: CUDA, CPU and MPS keep PyTorch's own attention, which is correct there.
 
 `attention` uses the built-in function for ordinary heads and computes wide ones by hand, in float32 and in row
 chunks so the N x N attention matrix is never held at once (N = 16384 at 1024 px).
@@ -22,12 +22,13 @@ import torch
 import torch.nn.functional as F
 
 MAX_FAST_HEAD_DIM = 256
+ROCM = bool(getattr(torch.version, "hip", None))     # Fizgig modules/wide_attention.py: the fix is ROCm's
 _CHUNK_ELEMENTS = 2 ** 27          # attention-matrix elements per chunk: 512 MB in float32
 
 
 def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     """softmax(q k^T / sqrt(d)) v for (..., N, d) tensors, no mask. Returns q's dtype."""
-    if q.shape[-1] <= MAX_FAST_HEAD_DIM:
+    if q.shape[-1] <= MAX_FAST_HEAD_DIM or not ROCM:
         return F.scaled_dot_product_attention(q, k, v)
     dtype = q.dtype
     q, kt, v = q.float() * (q.shape[-1] ** -0.5), k.float().transpose(-1, -2), v.float()

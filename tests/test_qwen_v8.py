@@ -105,3 +105,24 @@ def test_fetch_is_optional_rule():
     assert not ModelFile("a", "A", False, role="training_adapter").fetch_is_optional
     assert not ModelFile("a", "A", False, fetch_optional=False).fetch_is_optional
     assert ModelFile("a", "A", False, role="training_adapter", fetch_optional=True).fetch_is_optional
+
+
+def test_turbo_previews_use_the_turbo_cfg_unless_typed(tmp_path):
+    """Fizgig 8.6.1: Steps / CFG follow what previews render with; an untouched CFG box means the Turbo's CFG 1
+    (Qwen's plain-model 3 must not ride along with an 8-step Turbo). A typed CFG is kept."""
+    from training import params as P
+    from training import pipeline, registry
+    for key in ("qwen_image21", "krea2", "anima"):
+        desc = registry.get(key)
+        sp = desc.preview_speed()
+        turbo = tmp_path / f"{key}_turbo.safetensors"
+        turbo.write_bytes(b"x")
+        models = {f.pref_key: "x" for f in desc.model_files}
+        models[sp.pref_key] = str(turbo)
+        vals = {**P.defaults(), "LORA_NAME": "t", "SAMPLE_PROMPT": "a photo",
+                "SAMPLE_STEPS": desc.preview_steps, "SAMPLE_CFG_SCALE": desc.preview_cfg}
+        kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", models)
+        assert kw["speed_lora"] == str(turbo) and kw["sample_cfg_scale"] == sp.settings.cfg == 1.0, key
+        assert "sample_negative" not in kw and kw["sample_steps"] == desc.preview_speed_defaults()[0], key
+        kw, _ = pipeline.train_kwargs(desc, {**vals, "SAMPLE_CFG_SCALE": 5.5}, tmp_path / "run", models)
+        assert kw["sample_cfg_scale"] == 5.5, key                     # typed by the user: kept

@@ -21,6 +21,9 @@ reports (2026-10-19) cover the delta and the app as a whole:
   hunts over training, the app core / tabs, and inference / installer / network.
 - `IMPROVEMENT_IDEAS.md`: efficiency ideas for the app, captioning and training, with measurements.
 
+**Handoff (2026-10-19, end of the cloud session):** all fix batches and catch-up wave 1 are done and merged to
+`main`; `docs/dev/NEXT_SESSION.md` lists what the owner should check on real hardware and the next work in order.
+
 Order of work: (1) confirmed bugs (below), (2) the v8 catch-up for the existing families and shared layer, (3) the
 rest of stage 5 (fine-tune, DOP, Multi Concept), (4) new families, (5) improvements, interleaved where independent.
 
@@ -55,8 +58,8 @@ H3's pre-sm_80 NVIDIA paths (unit-tested only, documented as unrun here).
 TagScribeR's own (not GPL code): pick the discrete GPU over integrated graphics in `core/hardware.py`, honouring a
 user-set `HIP_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES`.
 Kept as TagScribeR's: batch size above 1 (upstream added and reverted it); the window-only H3 LoRA (with the
-block-swap fix above); `retired_preview_defaults` until the Train tab follows 8.6.1's "Steps / CFG follow what
-previews render with" rule, then removed.
+block-swap fix above); `retired_preview_defaults` / `preview_reset` removed (dead at HEAD); 8.6.1's "Steps / CFG
+follow what previews render with" rule is in `pipeline.train_kwargs` (an untouched Steps / CFG box means the Turbo's).
 Deferred: Qwen Turbo DiT previews (workbench stage); `sample_strengths` (only ACE-Step declares them).
 Stage 5 gains: DOP and Multi Concept on every family; LoRA Isolation after the fine-tune.
 New families, in this order: MOSS-Image, Flux 3 Image Klein (gated, non-commercial weights: a licence link on the

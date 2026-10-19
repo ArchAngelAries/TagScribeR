@@ -20,12 +20,20 @@ def test_wide_head_is_computed_by_hand_and_matches(dim, monkeypatch):
     def boom(*_a, **_k):
         raise AssertionError("the built-in attention must not be used for a wide head")
     monkeypatch.setattr(W.F, "scaled_dot_product_attention", boom)
+    monkeypatch.setattr(W, "ROCM", True)                                # the hand path is ROCm's (Fizgig v7.1.0)
     monkeypatch.setattr(W, "_CHUNK_ELEMENTS", 300 * 7)                  # force several row chunks
     out = W.attention(q, k, v)
     assert out.dtype == q.dtype and torch.allclose(out, _reference(q, k, v), atol=1e-5)
     half = W.attention(q.to(torch.bfloat16), k.to(torch.bfloat16), v.to(torch.bfloat16))
     assert half.dtype == torch.bfloat16                                 # computed in float32, returned in the input dtype
     assert torch.allclose(half.float(), _reference(q, k, v), atol=3e-2)
+
+
+def test_wide_heads_off_rocm_use_the_builtin(monkeypatch):
+    monkeypatch.setattr(W, "ROCM", False)                               # CUDA / CPU: PyTorch's attention is right
+    torch.manual_seed(0)
+    q, k, v = (torch.randn(1, 1, 40, 384) for _ in range(3))
+    assert torch.allclose(W.attention(q, k, v), F.scaled_dot_product_attention(q, k, v), atol=1e-6)
 
 
 def test_ordinary_heads_use_the_builtin():

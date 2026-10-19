@@ -592,10 +592,17 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                         kw["sample_steps"] = _num(values, "FAMILY_TURBO_STEPS", int) or \
                             desc.preview_speed_defaults()[0]
                     # The Train tab fills Steps with the family's plain-model default; with the speed LoRA on, the
-                    # untouched default means "the LoRA's own steps" (Krea 2: 28 -> 8; unchanged for Qwen, whose
-                    # two are equal)
+                    # untouched default means "the LoRA's own steps" (Krea 2: 28 -> 10, Qwen: 25 -> 8)
                     elif kw.get("sample_steps") == desc.preview_steps:
                         kw["sample_steps"] = desc.preview_speed_defaults()[0]
+                    # ... and CFG the same way: an untouched (or empty) CFG box means the LoRA's own CFG, 1 for every
+                    # Turbo here (Fizgig 8.6.1: Steps / CFG follow what previews render with; "The Turbo samples
+                    # always use CFG 1", families/qwen_image.py). A CFG the user typed is kept (the trainer honours
+                    # CFG > 1 with the Turbo, its negative too)
+                    if cfg <= 0 or abs(cfg - desc.preview_cfg) < 1e-9:
+                        kw["sample_cfg_scale"] = sp.settings.cfg
+                        if kw["sample_cfg_scale"] <= 1.0:
+                            kw.pop("sample_negative", None)
             ck = desc.preview_checkpoint()
             if desc.train_preview_checkpoint and ck and values.get("SAMPLE_USE_DISTILLED", True):
                 ck_path = (models.get(ck[0].pref_key) or "").strip()

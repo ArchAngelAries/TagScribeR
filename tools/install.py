@@ -24,12 +24,15 @@ Every pin below can be overridden with an environment variable of the same name.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import platform
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -59,6 +62,10 @@ BNB_ROCM_WIN_WHEEL = os.environ.get(
     "https://github.com/0xDELUXA/bitsandbytes_win_rocm/releases/download/"
     "0.50.2.dev0-py3.12-rocm7.16-win_amd64_all/bitsandbytes-0.50.2.dev0-cp312-cp312-win_amd64.whl",
 )
+# SHA-256 of that exact release asset (from GitHub's release API). The wheel is downloaded, checked against this and
+# only then installed; a mismatch stops the install. A custom BNB_WHEEL needs its own BNB_WHEEL_SHA256.
+BNB_ROCM_WIN_SHA256 = "43ac674080725f84f76d172ae2946fc068de5c7951bfa85852792630ff0f9bdf"
+_BNB_DEFAULT_URL = BNB_ROCM_WIN_WHEEL
 
 # --- AMD architecture detection ---------------------------------------------
 # PCI device id -> LLVM gfx target. Public hardware facts; covers the consumer
@@ -214,6 +221,34 @@ def install_torch(backend: str, arch: str, experimental: bool, dry: bool) -> Non
             "torch", "torchvision"], dry)
 
 
+def fetch_verified_wheel(url: str, expected_sha256: str, dest_dir: Path) -> Path:
+    """Download `url` into dest_dir and return the path only if its SHA-256 matches. Never installs on a mismatch."""
+    target = dest_dir / url.split("?", 1)[0].split("#", 1)[0].rsplit("/", 1)[-1]   # uv needs the wheel's own name
+    if not target.name.endswith(".whl"):
+        raise SystemExit(f"\nERROR: {url} does not name a .whl file; set BNB_WHEEL to a wheel's download address.")
+    digest = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp, open(target, "wb") as out:
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                out.write(chunk)
+    except OSError as e:
+        raise SystemExit(f"\nERROR: could not download {url}: {e}\nCheck your connection and re-run, "
+                         "or re-run with --no-bnb to skip bitsandbytes.")
+    got = digest.hexdigest()
+    if got != expected_sha256.lower():
+        raise SystemExit(
+            "\nERROR: the bitsandbytes wheel failed its integrity check and was NOT installed.\n"
+            f"  expected SHA-256: {expected_sha256.lower()}\n  received SHA-256: {got}\n"
+            "The release file may have been replaced or corrupted. Re-run to retry; if it persists, re-run with "
+            "--no-bnb (8-bit optimizers then fall back to plain AdamW and NF4 bases are unavailable) and report it at the TagScribeR issue tracker.")
+    print(f"  SHA-256 verified: {got}")
+    return target
+
+
 def install_bitsandbytes(backend: str, dry: bool) -> None:
     if backend == "rocm":
         if not IS_WINDOWS:
@@ -224,7 +259,18 @@ def install_bitsandbytes(backend: str, dry: bool) -> None:
             return
         print("Installing bitsandbytes (community Windows ROCm wheel, built by neither AMD nor TagScribeR):")
         print(f"  {BNB_ROCM_WIN_WHEEL}")
-        uv([BNB_ROCM_WIN_WHEEL], dry)
+        expected = BNB_ROCM_WIN_SHA256
+        if BNB_ROCM_WIN_WHEEL != _BNB_DEFAULT_URL:
+            expected = os.environ.get("BNB_WHEEL_SHA256", "").strip().lower()
+            if not expected:
+                raise SystemExit("\nERROR: BNB_WHEEL points at a custom wheel, which has no pinned SHA-256. Set "
+                                 "BNB_WHEEL_SHA256 to its digest, or unset BNB_WHEEL, or re-run with --no-bnb.")
+        print(f"  SHA-256 must be {expected}")
+        if dry:
+            print("  (dry run) would download the wheel, verify the SHA-256, then install the local file")
+            return
+        with tempfile.TemporaryDirectory(prefix="tagscriber_bnb_") as tmp:
+            uv([str(fetch_verified_wheel(BNB_ROCM_WIN_WHEEL, expected, Path(tmp)))], dry)
     elif backend == "cuda":
         uv(["bitsandbytes>=0.48"], dry)
     else:

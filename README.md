@@ -185,7 +185,7 @@ install.bat --experimental     :: use AMD's newest, unpinned ROCm nightlies
 
 No separate ROCm or HIP SDK install is needed. The app sets the ROCm environment itself when it starts.
 
-bitsandbytes is installed by default. On Windows with an AMD card it is a community ROCm build ([0xDELUXA/bitsandbytes_win_rocm](https://github.com/0xDELUXA/bitsandbytes_win_rocm)), the same pinned wheel the Fizgig trainer uses. It is built by neither AMD nor TagScribeR.
+bitsandbytes is installed by default. On Windows with an AMD card it is a community ROCm build ([0xDELUXA/bitsandbytes_win_rocm](https://github.com/0xDELUXA/bitsandbytes_win_rocm)), the same pinned wheel the Fizgig trainer uses. It is built by neither AMD nor TagScribeR. The installer downloads the wheel and checks it against a pinned SHA-256 before installing; a mismatch stops the install.
 
 ### NVIDIA (CUDA)
 

@@ -37,6 +37,7 @@ class DeviceInfo:
     total_memory: int = 0  # bytes (0 = unknown / system RAM)
     arch: str = ""        # e.g. "gfx1100" or "sm_89"
     bf16: bool = False
+    integrated: bool | None = None  # torch's is_integrated where it reports one (None = not reported)
 
     @property
     def is_gpu(self) -> bool:
@@ -154,6 +155,105 @@ def detect_devices() -> tuple[DeviceInfo, ...]:
         return _detect_devices()
 
 
+# ---- which GPU to use ---------------------------------------------------------------------------------------
+# A PC with a Ryzen APU plus a discrete Radeon can list the iGPU as device 0. TagScribeR's own rule: skip integrated
+# GPUs when a discrete one exists, then take the most memory; ties keep the lowest index. A GPU is integrated when
+# torch says so (is_integrated), or when its name / gfx target is a known APU one (torch's flag is not always set
+# on ROCm builds). A user-set *_VISIBLE_DEVICES means the user already chose: nothing is overridden.
+_VISIBLE_VARS = ("HIP_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES")
+# APU gfx targets: Raven/Picasso/Renoir (90c), Van Gogh, Rembrandt, Raphael/Granite Ridge, Phoenix/Hawk Point,
+# Strix Point/Halo/Krackan. Discrete targets (gfx1100-1102, 1030-1032, 1034) are not listed.
+_APU_ARCHS = ("gfx902", "gfx90c", "gfx1033", "gfx1035", "gfx1036", "gfx1037", "gfx1103", "gfx1150", "gfx1151",
+              "gfx1152", "gfx1153")
+
+
+def _looks_integrated(name: str, arch: str = "") -> bool:
+    import re
+    if (arch or "").split(":")[0].lower() in _APU_ARCHS:
+        return True
+    n = re.sub(r"\(tm\)|\(r\)|[™®]", "", (name or "").lower())
+    n = re.sub(r"\s+", " ", n).strip()
+    if re.fullmatch(r"(amd )?radeon graphics", n):                      # "AMD Radeon(TM) Graphics"
+        return True
+    if "rx" in n.split() or "pro" in n.split():
+        return False
+    if re.search(r"\bvega ?(3|6|7|8|9|10|11)\b", n):                    # Ryzen APU Vega 3..11 (not RX Vega 56/64)
+        return True
+    return bool(re.search(r"\bradeon (graphics )?\d{3}m\b", n))        # "Radeon 780M Graphics"
+
+
+def is_integrated_gpu(dev: DeviceInfo) -> bool:
+    return dev.integrated is True or _looks_integrated(dev.name, dev.arch)
+
+
+def _gpu_index(dev: DeviceInfo) -> int:
+    try:
+        return int(dev.id.split(":")[1])
+    except (IndexError, ValueError):
+        return 0
+
+
+def pick_device(devices, environ=None) -> tuple[int, str]:
+    """(torch device index, reason) of the GPU to use. Pure: devices are DeviceInfo-like objects (id, backend, name,
+    total_memory, arch, integrated); CPU / non-CUDA entries are ignored. Index 0 when nothing says otherwise."""
+    environ = os.environ if environ is None else environ
+    gpus = [d for d in devices if d.backend in ("rocm", "cuda")]
+    if not gpus:
+        return 0, "no CUDA/ROCm GPU"
+    if len(gpus) == 1:
+        return _gpu_index(gpus[0]), "only GPU"
+    if any(environ.get(v) not in (None, "") for v in _VISIBLE_VARS):
+        return _gpu_index(gpus[0]), "device selection set by the user in the environment; left as is"
+    discrete = [d for d in gpus if not is_integrated_gpu(d)]
+    if len(discrete) == len(gpus):
+        if gpus[0].backend == "cuda":      # NVIDIA, nothing integrated: unchanged (torch's own order)
+            return _gpu_index(gpus[0]), "no integrated GPU; torch's default device"
+        reason = "most memory of the discrete GPUs"
+    elif discrete:
+        reason = "discrete GPU with the most memory; integrated graphics skipped"
+    else:
+        discrete, reason = gpus, "only integrated GPUs; most memory"
+    best = max(discrete, key=lambda d: (d.total_memory, -_gpu_index(d)))
+    return _gpu_index(best), reason
+
+
+def best_device_index(devices=None, environ=None) -> int:
+    """Torch index of the GPU TagScribeR should use (see pick_device); 0 on a CPU-only machine."""
+    return pick_device(detect_devices() if devices is None else devices, environ)[0]
+
+
+def _best_first(devices: list[DeviceInfo]) -> list[DeviceInfo]:
+    """GPUs reordered so the chosen one is first (ids keep torch's indices), and the choice logged."""
+    idx, why = pick_device(devices)
+    chosen = next((d for d in devices if _gpu_index(d) == idx), devices[0])
+    if len(devices) > 1:
+        log.info("GPU selection: %s (%s), %s", chosen.name, chosen.id, why)
+    return [chosen] + [d for d in devices if d is not chosen]
+
+
+def pinned_device_env(devices=None, environ=None) -> dict[str, str]:
+    """Environment entries for a child process so its device 0 is the chosen GPU: HIP_VISIBLE_DEVICES on ROCm,
+    CUDA_VISIBLE_DEVICES on CUDA. Empty when the chosen GPU is already device 0, there is no GPU, or the user set
+    one of the *_VISIBLE_DEVICES variables. Indices are torch's, so the parent must not have remapped them."""
+    environ = os.environ if environ is None else environ
+    devices = detect_devices() if devices is None else devices
+    gpus = [d for d in devices if d.backend in ("rocm", "cuda")]
+    if not gpus or any(environ.get(v) not in (None, "") for v in _VISIBLE_VARS):
+        return {}
+    idx = pick_device(devices, environ)[0]
+    if idx == 0:
+        return {}
+    return {("HIP_VISIBLE_DEVICES" if gpus[0].backend == "rocm" else "CUDA_VISIBLE_DEVICES"): str(idx)}
+
+
+def device_choice_message(devices=None, environ=None) -> str:
+    """One line for the console: which GPU is used and why."""
+    devices = detect_devices() if devices is None else devices
+    idx, why = pick_device(devices, environ)
+    d = next((x for x in devices if x.backend in ("rocm", "cuda") and _gpu_index(x) == idx), None)
+    return f"GPU: {d.label} [device {idx}] - {why}" if d else "GPU: none (CPU)"
+
+
 def _detect_devices() -> tuple[DeviceInfo, ...]:
     devices: list[DeviceInfo] = []
     if torch_installed():
@@ -172,8 +272,11 @@ def _detect_devices() -> tuple[DeviceInfo, ...]:
                             bf16 = bool(torch.cuda.is_bf16_supported())
                     except Exception:
                         bf16 = False
+                    integ = getattr(props, "is_integrated", None)
                     devices.append(DeviceInfo(id=f"cuda:{i}", backend=backend, name=props.name,
-                                              total_memory=int(props.total_memory), arch=arch, bf16=bf16))
+                                              total_memory=int(props.total_memory), arch=arch, bf16=bf16,
+                                              integrated=None if integ is None else bool(integ)))
+                devices = _best_first(devices)
             elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
                 devices.append(DeviceInfo(id="mps", backend="mps", name="Apple GPU", bf16=False))
             elif hasattr(torch, "xpu") and torch.xpu.is_available():

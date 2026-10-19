@@ -309,11 +309,11 @@ def test_unexpected_provider_error_fails_only_that_image(tmp_path, monkeypatch, 
 # -- 5. key and host ---------------------------------------------------------------------------------------------------
 def test_key_exposure_warning():
     f = openai_api.key_exposure_warning
-    assert f("http://192.168.1.5:1234/v1", "k") and "192.168.1.5" in f("http://192.168.1.5:1234/v1", "k")
+    assert f("http://198.51.100.5:1234/v1", "k") and "198.51.100.5" in f("http://198.51.100.5:1234/v1", "k")
     assert f("http://api.example.com/v1", "k")
     assert not f("http://127.0.0.1:1234/v1", "k") and not f("http://localhost:1234/v1", "k")
     assert not f("https://api.example.com/v1", "k")
-    assert not f("http://192.168.1.5:1234/v1", "")
+    assert not f("http://198.51.100.5:1234/v1", "")
 
 
 @pytest.fixture
@@ -333,12 +333,12 @@ def test_editing_the_url_host_clears_the_key(tab):
     tab.inp_api_url.setText("https://api.example.com/v1/")      # programmatic: no textEdited
     tab._on_api_url_edited()                                    # same host: key stays
     assert tab.inp_api_key.text() == "sk-secret"
-    tab.inp_api_url.setText("http://192.168.1.9:1234/v1")
+    tab.inp_api_url.setText("http://198.51.100.9:1234/v1")
     tab._on_api_url_edited()
     assert tab.inp_api_key.text() == ""
     tab.inp_api_key.setText("typed")
     tab._on_api_key_edited()
-    assert "192.168.1.9" in tab.lbl_api_warn.text()             # plain http to another machine with a key
+    assert "198.51.100.9" in tab.lbl_api_warn.text()             # plain http to another machine with a key
 
 
 def test_api_spec_takes_limits_from_profile(tab):

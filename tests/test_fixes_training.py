@@ -246,13 +246,13 @@ def test_resume_refuses_a_pickled_object(tmp_path):
 
 # ---- 08 #7: a preset that sets a path is named in the report ------------------------------------------------------
 def test_preset_that_sets_a_path_is_noted():
-    out, rep = presets.apply({"LORA_OUTPUT_DIR": "D:\\Elsewhere\\out", "FAMILY_EDIT_DIR": "D:\\Datasets\\originals",
+    out, rep = presets.apply({"LORA_OUTPUT_DIR": "D:\\Datasets\\demo_out", "FAMILY_EDIT_DIR": "D:\\Datasets\\originals",
                               "CONTEXT_LORA_PATH": "D:\\x.safetensors", "METADATA_THUMBNAIL": "D:\\t.png",
                               "NETWORK_DIM": 8}, P.defaults())
     text = "\n".join(rep.messages())
     for key in ("LORA_OUTPUT_DIR", "FAMILY_EDIT_DIR", "CONTEXT_LORA_PATH", "METADATA_THUMBNAIL"):
         assert key in text
-    assert "D:\\Elsewhere\\out" in text and "NETWORK_DIM" not in text
+    assert "D:\\Datasets\\demo_out" in text and "NETWORK_DIM" not in text
     _, rep = presets.apply({"METADATA_THUMBNAIL": "off", "LORA_OUTPUT_DIR": ""}, P.defaults())
     assert not rep.notes
 

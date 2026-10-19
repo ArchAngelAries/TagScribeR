@@ -37,7 +37,7 @@ rest of stage 5 (fine-tune, DOP, Multi Concept), (4) new families, (5) improveme
   caption; in-place edits drop PNG text / XMP and ignore the quality slider; 16-bit PNGs clipped; header-size guard
   before decoding huge images; UTF-16 captions; file modes and fsync in atomic writers; assorted (inspector shows a
   trashed image, `../` collection names, `.json` sidecars, caption extension in counts).
-- [ ] Inference (10): `trust_remote_code` per model, never global (#1); partial downloads shown as installed (#3); API
+- [x] Inference (10; plus the review's: old profiles' 120 s / 3 retries become automatic, a stale .incomplete never hides a model, key bound to the first address, resume into the partial folder, an unencodable image fails alone; #6 revision pins: the field exists, no pins known yet): `trust_remote_code` per model, never global (#1); partial downloads shown as installed (#3); API
   timeouts / retries / cancel and the blocking unload on close (#4); non-InferenceError aborts a batch (#5); the key
   kept when the server URL changes (#7); `items_started` never emitted (#8); gated-model message (#9).
 - [x] Owner-reported: a failed image's red outline hides the selection highlight (now both show).

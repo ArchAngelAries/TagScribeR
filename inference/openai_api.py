@@ -30,6 +30,63 @@ def is_local_url(url: str) -> bool:
             (host.startswith("172.") and host.split(".")[1].isdigit() and 16 <= int(host.split(".")[1]) <= 31))
 
 
+def is_loopback_url(url: str) -> bool:
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "").lower()
+    return host == "localhost" or host == "::1" or host.startswith("127.")
+
+
+def url_host(url: str) -> str:
+    from urllib.parse import urlparse
+    try:
+        return (urlparse(url.strip()).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def key_exposure_warning(url: str, key: str) -> str:
+    """Non-empty when an API key would travel unencrypted to a machine other than this one."""
+    from urllib.parse import urlparse
+    url = url.strip()
+    if not key or urlparse(url).scheme.lower() != "http" or not url_host(url) or is_loopback_url(url):
+        return ""
+    return (f"The key would be sent unencrypted (http) to {url_host(url)}. Use https, or leave the key empty "
+            "for a local server.")
+
+
+# Defaults when a profile does not say: a local server handles one request at a time, so a timed-out
+# request must not be sent again (the abandoned one keeps the server busy and the retry queues behind it).
+DEFAULT_TIMEOUT = 180.0
+CLOUD_RETRIES = 2
+
+
+def effective_retries(url: str, configured) -> int:
+    local = is_local_url(url)
+    if configured is None:
+        return 0 if local else CLOUD_RETRIES
+    return max(0, min(int(configured), 1) if local else int(configured))
+
+
+def reply_text(content) -> str:
+    """Text of a chat-completions ``message.content``: a string, or a list of content parts."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, (list, tuple)):
+        out = []
+        for part in content:
+            if isinstance(part, str):
+                out.append(part)
+            elif isinstance(part, dict):
+                if isinstance(part.get("text"), str):
+                    out.append(part["text"])
+            elif isinstance(getattr(part, "text", None), str):
+                out.append(part.text)
+        return "".join(out)
+    raise TypeError(f"unsupported reply content of type {type(content).__name__}")
+
+
 def _friendly_error(e: Exception) -> InferenceError:
     try:
         import openai
@@ -82,17 +139,49 @@ class OpenAICompatible(Provider):
             raise InferenceError("No API base URL set.", "Enter the server URL, e.g. http://127.0.0.1:1234/v1")
         # Local servers accept any key, but the client requires a non-empty one.
         self.client = OpenAI(base_url=base_url, api_key=self.spec.opt("api_key") or "not-needed",
-                             timeout=float(self.spec.opt("timeout", 120.0)),
-                             max_retries=int(self.spec.opt("max_retries", 3)))
+                             timeout=float(self.spec.opt("timeout") or DEFAULT_TIMEOUT),
+                             max_retries=effective_retries(base_url, self.spec.opt("max_retries")))
         report(f"Using API: {self.display_name}")
 
     def unload(self) -> None:
-        if self.client is not None:
+        client, self.client = self.client, None
+        if client is not None:
             try:
-                self.client.close()
+                client.close()
             except Exception:
                 pass
-        self.client = None
+
+    def _abort_inflight(self, client) -> None:
+        """Drop the connection(s) of ``client`` so requests in flight fail now; ``load`` rebuilds it."""
+        if self.client is client:
+            self.client = None
+        try:
+            client.close()
+        except Exception:
+            pass
+
+    def _request(self, client, kwargs: dict, cancel: threading.Event | None):
+        """``chat.completions.create`` that returns early (``Cancelled``) when ``cancel`` is set."""
+        if cancel is None:
+            return client.chat.completions.create(**kwargs)
+        box: dict = {}
+
+        def call():
+            try:
+                box["resp"] = client.chat.completions.create(**kwargs)
+            except BaseException as e:   # handed back to the calling thread
+                box["err"] = e
+
+        t = threading.Thread(target=call, name="api-request", daemon=True)
+        t.start()
+        while t.is_alive():
+            if cancel.wait(0.25):
+                self._abort_inflight(client)
+                t.join(2.0)
+                raise Cancelled()
+        if "err" in box:
+            raise box["err"]
+        return box["resp"]
 
     def _one(self, img: Image.Image, req: CaptionRequest, cancel: threading.Event | None) -> str | Exception:
         if cancel is not None and cancel.is_set():
@@ -100,9 +189,13 @@ class OpenAICompatible(Provider):
         messages = []
         if req.system_prompt.strip():
             messages.append({"role": "system", "content": req.system_prompt.strip()})
+        try:                    # an image that can't be encoded fails alone (not its whole chunk)
+            image_url = f"data:image/jpeg;base64,{to_jpeg_base64(img)}"
+        except Exception as e:  # noqa: BLE001
+            return InferenceError(f"Could not prepare the image for the server: {e}")
         messages.append({"role": "user", "content": [
             {"type": "text", "text": req.prompt},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{to_jpeg_base64(img)}"}},
+            {"type": "image_url", "image_url": {"url": image_url}},
         ]})
         p = req.params
         kwargs = {"model": self.spec.model, "messages": messages, "max_tokens": p.max_new_tokens,
@@ -115,19 +208,29 @@ class OpenAICompatible(Provider):
         if thinking is True or (thinking == "auto" and is_local_url(self.spec.opt("base_url", ""))):
             # Honoured by llama.cpp / LM Studio / vLLM chat templates (Qwen3.5+); ignored otherwise.
             kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+        client = self.client
+        if client is None:
+            return Cancelled() if cancel is not None and cancel.is_set() else InferenceError("API client not initialised.")
         try:
-            resp = self.client.chat.completions.create(**kwargs)
+            resp = self._request(client, kwargs, cancel)
+        except Cancelled:
+            return Cancelled()
         except Exception as e:
+            if cancel is not None and cancel.is_set():
+                return Cancelled()
             log.debug("API call failed", exc_info=True)
             return _friendly_error(e)
         try:
-            text = resp.choices[0].message.content or ""
-        except (AttributeError, IndexError, TypeError):
-            return InferenceError("The API returned a malformed response.")
-        if req.strip_thinking:
-            text = captions.clean_model_output(text)
+            choice = resp.choices[0]
+            text = reply_text(choice.message.content)
+            if req.strip_thinking:
+                text = captions.clean_model_output(text)
+        except Exception:
+            log.debug("Malformed API reply", exc_info=True)
+            return InferenceError("The API returned a malformed response.",
+                                  "The server's reply did not look like an OpenAI chat completion.")
         if not text.strip():
-            finish = getattr(resp.choices[0], "finish_reason", "")
+            finish = getattr(choice, "finish_reason", "")
             hint = "Increase Max tokens (reasoning models spend tokens thinking)." if finish == "length" else ""
             return InferenceError("The API returned an empty caption.", hint)
         return text.strip()

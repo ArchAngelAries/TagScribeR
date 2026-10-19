@@ -31,7 +31,15 @@ log = logging.getLogger(__name__)
 
 
 def read_local_config(model: str) -> dict:
+    """config.json of a local folder, or of a repo id that is already in the Hugging Face cache."""
     p = Path(model) / "config.json"
+    if not p.is_file():
+        try:
+            from huggingface_hub import try_to_load_from_cache
+            cached = try_to_load_from_cache(model, "config.json")
+            p = Path(cached) if isinstance(cached, str) else p
+        except Exception:
+            pass
     if p.is_file():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
@@ -40,15 +48,33 @@ def read_local_config(model: str) -> dict:
     return {}
 
 
-def needs_remote_code(cfg: dict) -> bool:
-    """True if the checkpoint relies on custom modeling code not built into transformers."""
-    if not cfg.get("auto_map"):
-        return False
+def _is_builtin_type(model_type) -> bool:
     try:
         from transformers.models.auto.configuration_auto import CONFIG_MAPPING
-        return cfg.get("model_type") not in CONFIG_MAPPING
+        return model_type in CONFIG_MAPPING
     except Exception:
-        return True
+        return False
+
+
+def needs_remote_code(cfg: dict) -> bool:
+    """True only if the checkpoint ships custom modeling code for an architecture Transformers lacks.
+
+    A config that names a built-in ``model_type`` never needs it even when it carries an ``auto_map``:
+    with trust_remote_code on, Transformers would prefer the repo's own .py over its built-in class, so
+    the provider loads such models with trust_remote_code=False and the built-in class.
+    """
+    if not cfg.get("auto_map"):
+        return False
+    return not _is_builtin_type(cfg.get("model_type"))
+
+
+def trust_key(model: str, revision: str = "") -> str:
+    """Identity under which a per-model custom-code opt-in is remembered (repo id or folder, plus revision)."""
+    return f"{model}@{revision or ''}"
+
+
+def is_trusted(trusted: "list[str] | tuple[str, ...]", model: str, revision: str = "") -> bool:
+    return trust_key(model, revision) in set(trusted or ())
 
 
 def is_cached_or_local(model: str) -> bool:
@@ -92,19 +118,26 @@ class TransformersVLM(Provider):
                                  "Use the Download button first (the size is shown before anything is fetched).")
 
         cfg = read_local_config(model_id)
-        trust = bool(self.spec.opt("trust_remote_code", False))
-        if cfg and needs_remote_code(cfg) and not trust:
+        # Custom code runs only for this model, only if it really needs it, and only on an explicit
+        # per-model opt-in (made in the UI and remembered by repo id / folder and revision).
+        wants_custom = needs_remote_code(cfg)
+        trust = wants_custom and bool(self.spec.opt("trust_remote_code", False))
+        if wants_custom and not trust:
             raise InferenceError(
                 f"'{self.display_name}' uses custom code ({cfg.get('model_type', 'unknown type')}) that "
                 "isn't built into Transformers.",
-                "Only if you trust its source, enable 'Allow custom model code' in the model options.")
+                "Only if you trust its source, tick 'Allow this model to run its own code' in the model options "
+                "(this runs Python files from that model's folder or repo).")
 
         self.device = hardware.resolve_device(self.spec.opt("device", "auto"))
         self.dtype = hardware.resolve_dtype(self.device, self.spec.opt("dtype", "auto"))
         hardware.configure_torch_backends(self.device)
         report(f"Loading {self.display_name} on {self.device.label} ({str(self.dtype).replace('torch.', '')})…")
 
-        common = {"trust_remote_code": trust}
+        common = {"trust_remote_code": trust}   # False for every built-in architecture, whatever the repo ships
+        revision = self.spec.opt("revision") or ""
+        if revision and not Path(model_id).is_dir():
+            common["revision"] = revision
         local_only = {} if Path(model_id).is_dir() else {"local_files_only": not self.spec.opt("allow_download", False)}
 
         t0 = time.monotonic()

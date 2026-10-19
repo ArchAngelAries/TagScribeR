@@ -21,6 +21,7 @@ from core.secrets import ApiProfile, ApiProfileStore
 from inference import models as model_catalog
 from inference.base import CaptionRequest, GenerationParams, ProviderSpec
 from inference.manager import manager
+from inference.openai_api import key_exposure_warning, url_host
 from core.presets import PresetError, caption_presets
 from inference.prompts import DEFAULT_PRESET
 from inference.worker import (SAVE_APPEND, SAVE_NONE, SAVE_OVERWRITE, SAVE_PREPEND, SAVE_SKIP_EXISTING,
@@ -301,14 +302,19 @@ class CaptionTab(QWidget):
                                    "reduce if you run out of memory (TagScribeR retries one-by-one automatically).")
         self.chk_thinking = QCheckBox("Allow reasoning ('thinking') mode")
         self.chk_thinking.setToolTip("Qwen3.5+ models can reason before answering. Slower and rarely better for captions.")
-        self.chk_trust = QCheckBox("Allow custom model code")
-        self.chk_trust.setToolTip("Some models ship their own Python code. Only enable for sources you trust.")
+        self.chk_trust = QCheckBox("Allow this model to run its own code")
+        self.chk_trust.setToolTip("Only for the model selected above, and only needed for the few models that ship "
+                                  "their own Python files because Transformers has no built-in version of them. "
+                                  "It runs that code on your computer. Remembered per model (and revision).")
+        self.chk_trust.toggled.connect(self._on_trust_toggled)
+        self.lbl_trust = hint_label("")
         f.addRow("Device:", self.combo_device)
         f.addRow("Precision:", self.combo_dtype)
         f.addRow("Quantization:", self.combo_quant)
         f.addRow("Batch size:", self.spin_batch)
         f.addRow(self.chk_thinking)
         f.addRow(self.chk_trust)
+        f.addRow(self.lbl_trust)
         self.sec_adv_model.body_layout.addLayout(f)
         lay.addWidget(self.sec_adv_model)
         lay.addStretch()
@@ -338,6 +344,11 @@ class CaptionTab(QWidget):
         self.inp_api_key = QLineEdit()
         self.inp_api_key.setEchoMode(QLineEdit.Password)
         self.inp_api_key.setPlaceholderText("not needed for local servers")
+        self._key_host = ""      # host the key in the field was entered for
+        self.inp_api_url.textEdited.connect(self._on_api_url_edited)
+        self.inp_api_key.textEdited.connect(self._on_api_key_edited)
+        self.lbl_api_warn = hint_label("")
+        self.lbl_api_warn.setStyleSheet("color: #e17055;")
         model_row = QHBoxLayout()
         self.inp_api_model = QComboBox()
         self.inp_api_model.setEditable(True)
@@ -355,6 +366,7 @@ class CaptionTab(QWidget):
         form.addRow("Model:", model_row)
         form.addRow("Parallel:", self.spin_concurrency)
         lay.addLayout(form)
+        lay.addWidget(self.lbl_api_warn)
         lay.addWidget(hint_label("Works with LM Studio, Ollama, llama.cpp server, KoboldCpp, vLLM and cloud "
                                  "APIs. Use this for GGUF models (e.g. JoyCaption GGUF in LM Studio)."))
         lay.addStretch()
@@ -387,7 +399,6 @@ class CaptionTab(QWidget):
         self.spin_batch.setValue(c.get("local.batch_size", 1))
         self.spin_concurrency.setValue(c.get("api.concurrency", 1))
         self.chk_thinking.setChecked(c.get("local.thinking", False))
-        self.chk_trust.setChecked(c.get("local.trust_remote_code", False))
         i = self.combo_save.findData(c.get("caption.save_mode", SAVE_OVERWRITE))
         self.combo_save.setCurrentIndex(max(0, i))
         for combo, key in ((self.combo_dtype, "local.dtype"), (self.combo_quant, "local.quantization")):
@@ -419,7 +430,6 @@ class CaptionTab(QWidget):
             "local.quantization": self.combo_quant.currentData(),
             "local.device": self.combo_device.currentData() or "auto",
             "local.thinking": self.chk_thinking.isChecked(),
-            "local.trust_remote_code": self.chk_trust.isChecked(),
             "api.concurrency": self.spin_concurrency.value(),
         })
 
@@ -473,15 +483,17 @@ class CaptionTab(QWidget):
         self.combo_model.model().item(self.combo_model.count() - 1).setEnabled(False)
         for c in model_catalog.CATALOG:
             local = model_catalog.catalog_local_path(c.repo_id)
-            cached = local is None and model_catalog.hf_fully_cached(c.repo_id)
+            partial = model_catalog.catalog_partial_path(c.repo_id) if local is None else None
+            cached = local is None and partial is None and model_catalog.hf_fully_cached(c.repo_id)
             if local is not None and str(local) in self._entries:
                 self._entries[str(local)]["catalog"] = c
                 continue
             target = str(local) if local else c.repo_id
             mark = icons.icon("installed" if (local or cached) else "cloud")
-            self.combo_model.addItem(mark, f"{c.label}  ({c.approx_gb:.0f} GB)", target)
+            incomplete = "  - incomplete, resume download" if partial else ""
+            self.combo_model.addItem(mark, f"{c.label}  ({c.approx_gb:.0f} GB){incomplete}", target)
             self._entries[target] = {"path": target, "gb": c.approx_gb, "notes": c.notes, "catalog": c,
-                                     "downloaded": bool(local or cached)}
+                                     "downloaded": bool(local or cached), "partial": bool(partial)}
         self.combo_model.blockSignals(False)
         idx = self.combo_model.findData(last) if last else -1
         if idx < 0:
@@ -502,7 +514,8 @@ class CaptionTab(QWidget):
             return
         is_remote = not Path(e["path"]).is_dir() and not e.get("downloaded", False)
         self.btn_download.setEnabled(is_remote)
-        self.btn_download.setText("Download" if is_remote else "Available")
+        self.btn_download.setText(("Download (resume)" if e.get("partial") else "Download") if is_remote
+                                  else "Available")
         icons.set(self.btn_download, "download" if is_remote else "installed")
         vram = ""
         try:
@@ -513,8 +526,60 @@ class CaptionTab(QWidget):
                 vram = "  ✓ fits your GPU" if fits else "  ⚠ likely too large for your GPU in bf16"
         except Exception:
             pass
-        self.lbl_model_info.setText((e["notes"] or "") + vram)
-        self.btn_model_defaults.setEnabled(e.get("catalog") is not None)
+        cat = e.get("catalog")
+        extra = ""
+        if e.get("partial"):
+            extra += "  Download was interrupted: click Download (resume) to finish it."
+        if cat is not None and cat.gated and is_remote:
+            extra += (f"  Gated model: accept the licence at https://huggingface.co/{cat.repo_id} and log in "
+                      "('hf auth login' or the HF_TOKEN variable) before downloading.")
+        self.lbl_model_info.setText((e["notes"] or "") + vram + extra)
+        self.btn_model_defaults.setEnabled(cat is not None)
+        self._refresh_trust(e)
+
+    def _trust_target(self, e: dict | None) -> tuple[str, str]:
+        """(model id, revision) under which this entry's custom-code opt-in is remembered."""
+        if not e:
+            return "", ""
+        cat = e.get("catalog")
+        return e["path"], (cat.revision if cat is not None else "")
+
+    def _refresh_trust(self, e: dict | None = None):
+        """The custom-code box applies to the selected model only, and only if it really needs custom code."""
+        from inference.transformers_vlm import is_trusted, needs_remote_code, read_local_config
+        e = e if e is not None else self._current_entry()
+        model, rev = self._trust_target(e)
+        needs = bool(model) and needs_remote_code(read_local_config(model))
+        self.chk_trust.blockSignals(True)
+        self.chk_trust.setEnabled(needs)
+        self.chk_trust.setChecked(needs and is_trusted(self.cfg.get("local.trusted_models"), model, rev))
+        self.chk_trust.blockSignals(False)
+        if needs:
+            self.lbl_trust.setText("This model ships its own Python code. Allow it only if you trust its source: "
+                                   "the code runs on your computer when the model loads.")
+        else:
+            self.lbl_trust.setText("Not needed for this model (it uses a built-in Transformers architecture; any "
+                                   "code the repo ships is ignored).")
+
+    def _on_trust_toggled(self, on: bool):
+        from inference.transformers_vlm import trust_key
+        e = self._current_entry()
+        model, rev = self._trust_target(e)
+        if not model:
+            return
+        if on and not confirm(self, "Run this model's own code?",
+                              f"'{Path(model).name or model}' contains Python code that will run on your computer "
+                              "with your permissions when the model loads.\n\nOnly continue if you trust where this "
+                              "model came from. The choice applies to this model only.", destructive=True):
+            self.chk_trust.blockSignals(True)
+            self.chk_trust.setChecked(False)
+            self.chk_trust.blockSignals(False)
+            return
+        key = trust_key(model, rev)
+        trusted = [t for t in self.cfg.get("local.trusted_models") if t != key]
+        if on:
+            trusted.append(key)
+        self.cfg.set("local.trusted_models", trusted)
 
     def apply_model_defaults(self):
         e = self._current_entry()
@@ -542,15 +607,18 @@ class CaptionTab(QWidget):
         e = self._current_entry()
         if not e or not e.get("catalog"):
             return
-        repo = e["catalog"].repo_id
+        cat = e["catalog"]
+        repo = cat.repo_id
         self.btn_download.setEnabled(False)
         self.btn_download.setText("Checking size…")
 
         def on_size(size):
             size_txt = f"{size / 2**30:.1f} GB" if size else f"about {e['gb']:.0f} GB"
-            target = paths.DEFAULT_MODELS_DIR / repo.split("/")[-1]
+            target = (model_catalog.catalog_partial_path(repo) if e.get("partial") else None) or \
+                paths.DEFAULT_MODELS_DIR / repo.split("/")[-1]      # resume where the partial download is
+            verb = "Resume the download of" if e.get("partial") else "Download"
             if not confirm(self, "Download model",
-                           f"Download {e['catalog'].label} ({size_txt}) from Hugging Face into\n{target}?"):
+                           f"{verb} {e['catalog'].label} ({size_txt}) from Hugging Face into\n{target}?"):
                 self._on_model_changed()
                 return
             self.btn_download.setText("Downloading…")
@@ -564,13 +632,18 @@ class CaptionTab(QWidget):
                 self.refresh_models()
 
             def failed(err):
-                self.log(f"❌ Download failed: {err}")
-                self.set_status("Download failed — partial files are resumed next time")
-                self._on_model_changed()
+                reason = model_catalog.describe_download_error(err, cat)
+                self.log(f"❌ Download failed: {reason}")
+                self.set_status("Download failed. Partial files are resumed next time (use Download (resume)).")
+                if reason != str(err):
+                    QMessageBox.warning(self, "Download failed", reason)
+                self.refresh_models()
 
-            run_in_background(lambda: model_catalog.download_model(repo, target), done, failed)
+            run_in_background(lambda: model_catalog.download_model(repo, target, revision=cat.revision,
+                                                                   remote_code=cat.remote_code), done, failed)
 
-        run_in_background(lambda: model_catalog.remote_size_bytes(repo), on_size, lambda _: on_size(None))
+        run_in_background(lambda: model_catalog.remote_size_bytes(repo, cat.revision), on_size,
+                          lambda _: on_size(None))
 
     def force_cleanup(self):
         if manager().unload_all():
@@ -607,8 +680,29 @@ class CaptionTab(QWidget):
         if p:
             self.inp_api_url.setText(p.base_url)
             self.inp_api_key.setText(p.api_key)
+            self._key_host = url_host(p.base_url) if p.api_key else ""
             self.inp_api_model.setCurrentText(p.model)
             self.cfg.set("api.last_profile", p.name)
+            self._update_api_warning()
+
+    def _on_api_key_edited(self, _text=""):
+        self._key_host = url_host(self.inp_api_url.text())
+        self._update_api_warning()
+
+    def _on_api_url_edited(self, _text=""):
+        """A key is only ever sent to the host it was entered for: changing the host clears it."""
+        host = url_host(self.inp_api_url.text())
+        if self.inp_api_key.text() and not self._key_host and host:
+            self._key_host = host                  # a key typed before any address belongs to the first one
+        elif self.inp_api_key.text() and self._key_host and host != self._key_host:
+            self.inp_api_key.clear()
+            self._key_host = ""
+            self.set_status("The API key was cleared because the server address changed. Enter the key again "
+                            "if the new server needs one.")
+        self._update_api_warning()
+
+    def _update_api_warning(self):
+        self.lbl_api_warn.setText(key_exposure_warning(self.inp_api_url.text(), self.inp_api_key.text()))
 
     def save_api_preset(self):
         current = self.combo_presets.currentText()
@@ -616,9 +710,11 @@ class CaptionTab(QWidget):
         name, ok = QInputDialog.getText(self, "Save API profile", "Profile name:", text=default)
         if not ok or not name.strip():
             return
+        old = self.profiles.profiles.get(name.strip())   # keep its timeout / retries when re-saving
+        extra = {"timeout": old.timeout, "max_retries": old.max_retries} if old else {}
         self.profiles.upsert(ApiProfile(name=name.strip(), base_url=self.inp_api_url.text().strip(),
                                         model=self.inp_api_model.currentText().strip(),
-                                        api_key=self.inp_api_key.text()))
+                                        api_key=self.inp_api_key.text(), **extra))
         self.reload_profiles()
         self.combo_presets.setCurrentText(name.strip())
 
@@ -867,14 +963,25 @@ class CaptionTab(QWidget):
                 "transformers", e["path"], device=self.combo_device.currentData() or "auto",
                 dtype=self.combo_dtype.currentData(), quantization=self.combo_quant.currentData(),
                 batch_size=self.spin_batch.value(), thinking=self.chk_thinking.isChecked(),
-                trust_remote_code=self.chk_trust.isChecked(), attention=self.cfg.get("local.attention"))
+                trust_remote_code=self.chk_trust.isChecked() and self.chk_trust.isEnabled(),
+                revision=(e["catalog"].revision if e.get("catalog") is not None else ""),
+                attention=self.cfg.get("local.attention"))
         url = self.inp_api_url.text().strip()
         model = self.inp_api_model.currentText().strip()
         if not url or not model:
             QMessageBox.information(self, "API settings", "Enter the server URL and model name.")
             return None
+        timeout, retries = self._api_limits(url)
         return ProviderSpec.make("openai", model, base_url=url, api_key=self.inp_api_key.text(),
-                                 concurrency=self.spin_concurrency.value(), timeout=180.0, max_retries=3)
+                                 concurrency=self.spin_concurrency.value(), timeout=timeout, max_retries=retries)
+
+    def _api_limits(self, url: str) -> tuple[float, int]:
+        """Timeout and retries from the selected profile (when the URL is still that profile's), else defaults."""
+        from inference.openai_api import DEFAULT_TIMEOUT, effective_retries
+        p = self.profiles.profiles.get(self.combo_presets.currentText())
+        if p is not None and p.base_url.strip() == url:
+            return float(p.timeout or DEFAULT_TIMEOUT), effective_retries(url, p.max_retries)
+        return DEFAULT_TIMEOUT, effective_retries(url, None)
 
     def run_process(self):
         if self.worker is not None:

@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
                 return
         worker.cancel_all()
         jobs.cancel_all()
-        manager().unload_all(blocking=True)
+        manager().unload_all(blocking=True, timeout=3.0)   # bounded: closing never freezes on a busy model
         self.memory_strip.shutdown()       # the sampling thread and its typeperf child must not outlive the window
         event.accept()
 

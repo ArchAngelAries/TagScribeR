@@ -327,7 +327,8 @@ stays pinned at the top, training is spilling into system memory and each step g
   [What's new](#-whats-new). If you still see it, please open an issue with a preview attached.
 - **The VRAM bar says "stats unavailable":** no reader works on this machine. On NVIDIA it uses NVML or `nvidia-smi`;
   on AMD Windows a system performance counter; on AMD Linux `amd-smi` or `rocm-smi`.
-- **A model says it needs custom code:** enable *Allow custom model code* in Model options, but only for sources you trust.
+- **A model says it needs custom code:** tick *Allow this model to run its own code* in Model options (it is enabled only
+  for models that need it, and remembered per model), but only for sources you trust.
 - **`install.bat` can't find Python 3.12:** install it from python.org (or `py install 3.12`) and run the installer again.
 
 Developer notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Run the tests with `venv\Scripts\python -m pytest`.

@@ -187,14 +187,10 @@ class BatchWorker(QObject):
                 if ok_images:
                     self.status.emit(f"Processing {ok_paths[0].name}"
                                      + (f" (+{len(ok_paths) - 1})" if len(ok_paths) > 1 else "") + "…")
-                    try:
-                        per_image = ([job.prompts.get(str(p), job.request.prompt) for p in ok_paths]
-                                     if job.prompts else None)
-                        results = provider.generate(ok_images, job.request, self._cancel, per_image)
-                    except Cancelled:
-                        raise
-                    except InferenceError as e:
-                        results = [e] * len(ok_images)
+                    per_image = ([job.prompts.get(str(p), job.request.prompt) for p in ok_paths]
+                                 if job.prompts else None)
+                    self.items_started.emit([str(p) for p in ok_paths])
+                    results = self._generate(provider, job, ok_images, per_image)
                 for p, res in zip(ok_paths, results):
                     if isinstance(res, Cancelled):
                         raise Cancelled()
@@ -204,6 +200,24 @@ class BatchWorker(QObject):
                     self._save(job, summary, p, res)
                 processed += len(paths)
                 self.progress.emit(processed, summary.total)
+
+    def _generate(self, provider, job: BatchJob, images: list, prompts: list[str] | None) -> list:
+        """provider.generate that can only fail the image(s) it was given, never the batch."""
+        try:
+            return list(provider.generate(images, job.request, self._cancel, prompts))
+        except Cancelled:
+            raise
+        except InferenceError as e:
+            return [e] * len(images)
+        except Exception as e:
+            log.exception("%s: unexpected error from the provider", job.title)
+            if len(images) > 1:
+                # Find the offending image: run them one at a time, each guarded the same way.
+                out: list = []
+                for i, img in enumerate(images):
+                    out.extend(self._generate(provider, job, [img], [prompts[i]] if prompts else None))
+                return out
+            return [InferenceError(f"Unexpected error: {type(e).__name__}: {e}")]
 
     def _fail(self, summary: JobSummary, path: Path, reason: str) -> None:
         summary.failed.append((str(path), reason))
@@ -297,8 +311,9 @@ def any_running() -> bool:
 
 
 def cancel_all(wait_ms: int = 15000) -> None:
-    """Cancel every job and wait for threads to finish (used on app exit)."""
+    """Cancel every job and wait (at most ``wait_ms`` in total) for threads to finish (used on app exit)."""
     for _t, w, *_ in list(_running):
         w.cancel()
+    deadline = time.monotonic() + wait_ms / 1000
     for t, *_ in list(_running):
-        t.wait(wait_ms)
+        t.wait(max(1, int((deadline - time.monotonic()) * 1000)))

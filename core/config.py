@@ -64,7 +64,8 @@ DEFAULTS: dict[str, Any] = {
     "api.last_profile": "",
     "local.batch_size": 2,
     "local.thinking": False,
-    "local.trust_remote_code": False,
+    "local.trust_remote_code": False,   # legacy global switch: no longer read (trust is per model)
+    "local.trusted_models": [],         # per-model custom-code opt-ins: "<repo id or folder>@<revision or ''>"
     # Local inference
     "local.model_dirs": [],          # extra folders to scan for HF-format models
     "local.device": "auto",          # auto | cuda:N | cpu

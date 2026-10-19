@@ -16,7 +16,7 @@ import time
 from contextlib import contextmanager
 
 from core import hardware
-from inference.base import ProgressFn, Provider, ProviderSpec
+from inference.base import Cancelled, ProgressFn, Provider, ProviderSpec
 
 log = logging.getLogger(__name__)
 
@@ -97,12 +97,22 @@ class ModelManager:
         Called from worker threads only; jobs therefore run one at a time, which
         also avoids two jobs fighting over the same GPU.
         """
-        with self._lock:
+        # Wait for the lock in short slices so a queued job can still be aborted.
+        waited = False
+        while not self._lock.acquire(timeout=0.25):
+            if not waited:
+                report("Waiting for the running job to finish…")
+                waited = True
+            if cancel is not None and cancel.is_set():
+                raise Cancelled()
+        try:
             prov = self.acquire(spec, report, cancel)
             try:
                 yield prov
             finally:
                 self._last_used = time.monotonic()
+        finally:
+            self._lock.release()
 
     def busy(self) -> bool:
         if self._lock.acquire(blocking=False):
@@ -127,9 +137,15 @@ class ModelManager:
             return heavy[1].display_name
         return None
 
-    def unload_all(self, blocking: bool = False) -> bool:
-        """Free every model. Returns False (and does nothing) while a job is running."""
-        if not self._lock.acquire(blocking=blocking):
+    def unload_all(self, blocking: bool = False, timeout: float | None = None) -> bool:
+        """Free every model. Returns False (and does nothing) while a job is running.
+
+        ``blocking`` waits for the running job without limit; ``timeout`` (seconds) bounds that wait so
+        the UI thread never freezes (e.g. at window close: the process exit frees the model instead).
+        """
+        got = self._lock.acquire(timeout=timeout) if blocking and timeout is not None else \
+            self._lock.acquire(blocking=blocking)
+        if not got:
             return False
         try:
             self._unload_heavy()

@@ -26,8 +26,8 @@ class ApiProfile:
     base_url: str
     model: str
     api_key: str = ""
-    timeout: float = 120.0
-    max_retries: int = 3
+    timeout: float = 180.0
+    max_retries: int | None = None   # None = automatic: none for local servers, a couple for cloud APIs
 
 
 def _keyring():
@@ -90,9 +90,14 @@ class ApiProfileStore:
             if not isinstance(d, dict):
                 continue
             key = get_secret(f"api:{name}") or d.get("api_key", "")
+            timeout, retries = d.get("timeout"), d.get("max_retries")
+            if (timeout, retries) in ((120.0, 3), (120, 3)):
+                # the old defaults every earlier profile file holds (no UI ever set them): automatic now
+                timeout, retries = None, None
             self.profiles[name] = ApiProfile(
                 name=name, base_url=d.get("base_url", ""), model=d.get("model", d.get("model_name", "")),
-                api_key=key, timeout=float(d.get("timeout", 120.0)), max_retries=int(d.get("max_retries", 3)),
+                api_key=key, timeout=float(timeout if timeout is not None else 180.0),
+                max_retries=int(retries) if retries is not None else None,
             )
 
     def _import_legacy(self) -> dict:

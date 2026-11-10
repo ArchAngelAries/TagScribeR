@@ -5,7 +5,69 @@ Status on 2026-10-19. Development notes, not user documentation. Read `CLAUDE.md
 This file is the ONE tracked roadmap: the Fizgig port, TagScribeR's own fixes and improvements, the longer-term
 roadmap, and the documentation ledger. Update it in the same commit as the work it describes.
 
-## Now (2026-10-19): Fizgig v8.7.1, fixes first
+## Now (2026-11-09): Fizgig v9.4.0
+
+Fizgig moved 694 commits from v8.7.3 (`9162fb20`) to just past **v9.4.0 (commit `c11134a2`)**. Two read-only audits
+(2026-11-09) digest the delta; treat their "from the commit message only" claims as leads:
+
+- `audit/12_fizgig_v9_4_0_training_core.md`: the shared layer, the families TagScribeR has, the fine-tune, packaging.
+  Thirteen fixes TagScribeR shares (F1-F13), the move of every picture preset to the Muon optimizer, MOSS-Image's
+  newer recipes, and a 15-step port order.
+- `audit/13_fizgig_v9_4_0_new_families_and_tools.md`: new families (Z-Image Base beside Turbo, Fibo 2.0, Vimoo 1.0
+  Lite; Flux 3's renamed files), new tools (masked training and mask tools, training maps, detail crops, caption
+  tasks, start warnings), UI / UX lessons, and nine ways to pass Fizgig on dataset preparation.
+
+**Port source for new work: `c11134a2`.** What was already written against `9162fb20` (the full fine-tune,
+MOSS-Image) was finished and committed at that baseline, then moves to the target in the steps below.
+
+Done on `port/v8-wave2` (2026-11-09; unit-tested only unless said):
+
+- [x] Full fine-tune (stage 5): parameters, Train tab, presets, pause / resume from a checkpoint, tests on a tiny CPU
+  family. With F13 (a step's LR multiplier reaches the free-each-gradient steps). MOSS-Image's fine-tune is on.
+- [x] MOSS-Image at Fizgig 8.7.3: options, text cache batch, the SFT previews tick for another Base, help.
+- [x] Fixes from audit 12: F1 (a full-matrix LoKR plays at scale 1), F2's guard (Muon / Prodigy default Optimizer
+  Args never reach another optimizer; a preset whose optimizer is refused does not apply its args), F8 (Auto takes a
+  close NF4 fit before swapping INT8 blocks), onnxruntime telemetry off.
+- [x] Owner-reported: Ctrl+A in the image grid toggles; Ctrl+Shift+A deselects all.
+
+Lead's technical calls (the owner, 2026-10-19: decide these and record them):
+
+- F8 changes what Auto picks only when NF4 fits with 0.5 to 1.5 GB to spare (before: INT8 with swapped blocks). The
+  "far slower" figure is Fizgig's, on NVIDIA; on the Radeon it is unmeasured. An explicit precision is one click.
+- F12 (a Context LoRA that matches no layer stops the run) and F5 (previews keep their size on cards under 20 GB,
+  Krea 2 excepted) are Fizgig fixes: mirror both. The Turbo preview LoRA keeps the settled rule (a warning).
+- F9 / F10 (Adaptive LR's 3-epoch smoothing and learned ceiling; the loss watch's outlier fence and 0.25 floor)
+  change the owner's verified Krea 2 path: mirrored in one commit of their own, flagged for the next real run.
+- F6 / F7 (EXIF-rotated pictures read upright; transparent PNGs laid on white, Qwen Image 2.1 excepted) need one
+  cache revision for both; mirror, and say in the release notes that affected pictures re-encode once.
+- NVIDIA stack: follow Fizgig's tested pins (torch 2.15 / cu134, bitsandbytes 0.50.2, triton-windows per backend,
+  Python 3.11+) in one change of its own, documented as not run here. ROCm pins do not move.
+- The bf16 LoRA multiplies (9.2.0) are a silent numerics change: alone in a commit, after Muon, flagged for a run.
+
+Next, in order (sizes and upstream lines are in the audits):
+
+1. The rest of audit 12's step 1 and steps 2-3: F4 (resume with another optimizer), F5, F11, F12; F6 / F7 with the
+   cache revision; F3 (block swap with a block subset).
+2. Muon (BatchedMuon), Prodigy, Automagic v4; then the preset move per the owner's answer below.
+3. F9 / F10 and the learned ceiling. Fine-tune at the target (optimizer choice #312, `state_factor`, batch).
+4. MOSS-Image at the target (the `begin_epoch` hook for the clean-end schedule, the preview recipe, the Turbo Train
+   preset, Kromoss per the owner's answer).
+5. Mask awareness (mask files are never dataset images and never block Start; they follow their pictures;
+   `has:mask`), start warnings (trigger word, learning-rate band) and the per-run log.
+6. Z-Image Turbo and Base, then Flux 3 Image Klein (new file names), then Fibo 2.0; masked training and Make masks;
+   training maps and the viewer. The rest of stage 5 (DOP, Multi Concept, LoRA Isolation) after masked training if
+   the owner agrees (question below).
+
+Questions waiting for the owner (each audit ends with the full list and a recommendation):
+
+- Muon as the default optimizer of the Fizgig-named presets, keeping one AdamW 8-bit preset per family.
+- Kromoss: drop the offered download (Fizgig withdrew it), keep a hand-picked file loadable.
+- Family order: Z-Image Turbo and Base ahead of Flux 3; Fibo 2.0 (non-commercial weights) after it; Vimoo not now.
+- Masked training and mask tools ahead of DOP / Multi Concept / Isolation; masks edited in the Editor tab.
+- Uncaptioned pictures at Start: keep refusing (Fizgig now warns and lets the run start).
+- Batch size: adopt Fizgig's driver hooks for Qwen, MOSS-Image and H3 stills, keep TagScribeR's own elsewhere.
+
+## Earlier (2026-10-19): Fizgig v8.7.1, fixes first
 
 Fizgig moved 738 commits from v7.0.1 to **v8.7.1 (commit `5d31b2f`)**; the checkout in `.claude/fizgig-src` is at
 that commit. **New port source: `5d31b2f`.** Stages 1-5 below were ported against `1c8ec88`. Seven read-only

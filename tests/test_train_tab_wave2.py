@@ -247,7 +247,7 @@ def test_tab_polls_the_step_log_and_skips_an_unchanged_one(tab, tmp_path, monkey
     assert not calls                                              # same file: not read again
     _write_steps(rd, "demo_lora", 55, start=40)                   # the resumed run carries on its curve
     tab._refresh_loss(force=True)
-    assert calls and tab.chart.steps["steps"] == 55
+    assert tab.chart.steps["steps"] == 55          # (read by the incremental reader, not a full read_step_log)
     tab.stage_index = 0                                           # a cache stage: the file is not the run's yet
     tab.proc = QtCore.QProcess()
     calls.clear()

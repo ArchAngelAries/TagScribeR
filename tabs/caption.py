@@ -12,12 +12,12 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QMenu, QToolButton, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-                               QMessageBox, QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter,
+                               QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QSplitter,
                                QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
 from core import paths
 from core.config import settings
-from core.secrets import ApiProfile, ApiProfileStore
+from core.secrets import ApiProfile, ApiProfileStore, clean_key, key_problem, remember_secret
 from inference import models as model_catalog
 from inference.base import CaptionRequest, GenerationParams, ProviderSpec
 from inference.manager import manager
@@ -227,8 +227,10 @@ class CaptionTab(QWidget):
         rl.addWidget(self.lbl_status)
 
         self.sec_log = CollapsibleSection("Log")
-        self.log_box = QTextEdit()
+        # plain text only: server and model text is untrusted and must never be read as HTML (no remote images / links)
+        self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
+        self.log_box.setMaximumBlockCount(4000)
         self.log_box.setFixedHeight(150)
         self.sec_log.body_layout.addWidget(self.log_box)
         rl.addWidget(self.sec_log)
@@ -687,6 +689,10 @@ class CaptionTab(QWidget):
             self._update_api_warning()
 
     def _on_api_key_edited(self, _text=""):
+        text = self.inp_api_key.text()
+        if text != clean_key(text):                  # a pasted key often carries a space or a line break at its end
+            self.inp_api_key.setText(clean_key(text))
+        remember_secret(self.inp_api_key.text())     # so the log can never show it
         self._key_host = url_host(self.inp_api_url.text())
         self._update_api_warning()
 
@@ -703,7 +709,8 @@ class CaptionTab(QWidget):
         self._update_api_warning()
 
     def _update_api_warning(self):
-        self.lbl_api_warn.setText(key_exposure_warning(self.inp_api_url.text(), self.inp_api_key.text()))
+        key = self.inp_api_key.text()
+        self.lbl_api_warn.setText(key_problem(key) or key_exposure_warning(self.inp_api_url.text(), key))
 
     def save_api_preset(self):
         current = self.combo_presets.currentText()
@@ -711,11 +718,16 @@ class CaptionTab(QWidget):
         name, ok = QInputDialog.getText(self, "Save API profile", "Profile name:", text=default)
         if not ok or not name.strip():
             return
+        problem = key_problem(self.inp_api_key.text())
+        if problem:
+            self.set_status(problem)
+            self._update_api_warning()
+            return
         old = self.profiles.profiles.get(name.strip())   # keep its timeout / retries when re-saving
         extra = {"timeout": old.timeout, "max_retries": old.max_retries} if old else {}
         self.profiles.upsert(ApiProfile(name=name.strip(), base_url=self.inp_api_url.text().strip(),
                                         model=self.inp_api_model.currentText().strip(),
-                                        api_key=self.inp_api_key.text(), **extra))
+                                        api_key=clean_key(self.inp_api_key.text()), **extra))
         self.reload_profiles()
         self.combo_presets.setCurrentText(name.strip())
 
@@ -726,7 +738,11 @@ class CaptionTab(QWidget):
             self.reload_profiles()
 
     def fetch_api_models(self):
-        url, key = self.inp_api_url.text().strip(), self.inp_api_key.text() or "not-needed"
+        problem = key_problem(self.inp_api_key.text())
+        if problem:
+            self.set_status(problem)
+            return
+        url, key = self.inp_api_url.text().strip(), clean_key(self.inp_api_key.text()) or "not-needed"
         self.btn_fetch_models.setEnabled(False)
 
         def fetch():
@@ -833,14 +849,16 @@ class CaptionTab(QWidget):
         btns.accepted.connect(dlg.accept)
         btns.rejected.connect(dlg.reject)
         form.addRow(btns)
-        if not dlg.exec():
+        accepted = bool(dlg.exec())
+        name, with_generation = name_edit.text().strip(), chk_gen.isChecked()
+        dlg.deleteLater()                       # built per use: never kept alive under the tab
+        if not accepted:
             return
-        name = name_edit.text().strip()
         if self.presets.get(name) is not None and not self.presets.is_builtin(name) and name != current:
             if not confirm(self, "Replace preset?", f"A preset named '{name}' already exists. Replace it?"):
                 return
         try:
-            saved = self.presets.save(name, self._current_preset_data(chk_gen.isChecked()))
+            saved = self.presets.save(name, self._current_preset_data(with_generation))
         except PresetError as e:
             QMessageBox.warning(self, "Save preset", str(e))
             return
@@ -972,8 +990,12 @@ class CaptionTab(QWidget):
         if not url or not model:
             QMessageBox.information(self, "API settings", "Enter the server URL and model name.")
             return None
+        problem = key_problem(self.inp_api_key.text())
+        if problem:
+            QMessageBox.information(self, "API settings", problem)
+            return None
         timeout, retries = self._api_limits(url)
-        return ProviderSpec.make("openai", model, base_url=url, api_key=self.inp_api_key.text(),
+        return ProviderSpec.make("openai", model, base_url=url, api_key=clean_key(self.inp_api_key.text()),
                                  concurrency=self.spin_concurrency.value(), timeout=timeout, max_retries=retries)
 
     def _api_limits(self, url: str) -> tuple[float, int]:
@@ -1197,5 +1219,5 @@ class CaptionTab(QWidget):
         self.lbl_status.setText(msg)
 
     def log(self, msg: str):
-        self.log_box.append(msg)
+        self.log_box.appendPlainText(str(msg))
 

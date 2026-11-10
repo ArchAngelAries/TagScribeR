@@ -127,8 +127,9 @@ def thumbnail_data_uri(image_path: Optional[str], max_size: int = 512, quality: 
         with Image.open(image_path) as im:
             im = im.convert("RGB")
             im.thumbnail((max_size, max_size))
+            fresh = Image.frombytes("RGB", im.size, im.tobytes())   # no info: no JPEG comment, EXIF or ICC of the source
             buf = BytesIO()
-            im.save(buf, format="JPEG", quality=quality)
+            fresh.save(buf, format="JPEG", quality=quality)
         return f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
     except Exception:
         logger.warning(f"could not build metadata thumbnail from {image_path}", exc_info=True)

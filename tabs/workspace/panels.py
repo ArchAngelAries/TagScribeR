@@ -553,6 +553,7 @@ class TagStatsPanel(QWidget):
             menu.addSeparator()
         menu.addAction("Show only tags used once", lambda: self._show_rare())
         menu.exec(self.table.viewport().mapToGlobal(pos))
+        menu.deleteLater()
 
     def _rename(self, tag: str) -> None:
         from PySide6.QtWidgets import QInputDialog

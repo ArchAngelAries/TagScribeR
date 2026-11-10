@@ -79,6 +79,22 @@ def take_request(output_dir, what):
     return True
 
 
+def _parse_row(line):
+    try:
+        d = json.loads(line)
+        return [int(d["s"]), int(d["e"]), float(d["l"]), d.get("lr")]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _summary(rows, epochs, max_points):
+    k = max(1, -(-len(rows) // max_points))
+    pts = rows[::k]
+    if rows and pts[-1] is not rows[-1]:
+        pts.append(rows[-1])
+    return {"points": pts, "epochs": [list(e) for e in epochs], "steps": len(rows), "stride": k}
+
+
 def read(path, max_points=4000):
     """The graph's data: {"points": [[step, epoch, loss, lr], ...] (every k-th when longer than max_points, the last
     always kept), "epochs": [[epoch, first step], ...], "steps": lines read, "stride": k} or None when there is no
@@ -87,11 +103,9 @@ def read(path, max_points=4000):
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:
-                try:
-                    d = json.loads(line)
-                    rows.append([int(d["s"]), int(d["e"]), float(d["l"]), d.get("lr")])
-                except (ValueError, KeyError, TypeError):
-                    continue
+                r = _parse_row(line)
+                if r is not None:
+                    rows.append(r)
     except OSError:
         return None
     epochs, last = [], None
@@ -99,8 +113,50 @@ def read(path, max_points=4000):
         if r[1] != last:
             epochs.append([r[1], r[0]])
             last = r[1]
-    k = max(1, -(-len(rows) // max_points))
-    pts = rows[::k]
-    if rows and pts[-1] is not rows[-1]:
-        pts.append(rows[-1])
-    return {"points": pts, "epochs": epochs, "steps": len(rows), "stride": k}
+    return _summary(rows, epochs, max_points)
+
+
+class StepReader:
+    """`read`, but remembering how far it got: each `poll()` parses only the complete lines added since the last one
+    (a partial last line waits for the next poll), and starts again from the top when the file shrank or was replaced.
+    The result is what `read` returns for the same file."""
+
+    def __init__(self, path, max_points=4000):
+        self.path, self.max_points = path, max_points
+        self._reset()
+
+    def _reset(self):
+        self._offset, self._rows, self._epochs, self._last, self._head = 0, [], [], None, b""
+        self.parsed = 0                       # lines parsed over this reader's life (tests watch it)
+
+    def poll(self):
+        try:
+            with open(self.path, "rb") as f:
+                size = os.fstat(f.fileno()).st_size
+                head = f.read(64)
+                if size < self._offset or (self._offset and not head.startswith(self._head[:len(head)])) \
+                        or (self._offset and len(head) < len(self._head)):
+                    self._reset()                 # shrank or replaced: from the start
+                    f.seek(0)
+                    head = f.read(64)
+                if not self._offset:
+                    self._head = head
+                f.seek(self._offset)
+                data = f.read()
+        except OSError:
+            self._reset()
+            return None
+        cut = data.rfind(b"\n") + 1               # complete lines only
+        for raw in data[:cut].split(b"\n"):
+            if not raw.strip():
+                continue
+            self.parsed += 1
+            r = _parse_row(raw.decode("utf-8", errors="replace"))
+            if r is None:
+                continue
+            self._rows.append(r)
+            if r[1] != self._last:
+                self._epochs.append([r[1], r[0]])
+                self._last = r[1]
+        self._offset += cut
+        return _summary(self._rows, self._epochs, self.max_points)

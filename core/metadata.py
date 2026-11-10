@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import struct
 import tempfile
 import zlib
@@ -21,6 +22,8 @@ from pathlib import Path
 from PIL import ExifTags, Image
 from PIL.TiffImagePlugin import IFDRational
 
+from core.caption_io import apply_mode
+
 # EXIF tag ids
 ORIENTATION, MAKE, MODEL, SOFTWARE, DATETIME, ARTIST, COPYRIGHT, DESCRIPTION = (
     0x0112, 0x010F, 0x0110, 0x0131, 0x0132, 0x013B, 0x8298, 0x010E)
@@ -28,9 +31,15 @@ USER_COMMENT, DT_ORIGINAL, DT_DIGITIZED = 0x9286, 0x9003, 0x9004
 OWNER_NAME, BODY_SERIAL, LENS_SERIAL, LENS_MAKE, LENS_MODEL = 0xA430, 0xA431, 0xA435, 0xA433, 0xA434
 GPS_IFD, EXIF_IFD = 0x8825, 0x8769
 HOST_COMPUTER, UNIQUE_ID = 0x013C, 0xA420
+MAKER_NOTE = 0x927C
+OFFSET_TIME, OFFSET_TIME_ORIGINAL, OFFSET_TIME_DIGITIZED = 0x9010, 0x9011, 0x9012
+SUBSEC_TIME, SUBSEC_ORIGINAL, SUBSEC_DIGITIZED = 0x9290, 0x9291, 0x9292
+CAMERA_SERIAL, UNIQUE_CAMERA_MODEL = 0xC62F, 0xC614
 
-DEVICE_TAGS = {MAKE, MODEL, OWNER_NAME, BODY_SERIAL, LENS_SERIAL, LENS_MAKE, LENS_MODEL, HOST_COMPUTER, UNIQUE_ID}
-TIME_TAGS = {DATETIME, DT_ORIGINAL, DT_DIGITIZED}
+DEVICE_TAGS = {MAKE, MODEL, OWNER_NAME, BODY_SERIAL, LENS_SERIAL, LENS_MAKE, LENS_MODEL, HOST_COMPUTER, UNIQUE_ID,
+               CAMERA_SERIAL, UNIQUE_CAMERA_MODEL}
+TIME_TAGS = {DATETIME, DT_ORIGINAL, DT_DIGITIZED, SUBSEC_TIME, SUBSEC_ORIGINAL, SUBSEC_DIGITIZED}
+OFFSET_TAGS = {OFFSET_TIME, OFFSET_TIME_ORIGINAL, OFFSET_TIME_DIGITIZED}   # time zone: a coarse location
 
 # PNG text keys written by generators / tools
 AI_TEXT_KEYS = {"parameters", "prompt", "workflow", "invokeai_metadata", "invokeai_graph", "sd-metadata",
@@ -43,7 +52,17 @@ SOI = bytes([0xFF, 0xD8])
 EXIF_HEADER = b"Exif" + NUL + NUL
 ICC_HEADER = b"ICC_PROFILE" + NUL
 XMP_NS = b"http://ns.adobe.com/xap/1.0/"
+XMP_EXT_NS = b"http://ns.adobe.com/xmp/extension/"
 PNG_SIG = bytes([0x89]) + b"PNG\r\n" + bytes([0x1A]) + b"\n"
+TRAILER = -1          # pseudo marker: the bytes after a JPEG's end-of-image marker
+
+# What can carry a place or a person inside an XMP packet (used when XMP is otherwise kept).
+_XMP_PLACE = re.compile(rb"(?i)(GPS(Latitude|Longitude|Altitude|Position)|photoshop:(City|State|Country)\b|"
+                        rb"Iptc4xmp\w+:(Location\w*|CountryCode|CountryName|City|ProvinceState|Sublocation)|"
+                        rb"OffsetTime)")
+_XMP_PERSON = re.compile(rb"(?i)(tiff:(Make|Model)\b|aux:(SerialNumber|LensSerialNumber|OwnerName)|"
+                         rb"exifEX:(BodySerialNumber|CameraOwnerName|LensSerialNumber)|dc:creator|photoshop:Credit|"
+                         rb"CreatorContactInfo|xmpRights:Owner|CiEmail\w*|CiAdr\w*|Iptc4xmp\w+:Creator\w*)")
 
 
 # ---------------------------------------------------------------------------- report
@@ -52,6 +71,9 @@ class Finding:
     level: str   # "high" | "medium" | "low"
     label: str
     detail: str
+    # Which Remove options clear it, joined with "+": location, device, ai, xmp, time, software, author.
+    # "unchecked" means the file could not be examined. Used to verify a clean.
+    category: str = ""
 
 
 @dataclass
@@ -66,6 +88,8 @@ class MetaReport:
     xmp: str = ""
     has_iptc: bool = False
     error: str = ""
+    scan: dict = field(default_factory=dict)    # container-level facts (see scan_container)
+    scan_error: str = ""                        # set when the file's structure could not be read
 
     def rows(self) -> list[tuple[str, str, str]]:
         """(display key, value, edit id) rows; edit id is 'exif:<tag>' / 'text:<key>' when editable, else ''."""
@@ -136,37 +160,108 @@ def read_metadata(path: str | os.PathLike) -> MetaReport:
                 r.text["comment"] = c.decode("utf-8", "replace") if isinstance(c, bytes) else str(c)
     except Exception as e:
         r.error = str(e)
+    try:
+        r.scan = scan_container(path)
+    except Exception as e:
+        r.scan_error = str(e) or type(e).__name__
     return r
 
 
 def privacy_findings(r: MetaReport) -> list[Finding]:
+    """Everything the cleaner can remove, as found in the file on disk. When the structure cannot be read, the
+    result says so ("could not be checked"); it is never empty for a file that was not understood."""
     f: list[Finding] = []
+    if r.error or r.scan_error:
+        f.append(Finding("medium", "Could not be checked",
+                         "This file could not be read completely (" + (r.scan_error or r.error) + "). It may still "
+                         "hold location, device or personal data.", "unchecked"))
+    sc = r.scan
     if r.gps:
-        f.append(Finding("high", "GPS location", "The exact place the picture was taken can be read from this file."))
-    serials = [ExifTags.TAGS.get(t, hex(t)) for t in (BODY_SERIAL, LENS_SERIAL, UNIQUE_ID) if t in r.exif]
+        f.append(Finding("high", "GPS location", "The exact place the picture was taken can be read from this file.",
+                         "location"))
+    if any(t in r.exif for t in OFFSET_TAGS):
+        f.append(Finding("medium", "Time zone offset", "The UTC offset the picture was taken in hints at the region.",
+                         "location"))
+    if sc.get("iptc_place"):
+        f.append(Finding("high", "IPTC place names", "City, region, country or location names are stored in the "
+                         "picture's IPTC block.", "location+device"))
+    if sc.get("iptc_person"):
+        f.append(Finding("high", "IPTC by-line / contact", "Photographer, credit or contact details are stored in "
+                         "the picture's IPTC block.", "location+device"))
+    if sc.get("iptc") and not (sc.get("iptc_place") or sc.get("iptc_person")):
+        f.append(Finding("medium", "IPTC / Photoshop data", "A Photoshop / IPTC block is present.",
+                         "location+device"))
+    serials = [ExifTags.TAGS.get(t, hex(t)) for t in (BODY_SERIAL, LENS_SERIAL, UNIQUE_ID, CAMERA_SERIAL)
+               if t in r.exif]
     if serials:
-        f.append(Finding("high", "Device serial numbers", ", ".join(serials) + " can link images to one device."))
+        f.append(Finding("high", "Device serial numbers", ", ".join(serials) + " can link images to one device.",
+                         "device"))
     if OWNER_NAME in r.exif or HOST_COMPUTER in r.exif:
-        f.append(Finding("high", "Owner / computer name", _val(r.exif.get(OWNER_NAME) or r.exif.get(HOST_COMPUTER))))
+        f.append(Finding("high", "Owner / computer name", _val(r.exif.get(OWNER_NAME) or r.exif.get(HOST_COMPUTER)),
+                         "device"))
+    if MAKER_NOTE in r.exif:
+        f.append(Finding("medium", "Camera-internal data (MakerNote)", "Vendor data that can hold serial numbers, "
+                         "an owner name or settings.", "location+device"))
+    if sc.get("thumbnail") or sc.get("mpf"):
+        f.append(Finding("medium", "Embedded preview picture", "A smaller copy of the picture is stored inside the "
+                         "file; it can show the uncropped original.", "location+device"))
+    if sc.get("c2pa"):
+        f.append(Finding("medium", "Content credentials (C2PA / JUMBF)", "Signer, tool and edit-history records "
+                         "that can name a person or an account.", "location+device+ai"))
     ai_keys = [k for k in r.text if k.lower() in AI_TEXT_KEYS]
     if ai_keys or (USER_COMMENT in r.exif and "Steps:" in _val(r.exif[USER_COMMENT])):
         f.append(Finding("medium", "AI generation data", "Prompts, models, seeds or a full ComfyUI workflow are "
-                         "embedded (" + ", ".join(ai_keys or ["UserComment"]) + ")."))
-    if r.has_xmp:
+                         "embedded (" + ", ".join(ai_keys or ["UserComment"]) + ").", "ai"))
+    if sc.get("comment") and "comment" not in [k.lower() for k in ai_keys]:
+        f.append(Finding("medium", "Picture comment", "A free-text comment is embedded.", "ai+location+device"))
+    if r.has_xmp or sc.get("xmp"):
         detail = "Editing history and tool information."
         if "trainedAlgorithmicMedia" in r.xmp or "c2pa" in r.xmp.lower():
             detail += " Includes an AI/provenance marker."
-        f.append(Finding("medium", "XMP metadata", detail))
+        raw = b"".join(sc.get("xmp", [])) or r.xmp.encode("utf-8", "replace")
+        cats = ["xmp"] + (["location"] if _XMP_PLACE.search(raw) else []) + (["device"] if _XMP_PERSON.search(raw)
+                                                                           else [])
+        if len(cats) > 1:
+            detail += " Names a place or a person."
+        f.append(Finding("medium", "XMP metadata", detail, "+".join(cats)))
+    if sc.get("xmp_ext"):
+        f.append(Finding("medium", "Extended XMP", "The overflow part of the XMP data (large edit histories, "
+                         "previews) is stored in extra segments.", "xmp+location+device"))
+    if sc.get("unknown"):
+        f.append(Finding("medium", "Other embedded data blocks", "Vendor or unknown blocks: " +
+                         ", ".join(sorted(set(sc["unknown"]))[:8]) + ".", "location+device"))
+    if sc.get("text_other"):
+        f.append(Finding("medium", "Other embedded text", "Text fields (" + ", ".join(sorted(set(sc["text_other"]))[:6])
+                         + ") can hold any kind of personal data.", "location+device"))
+    if sc.get("trailer"):
+        f.append(Finding("high", "Data after the end of the picture", f"{sc['trailer']} extra byte(s) follow the "
+                         "picture (another picture, a video or vendor data).", "location+device+xmp+ai"))
     if MAKE in r.exif or MODEL in r.exif:
         f.append(Finding("low", "Camera / device model",
-                         f"{_val(r.exif.get(MAKE, ''))} {_val(r.exif.get(MODEL, ''))}".strip()))
-    if any(t in r.exif for t in TIME_TAGS):
-        f.append(Finding("low", "Timestamps", "When the image was created or edited."))
+                         f"{_val(r.exif.get(MAKE, ''))} {_val(r.exif.get(MODEL, ''))}".strip(), "device"))
+    if any(t in r.exif for t in TIME_TAGS) or sc.get("time_chunk") or "Creation Time" in r.text:
+        f.append(Finding("low", "Timestamps", "When the image was created or edited.", "time"))
     if SOFTWARE in r.exif or "Software" in r.text:
-        f.append(Finding("low", "Software", _val(r.exif.get(SOFTWARE) or r.text.get("Software"))))
-    if ARTIST in r.exif or COPYRIGHT in r.exif or "Author" in r.text:
-        f.append(Finding("low", "Author / copyright", "Names in the file (fine if intended)."))
+        f.append(Finding("low", "Software", _val(r.exif.get(SOFTWARE) or r.text.get("Software")), "software"))
+    if ARTIST in r.exif or COPYRIGHT in r.exif or any(k in r.text for k in ("Author", "Copyright")):
+        f.append(Finding("low", "Author / copyright", "Names in the file (fine if intended).", "author"))
     return f
+
+
+def enabled_categories(opts: "StripOptions") -> set[str]:
+    """The finding categories a clean with these options is meant to clear."""
+    if opts.everything:
+        return {"location", "device", "ai", "xmp", "time", "software", "author"}
+    return {n for n, on in (("location", opts.location), ("device", opts.device), ("ai", opts.ai_data),
+                            ("xmp", opts.xmp), ("time", opts.timestamps), ("software", opts.software)) if on}
+
+
+def leftovers(path: str | os.PathLike, opts: "StripOptions") -> list[Finding]:
+    """Re-read a cleaned file from disk: what is still in it that the chosen options should have removed, plus
+    anything that could not be checked."""
+    want = enabled_categories(opts)
+    return [f for f in privacy_findings(read_metadata(path))
+            if f.category == "unchecked" or want & set(f.category.split("+"))]
 
 
 # ---------------------------------------------------------------------------- prompts
@@ -272,10 +367,14 @@ def exif_ascii(value: str) -> str:
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Temp file next to the target, fsynced, the target's permission bits copied, then renamed over it."""
     fd, tmp = tempfile.mkstemp(prefix=".meta-", suffix=path.suffix, dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        apply_mode(path, tmp)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -303,7 +402,9 @@ def _filter_exif(exif_bytes: bytes | None, opts: StripOptions | None, author: Au
         else:
             drop = set()
             if opts.device:
-                drop |= DEVICE_TAGS
+                drop |= DEVICE_TAGS | {MAKER_NOTE}
+            if opts.location:
+                drop |= {MAKER_NOTE} | OFFSET_TAGS
             if opts.timestamps:
                 drop |= TIME_TAGS
             if opts.software:
@@ -336,21 +437,52 @@ def _filter_exif(exif_bytes: bytes | None, opts: StripOptions | None, author: Au
 
 # ---------------------------------------------------------------------------- JPEG
 def _jpeg_segments(data: bytes):
+    """(marker, bytes) pieces that join back to the file. A scan (start-of-scan header plus its entropy-coded data) is
+    one piece; the bytes after the end-of-image marker are one final piece with the pseudo marker TRAILER."""
     if data[:2] != SOI:
         raise ValueError("not a JPEG")
+    n = len(data)
     i = 2
-    while i < len(data):
+    while i < n:
         if data[i] != 0xFF:
             raise ValueError("corrupt JPEG marker stream")
+        if i + 1 >= n:
+            raise ValueError("truncated JPEG")
         marker = data[i + 1]
-        if marker == 0xDA:  # start of scan: the rest is image data
-            yield marker, data[i:]
+        if marker == 0xFF:                    # fill byte before a marker
+            i += 1
+            continue
+        if marker == 0xD9:                    # end of image: whatever follows is not part of the picture
+            yield marker, data[i:i + 2]
+            if i + 2 < n:
+                yield TRAILER, data[i + 2:]
             return
         if marker == 0x01 or 0xD0 <= marker <= 0xD8:
             yield marker, data[i:i + 2]
             i += 2
             continue
+        if i + 4 > n:
+            raise ValueError("truncated JPEG segment")
         length = struct.unpack(">H", data[i + 2:i + 4])[0]
+        if length < 2 or i + 2 + length > n:
+            raise ValueError("corrupt JPEG segment length")
+        if marker == 0xDA:                    # start of scan: header, then entropy-coded data up to the next marker
+            pos = i + 2 + length
+            while True:
+                j = data.find(b"\xff", pos)
+                if j < 0 or j + 1 >= n:
+                    j = n
+                    break
+                b = data[j + 1]
+                if b == 0 or 0xD0 <= b <= 0xD7:
+                    pos = j + 2
+                elif b == 0xFF:
+                    pos = j + 1
+                else:
+                    break
+            yield marker, data[i:j]
+            i = j
+            continue
         yield marker, data[i:i + 2 + length]
         i += 2 + length
 
@@ -386,34 +518,117 @@ def _assemble_jpeg(segs: list[tuple[int, bytes]], new_exif: bytes | None) -> byt
 
 def _rewrite_jpeg(data: bytes, opts: StripOptions | None, author: Authorship | None,
                   camera: "CameraData | None" = None) -> bytes:
+    """With ``opts``: an allow-list. A picture needs only its tables, frame and scans, the JFIF / Adobe headers and the
+    ICC profile; when a category that can carry a place or a person is removed, every other APPn block, comment and
+    trailing byte goes with it. EXIF is rebuilt from the tags that stay."""
     segs = list(_jpeg_segments(data))
     exif_src = next((seg[10:] for m, seg in segs if _is_exif_seg(m, seg)), None)
     new_exif = _filter_exif(exif_src, opts, author, camera)
     kept = []
     for marker, seg in segs:
         if opts is not None:
-            if marker == 0xE1 and XMP_NS in seg[:40] and (opts.xmp or opts.everything):
-                continue
-            if marker == 0xED and opts.everything:                       # Photoshop IRB / IPTC
-                continue
-            if marker == 0xFE and (opts.everything or opts.ai_data):     # comments often hold parameters
-                continue
-            if marker == 0xE2 and seg[4:16] == ICC_HEADER and opts.remove_icc:
+            seg = _jpeg_policy(marker, seg, opts)
+            if seg is None:
                 continue
         kept.append((marker, seg))
     return _assemble_jpeg(kept, new_exif)
 
 
+def _place_or_person(opts: StripOptions) -> bool:
+    return opts.everything or opts.location or opts.device
+
+
+def _xmp_goes(xmp: bytes, opts: StripOptions) -> bool:
+    """Does the cleaner remove this XMP packet? Yes when XMP is chosen, or when it names a place (Location chosen) or a
+    person / camera (Device chosen) even though XMP itself was left ticked off."""
+    return bool(opts.xmp or opts.everything or (opts.location and _XMP_PLACE.search(xmp))
+                or (opts.device and _XMP_PERSON.search(xmp)))
+
+
+def _jfif_no_thumbnail(seg: bytes) -> bytes:
+    if len(seg) > 18 and (seg[16] or seg[17]):
+        return seg[:2] + struct.pack(">H", 16) + seg[4:16] + bytes([0, 0])
+    return seg
+
+
+def _jpeg_policy(marker: int, seg: bytes, opts: StripOptions) -> bytes | None:
+    """The segment to keep (possibly rewritten) or None to drop it."""
+    po = _place_or_person(opts)
+    if marker == TRAILER:
+        return None if (po or opts.xmp or opts.ai_data) else seg
+    if marker == 0xE0:
+        if seg[4:9] == b"JFIF" + NUL:
+            return _jfif_no_thumbnail(seg) if po else seg
+        return None if po else seg
+    if marker == 0xE1:
+        if _is_exif_seg(marker, seg):
+            return seg                                              # replaced by the rebuilt EXIF
+        if seg[4:4 + len(XMP_NS)] == XMP_NS:
+            return None if _xmp_goes(seg[4 + len(XMP_NS):], opts) else seg
+        if seg[4:4 + len(XMP_EXT_NS)] == XMP_EXT_NS:
+            return None if (opts.xmp or po) else seg
+        return None if po else seg
+    if marker == 0xE2:
+        if seg[4:16] == ICC_HEADER:
+            return None if opts.remove_icc else seg
+        return None if po else seg                                  # MPF (embedded previews), FlashPix, vendor
+    if marker == 0xEE and seg[4:9] == b"Adobe":
+        return seg                                                  # tells decoders the colour transform
+    if marker == 0xEB:                                              # APP11: JUMBF / C2PA content credentials
+        return None if (po or opts.ai_data) else seg
+    if marker == 0xFE:                                              # comments often hold parameters
+        return None if (po or opts.ai_data) else seg
+    if 0xE0 <= marker <= 0xEF:                                      # Photoshop / IPTC and any unknown APPn
+        return None if po else seg
+    return seg
+
+
 # ---------------------------------------------------------------------------- PNG
-def _png_chunks(data: bytes):
+def _png_parse(data: bytes):
+    """([(type, raw chunk, body)], trailer). The list ends with IEND; ``trailer`` is whatever follows it (or the
+    unreadable rest of a damaged file)."""
     if not data.startswith(PNG_SIG):
         raise ValueError("not a PNG")
-    i = 8
-    while i < len(data):
+    chunks = []
+    i, n = 8, len(data)
+    while i < n:
+        if i + 12 > n:
+            break
         length = struct.unpack(">I", data[i:i + 4])[0]
+        if i + 12 + length > n:
+            break
         ctype = data[i + 4:i + 8]
-        yield ctype, data[i:i + 12 + length], data[i + 8:i + 8 + length]
+        chunks.append((ctype, data[i:i + 12 + length], data[i + 8:i + 8 + length]))
         i += 12 + length
+        if ctype == b"IEND":
+            break
+    return chunks, data[i:]
+
+
+def _png_chunks(data: bytes):
+    return iter(_png_parse(data)[0])
+
+
+# Chunks a PNG needs to look right (the rest of the ancillary ones are metadata).
+_PNG_KEEP = {b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS", b"gAMA", b"cHRM", b"sRGB", b"sBIT", b"bKGD", b"hIST",
+             b"pHYs", b"sPLT", b"acTL", b"fcTL", b"fdAT", b"cICP", b"mDCV", b"cLLI", b"mDCv", b"cLLi"}
+_PNG_KEEP_TEXT = {"Software", "Creation Time", "Author", "Copyright", "Description", "Title"}
+_PNG_XMP_KEY = "XML:com.adobe.xmp"
+
+
+def _png_text_value(ctype: bytes, body: bytes) -> bytes:
+    """The text of a tEXt / zTXt / iTXt chunk as raw bytes (empty if it cannot be decoded)."""
+    try:
+        key, rest = body.split(NUL, 1)
+        if ctype == b"tEXt":
+            return rest
+        if ctype == b"zTXt":
+            return zlib.decompressobj().decompress(rest[1:], 1 << 20)
+        flag = rest[0]
+        rest = rest[2:].split(NUL, 2)[2] if rest[2:].count(NUL) >= 2 else b""
+        return zlib.decompressobj().decompress(rest, 1 << 20) if flag else rest
+    except Exception:
+        return b""
 
 
 def _png_chunk(ctype: bytes, body: bytes) -> bytes:
@@ -431,11 +646,14 @@ def _png_text_key(body: bytes) -> str:
 
 def _rewrite_png(data: bytes, opts: StripOptions | None, author: Authorship | None,
                  camera: "CameraData | None" = None) -> bytes:
+    """With ``opts``: text chunks, time chunks, unknown ancillary chunks and bytes after IEND go when a category that can
+    carry a place or a person is removed; picture chunks (and the ICC profile unless asked) always stay."""
     out = [PNG_SIG]
-    chunks = list(_png_chunks(data))
+    chunks, trailer = _png_parse(data)
     exif_src = next((body for ct, _raw, body in chunks if ct == b"eXIf"), None)
     new_exif = _filter_exif(exif_src, opts, author, camera) if (exif_src or author or camera) else None
     author_keys = {k for k, f in AUTHOR_TEXT_KEYS.items() if author and getattr(author, f, "").strip()}
+    po = opts is not None and _place_or_person(opts)
     for ctype, raw, body in chunks:
         if ctype == b"eXIf":
             continue  # re-added below (filtered)
@@ -448,48 +666,56 @@ def _rewrite_png(data: bytes, opts: StripOptions | None, author: Authorship | No
                     continue
                 if opts.ai_data and key.lower() in AI_TEXT_KEYS:
                     continue
-                if opts.xmp and key == "XML:com.adobe.xmp":
+                if key == _PNG_XMP_KEY and _xmp_goes(_png_text_value(ctype, body), opts):
                     continue
                 if opts.software and key == "Software":
                     continue
                 if opts.timestamps and key == "Creation Time":
                     continue
-        if opts is not None:
-            if ctype == b"iCCP" and opts.remove_icc:
-                continue
-            if ctype == b"tIME" and (opts.everything or opts.timestamps):
-                continue
+                if po and key not in _PNG_KEEP_TEXT and key != _PNG_XMP_KEY:
+                    continue    # any other text field can hold a name, a place or a raw EXIF / IPTC copy
+        elif opts is not None:
+            if ctype == b"iCCP":
+                if opts.remove_icc:
+                    continue
+            elif ctype == b"tIME":
+                if opts.everything or opts.timestamps:
+                    continue
+            elif po and ctype not in _PNG_KEEP and ctype[:1].islower():
+                continue        # unknown ancillary chunk
         if ctype == b"IEND":
             if new_exif:
                 out.append(_png_chunk(b"eXIf", new_exif))
             for key in sorted(author_keys):
                 out.append(_png_itxt(key, getattr(author, AUTHOR_TEXT_KEYS[key]).strip()))
         out.append(raw)
+    if opts is None or not (po or opts.xmp or opts.ai_data):
+        out.append(trailer)
     return b"".join(out)
 
 
 # ---------------------------------------------------------------------------- WebP
 def _rewrite_webp(data: bytes, opts: StripOptions | None, author: Authorship | None,
                   camera: "CameraData | None" = None) -> bytes:
-    if data[:4] != b"RIFF" or data[8:12] != b"WEBP":
-        raise ValueError("not a WebP")
-    chunks = []
-    i = 12
-    while i < len(data):
-        ctype = data[i:i + 4]
-        size = struct.unpack("<I", data[i + 4:i + 8])[0]
-        chunks.append((ctype, data[i + 8:i + 8 + size]))
-        i += 8 + size + (size & 1)
+    chunks, trailer = _webp_parse(data)
     exif_src = next((b for c, b in chunks if c == b"EXIF"), None)
+    if exif_src and exif_src.startswith(EXIF_HEADER):
+        exif_src = exif_src[len(EXIF_HEADER):]
     new_exif = _filter_exif(exif_src, opts, author, camera) if (exif_src or author or camera) else None
+    po = opts is not None and _place_or_person(opts)
     kept = []
     for ctype, body in chunks:
         if ctype == b"EXIF":
             continue
-        if opts is not None and ctype == b"XMP " and (opts.xmp or opts.everything):
-            continue
-        if opts is not None and ctype == b"ICCP" and opts.remove_icc:
-            continue
+        if opts is not None:
+            if ctype == b"XMP ":
+                if _xmp_goes(body, opts):
+                    continue
+            elif ctype == b"ICCP":
+                if opts.remove_icc:
+                    continue
+            elif po and ctype not in _WEBP_KEEP:
+                continue
         kept.append([ctype, body])
     if new_exif:
         if not any(c == b"VP8X" for c, _ in kept):
@@ -503,7 +729,156 @@ def _rewrite_webp(data: bytes, opts: StripOptions | None, author: Authorship | N
                      (0x04 if b"XMP " in names else 0)
             chunk[1] = bytes([flags]) + chunk[1][1:]
     body = b"WEBP" + b"".join(c + struct.pack("<I", len(b)) + b + (NUL if len(b) & 1 else b"") for c, b in kept)
-    return b"RIFF" + struct.pack("<I", len(body)) + body
+    keep_trailer = opts is None or not (po or opts.xmp or opts.ai_data)
+    return b"RIFF" + struct.pack("<I", len(body)) + body + (trailer if keep_trailer else b"")
+
+
+_WEBP_KEEP = {b"VP8 ", b"VP8L", b"VP8X", b"ALPH", b"ANIM", b"ANMF", b"ICCP"}
+
+
+def _webp_parse(data: bytes):
+    """([(fourcc, body)], trailer): the chunks inside the RIFF size, and any bytes after it."""
+    if data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        raise ValueError("not a WebP")
+    end = min(len(data), 8 + struct.unpack("<I", data[4:8])[0])
+    chunks = []
+    i = 12
+    while i < end:
+        if i + 8 > end:
+            raise ValueError("corrupt WebP")
+        size = struct.unpack("<I", data[i + 4:i + 8])[0]
+        if i + 8 + size > end:
+            raise ValueError("corrupt WebP")
+        chunks.append((data[i:i + 4], data[i + 8:i + 8 + size]))
+        i += 8 + size + (size & 1)
+    return chunks, data[end:]
+
+
+# ---------------------------------------------------------------------------- container scan (the audit's eyes)
+_IPTC_PLACE = {(2, 90), (2, 92), (2, 95), (2, 100), (2, 101), (2, 26)}       # city, sub-location, state, country
+_IPTC_PERSON = {(2, 80), (2, 85), (2, 110), (2, 115), (2, 116), (2, 118), (2, 122)}   # by-line, credit, source, ...
+
+
+def _tiff_has_thumbnail(t: bytes) -> bool:
+    """True if the TIFF block has a second IFD (IFD1), which is where cameras put the preview picture."""
+    try:
+        if len(t) < 8 or t[:2] not in (b"II", b"MM"):
+            return False
+        e = "<" if t[:2] == b"II" else ">"
+        off = struct.unpack(e + "I", t[4:8])[0]
+        n = struct.unpack(e + "H", t[off:off + 2])[0]
+        nxt = off + 2 + 12 * n
+        return struct.unpack(e + "I", t[nxt:nxt + 4])[0] != 0
+    except (struct.error, IndexError):
+        return False
+
+
+def _iptc_fields(seg: bytes) -> set[tuple[int, int]] | None:
+    """(record, dataset) pairs found in a Photoshop APP13 block; None when it could not be parsed."""
+    found: set[tuple[int, int]] = set()
+    try:
+        p = seg[4:]
+        if not p.startswith(b"Photoshop 3.0" + NUL):
+            return None
+        i = 14
+        while i + 12 <= len(p) and p[i:i + 4] == b"8BIM":
+            rid = struct.unpack(">H", p[i + 4:i + 6])[0]
+            nlen = p[i + 6]
+            i += 7 + nlen + ((nlen + 1) & 1)
+            size = struct.unpack(">I", p[i:i + 4])[0]
+            body = p[i + 4:i + 4 + size]
+            i += 4 + size + (size & 1)
+            if rid == 0x0404:
+                j = 0
+                while j + 5 <= len(body) and body[j] == 0x1C:
+                    rec, ds, ln = body[j + 1], body[j + 2], struct.unpack(">H", body[j + 3:j + 5])[0]
+                    found.add((rec, ds))
+                    j += 5 + ln
+        return found
+    except (struct.error, IndexError):
+        return None
+
+
+def scan_container(path: str | os.PathLike) -> dict:
+    """Structural facts the audit needs that Pillow does not report. Raises ValueError for a file whose containers
+    cannot be walked (the caller reports "could not be checked")."""
+    data = Path(path).read_bytes()
+    s: dict = {"xmp": [], "xmp_ext": 0, "unknown": [], "text_other": [], "trailer": 0, "thumbnail": False,
+               "mpf": False, "c2pa": False, "comment": False, "iptc": False, "iptc_place": False,
+               "iptc_person": False, "time_chunk": False}
+    tiff = None
+    if data[:2] == SOI:
+        for m, seg in _jpeg_segments(data):
+            if m == TRAILER:
+                s["trailer"] = len(seg)
+            elif m == 0xE0:
+                if seg[4:9] == b"JFIF" + NUL:
+                    s["thumbnail"] |= len(seg) > 18 and bool(seg[16] or seg[17])
+                else:
+                    s["unknown"].append("APP0")
+                    s["thumbnail"] |= seg[4:8] == b"JFXX"
+            elif m == 0xE1:
+                if _is_exif_seg(m, seg):
+                    tiff = tiff or seg[10:]
+                elif seg[4:4 + len(XMP_NS)] == XMP_NS:
+                    s["xmp"].append(seg[4 + len(XMP_NS):])
+                elif seg[4:4 + len(XMP_EXT_NS)] == XMP_EXT_NS:
+                    s["xmp_ext"] += 1
+                else:
+                    s["unknown"].append("APP1")
+            elif m == 0xE2:
+                if seg[4:16] == ICC_HEADER:
+                    continue
+                if seg[4:8] == b"MPF" + NUL:
+                    s["mpf"] = True
+                else:
+                    s["unknown"].append("APP2")
+            elif m == 0xED:
+                s["iptc"] = True
+                fields = _iptc_fields(seg)
+                if fields is None:
+                    s["unknown"].append("APP13")
+                else:
+                    s["iptc_place"] |= bool(fields & _IPTC_PLACE)
+                    s["iptc_person"] |= bool(fields & _IPTC_PERSON)
+            elif m == 0xEB:
+                s["c2pa"] = True
+            elif m == 0xEE and seg[4:9] == b"Adobe":
+                continue
+            elif m == 0xFE:
+                s["comment"] = True
+            elif 0xE0 <= m <= 0xEF:
+                s["unknown"].append(f"APP{m - 0xE0}")
+    elif data.startswith(PNG_SIG):
+        chunks, trailer = _png_parse(data)
+        s["trailer"] = len(trailer)
+        for ctype, _raw, body in chunks:
+            if ctype == b"eXIf":
+                tiff = tiff or body
+            elif ctype == b"tIME":
+                s["time_chunk"] = True
+            elif ctype in (b"tEXt", b"zTXt", b"iTXt"):
+                key = _png_text_key(body)
+                if key == _PNG_XMP_KEY:
+                    s["xmp"].append(_png_text_value(ctype, body))
+                elif key not in _PNG_KEEP_TEXT and key.lower() not in AI_TEXT_KEYS:
+                    s["text_other"].append(key)
+            elif ctype[:1].islower() and ctype not in _PNG_KEEP and ctype not in (b"iCCP",):
+                s["unknown"].append(ctype.decode("latin-1"))
+    elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        chunks, trailer = _webp_parse(data)
+        s["trailer"] = len(trailer)
+        for ctype, body in chunks:
+            if ctype == b"EXIF":
+                tiff = tiff or (body[len(EXIF_HEADER):] if body.startswith(EXIF_HEADER) else body)
+            elif ctype == b"XMP ":
+                s["xmp"].append(body)
+            elif ctype not in _WEBP_KEEP:
+                s["unknown"].append(ctype.decode("latin-1"))
+    else:
+        raise ValueError("not a JPEG, PNG or WebP file")
+    s["thumbnail"] |= bool(tiff) and _tiff_has_thumbnail(tiff)
+    return s
 
 
 # ---------------------------------------------------------------------------- public writers
@@ -728,12 +1103,14 @@ def set_text_field(path: str | os.PathLike, key: str, value: str) -> None:
     if not data.startswith(PNG_SIG):
         raise ValueError("text fields can only be edited on PNG files")
     out = [PNG_SIG]
-    for ctype, raw, body in _png_chunks(data):
+    chunks, trailer = _png_parse(data)
+    for ctype, raw, body in chunks:
         if ctype in (b"tEXt", b"zTXt", b"iTXt") and _png_text_key(body) == key:
             continue
         if ctype == b"IEND" and value:
             out.append(_png_itxt(key, value))
         out.append(raw)
+    out.append(trailer)
     _atomic_write_bytes(p, b"".join(out))
 
 
@@ -752,12 +1129,14 @@ def set_exif_text(path: str | os.PathLike, tag: int, value: str) -> None:
         _atomic_write_bytes(p, _assemble_jpeg(list(_jpeg_segments(data)), new_exif))
     elif data.startswith(PNG_SIG):
         out = [PNG_SIG]
-        for ctype, raw, _body in _png_chunks(data):
+        chunks, trailer = _png_parse(data)
+        for ctype, raw, _body in chunks:
             if ctype == b"eXIf":
                 continue
             if ctype == b"IEND" and new_exif:
                 out.append(_png_chunk(b"eXIf", new_exif))
             out.append(raw)
+        out.append(trailer)
         _atomic_write_bytes(p, b"".join(out))
     else:
         raise ValueError("EXIF editing is supported for JPEG and PNG")

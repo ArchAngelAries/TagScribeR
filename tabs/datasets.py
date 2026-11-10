@@ -242,7 +242,9 @@ class DatasetsTab(QWidget):
                 return
         from tabs.export_dialog import ExportDialog
         subject = self.ctx.project.get("subject", "") if self.ctx.project else ""
-        ExportDialog(keys, subject, self).exec()
+        dlg = ExportDialog(keys, subject, self)
+        dlg.exec()
+        dlg.deleteLater()                       # built per use: never kept alive under the tab
 
     def add_to_collection(self):
         name = self._current_name()

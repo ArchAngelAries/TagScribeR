@@ -187,7 +187,17 @@ class MainWindow(QMainWindow):
 
     def open_palette(self):
         from tabs.palette import CommandPalette
-        CommandPalette(self.palette_commands(), self).show()
+        old = getattr(self, "_palette", None)
+        if old is not None:                        # one palette at a time
+            try:
+                old.close()
+            except RuntimeError:                   # already deleted
+                pass
+        pal = self._palette = CommandPalette(self.palette_commands(), self)
+        pal.setAttribute(Qt.WA_DeleteOnClose)      # gone when it closes: it holds the command list and its closures
+        pal.destroyed.connect(lambda *_, p=pal: setattr(self, "_palette", None)
+                              if getattr(self, "_palette", None) is p else None)
+        pal.show()
 
     def closeEvent(self, event):
         from inference import worker

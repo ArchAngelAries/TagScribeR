@@ -207,6 +207,7 @@ class QuickTagList(QWidget):
         a = menu.addAction(f"Remove {n} quick tag(s)" if n > 1 else "Remove quick tag", self._remove_selected)
         a.setEnabled(n > 0)
         menu.exec(self.list.viewport().mapToGlobal(pos))
+        menu.deleteLater()
 
 
 class ClickToDeselect(QObject):
@@ -347,7 +348,10 @@ def hint_label(text: str) -> QLabel:
 def show_job_summary(parent: QWidget, summary) -> None:
     """Report a finished batch; lists failures with reasons instead of hiding them."""
     if summary.fatal:
-        QMessageBox.warning(parent, summary.title, summary.fatal)
+        box = QMessageBox(QMessageBox.Warning, summary.title, summary.fatal, QMessageBox.Ok, parent)
+        box.setTextFormat(Qt.PlainText)       # failure text can hold file names or a server's reply: never markup
+        box.exec()
+        box.deleteLater()
         return
     if not summary.failed:
         return  # success is reported unobtrusively in the status area
@@ -365,10 +369,14 @@ def show_job_summary(parent: QWidget, summary) -> None:
     btns.accepted.connect(dlg.accept)
     lay.addWidget(btns)
     dlg.exec()
+    dlg.deleteLater()
 
 
 def confirm(parent: QWidget, title: str, text: str, destructive: bool = False) -> bool:
     box = QMessageBox(QMessageBox.Warning if destructive else QMessageBox.Question, title, text,
                       QMessageBox.Yes | QMessageBox.Cancel, parent)
+    box.setTextFormat(Qt.PlainText)           # questions often quote file and folder names: never markup
     box.setDefaultButton(QMessageBox.Cancel if destructive else QMessageBox.Yes)
-    return box.exec() == QMessageBox.Yes
+    answer = box.exec() == QMessageBox.Yes
+    box.deleteLater()
+    return answer

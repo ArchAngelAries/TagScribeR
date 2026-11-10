@@ -140,16 +140,11 @@ def ft_source_unfit(path) -> str:
     """Why a model file cannot be fine-tuned, from its header alone, or "" (training.ft.source_unfit_reason's rule,
     without torch): a pre-quantised or fp8 file has no 16-bit weights to build the master from or to write the
     checkpoint into. "" as well for a file that cannot be read here (the trainer then says what is wrong)."""
-    import struct
+    from training.st_header import read_header
     try:
         with open(path, "rb") as f:
-            n = struct.unpack("<Q", f.read(8))[0]
-            if n > 256 * 1024 * 1024:          # no real header is this large: not a file to read into memory
-                return ""
-            header = json.loads(f.read(n))
-    except (OSError, ValueError, struct.error):
-        return ""
-    if not isinstance(header, dict):
+            header, _ = read_header(f)         # bounded: a hostile length is "unreadable" here, never a MemoryError
+    except (OSError, ValueError, MemoryError, TypeError):
         return ""
     header.pop("__metadata__", None)
     if any(k.endswith(".weight_scale") or k.endswith(".scale_weight") for k in header):
@@ -161,13 +156,14 @@ def ft_source_unfit(path) -> str:
 def ft_continuation(path) -> tuple[int, int, int]:
     """(next_window, epochs_done, n_windows) from a fine-tune checkpoint's metadata (the trainer stamps Fizgig's
     keys); the -NNNNNN in the file name wins for the epochs. Anything missing reads as 0."""
-    import struct
+    from training.st_header import read_header
     md = {}
     try:
         with open(path, "rb") as f:
-            n = struct.unpack("<Q", f.read(8))[0]
-            md = json.loads(f.read(n)).get("__metadata__") or {}
-    except (OSError, ValueError, struct.error):
+            md = read_header(f)[0].get("__metadata__") or {}
+        if not isinstance(md, dict):
+            md = {}
+    except (OSError, ValueError, MemoryError, TypeError):
         pass
 
     def num(k):

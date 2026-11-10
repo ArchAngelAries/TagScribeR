@@ -67,6 +67,19 @@ def collect(values: dict) -> dict:
     return {k: values[k] for k in P.PRESET_KEYS if k in values}
 
 
+# Personal text a preset may hold; left out of a copy that is sent to someone else.
+SHARING_EXCLUDED = ("LORA_NAME", "METADATA_AUTHOR", "METADATA_TITLE", "METADATA_DESCRIPTION", "METADATA_TAGS",
+                    "METADATA_TRIGGER_PHRASE", "METADATA_THUMBNAIL")
+
+
+def export_for_sharing(values: dict) -> dict:
+    """A copy of a preset's values that is safe to send: no path keys, no LoRA name, no personal metadata text, and
+    nothing that is not a preset key. Everything else is unchanged, so `apply` imports it as any preset."""
+    drop = set(P.PATH_KEYS) | set(SHARING_EXCLUDED)
+    keep = set(P.PRESET_KEYS)
+    return {k: v for k, v in dict(values or {}).items() if k in keep and k not in drop}
+
+
 # Fizgig keys that have no counterpart here (the Krea 2 rotating fine-tune; Klein's fp8 base, attention
 # backend, LoRA dropout / LoRA+, fp8 text encoder, logging, LR decay, and the hidden loss-weighting boxes - the family's
 # docstring lists each as not ported). TARGET_LAYERS / TRAINING_BLOCKS are real parameters (Klein's Model Area).

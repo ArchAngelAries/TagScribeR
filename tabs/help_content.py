@@ -294,7 +294,11 @@ sources you trust.</li>
 <code>HF_TOKEN</code>.</li>
 <li><b>API servers:</b> requests time out after 180 seconds and retry automatically: a local server is not retried
 after a timeout, so a slow reply is never captioned twice; a cloud service is retried twice. Changing the server address clears the API key, and a key that
-would travel over plain http to another machine is warned about. A reply the app can't read fails only that image;
+would travel over plain http to another machine is warned about. A saved key only works for the server address it was
+saved for; clearing the key box and saving really deletes the stored key. A key with a line break or another
+character that cannot be sent is refused when you type it. Keys never appear in the log file: anything that looks
+like a key is blanked before a line is written. The Auto Caption log is plain text (it never loads images or links
+from a server's reply) and keeps the last 4000 lines. A reply the app can't read fails only that image;
 the batch continues.</li></ul>
 """),
     "api": ("API & local servers", "AI", """
@@ -378,8 +382,17 @@ Text fields and artist / copyright / description / software can be edited (doubl
 <h3>Privacy</h3>
 <ul>
 <li><b>Audit</b> counts what the selected (or all shown) images contain, without changing anything.</li>
-<li><b>Clean metadata</b> removes what you tick: GPS location, device make/model/serials/owner, AI generation data
-(prompts, seeds, models, ComfyUI workflows), XMP history, timestamps, software — or <i>Everything</i>.</li>
+<li><b>Clean metadata</b> removes what you tick. <i>Location</i> and <i>Camera / device</i> each remove GPS, time-zone
+offsets, camera-internal MakerNote data, the whole IPTC / Photoshop block (city, country, by-line, contact, copyright),
+embedded preview pictures (including the extra pictures of multi-picture files), content credentials, comments,
+extended XMP, unknown vendor blocks, PNG text fields other than software, creation time, author, copyright,
+description and title, and any bytes appended after the picture (an appended video or archive); an XMP block that
+names a place or a person goes too. Device also removes make, model, lens, serial numbers and owner. Other choices:
+AI generation data (prompts, seeds, models, ComfyUI workflows), XMP history, timestamps, software, or
+<i>Everything</i> (only the pixels, orientation and, unless you choose otherwise, the color profile stay).</li>
+<li><b>Checked after cleaning.</b> TagScribeR reads each cleaned file again and lists any file that still holds
+something you asked to remove, or that could not be checked. The privacy audit never says "nothing found" about a file
+it could not read. Artist and copyright you wrote yourself stay unless you choose Everything.</li>
 <li>Cleaning is <b>lossless</b>: image data isn't re-encoded, so quality is identical. Photo orientation is always kept,
 and the color profile is kept unless you tick the option to remove it.</li>
 <li>Supported: JPEG, PNG and WebP. Caption .txt files are separate and never affected.</li>
@@ -513,7 +526,13 @@ switch your model. Preview settings and Resume aren't part of presets either.</l
 is named in the console when you load it: check those paths, especially in a preset someone else made.</li>
 <li><b>Caption extension</b> (Dataset, Show all settings) must start with a dot, like <code>.txt</code> or
 <code>.caption</code>; an image extension is refused, since a caption written there would replace the picture.</li>
-<li><b>Import…</b> adds a preset file. Preset files from other trainers that use the same setting names import as they are (see <i>Credits and licences</i>).</li>
+<li><b>Import…</b> adds a preset file. Preset files from other trainers that use the same setting names import as they are (see <i>Credits and licences</i>). If an imported file sets a folder or a file on your disk (output folder, edit folders, companion LoRA, thumbnail), TagScribeR asks first and by default applies the preset without those paths.</li>
+<li><b>Export for sharing…</b> saves the current settings to a file you can send to someone: without any folder or
+file paths and without personal text (LoRA name, author, title, description, tags, trigger phrase).</li>
+<li><b>Copy log for sharing</b> (under the console) copies the console text with your user name and your folders
+replaced by placeholders such as &lt;home&gt; and &lt;path1&gt;, so a log pasted into a bug report does not show
+where your files live. The files in the run folder themselves (<code>run.log</code>, <code>train_config.json</code>,
+<code>dataset.json</code>) keep full paths, because the run needs them: use the copy button when you share.</li>
 <li>When a preset holds a value this family doesn't offer (an optimizer, a learning-rate bound, a precision), that
 setting is kept as it was and the console says so. Settings this version doesn't know are ignored.</li>
 <li>The <b>Slider</b> and <b>Fine-tune</b> presets work on the families that offer those kinds of training.

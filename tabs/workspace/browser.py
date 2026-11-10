@@ -416,6 +416,7 @@ class DatasetBrowser(QWidget):
         menu.addAction("Select images missing captions", lambda: self.select_matching("missing:caption"))
         menu.addAction("Select unsaved", lambda: self.select_matching("is:unsaved"))
         menu.exec(self.view.viewport().mapToGlobal(pos))
+        menu.deleteLater()
 
     # ------------------------------------------------------------------ status
     def update_status(self):

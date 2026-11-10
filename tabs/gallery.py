@@ -253,9 +253,12 @@ class GalleryTab(QWidget):
             QMessageBox.information(self, "Auto Tag", "Select images to tag first.")
             return
         dlg = AutoTagDialog(self)
-        if not dlg.exec():
+        accepted = bool(dlg.exec())
+        st = dlg.get_settings() if accepted else None
+        dlg.deleteLater()                       # built per use: never kept alive under the tab
+        if not accepted:
             return
-        st = self.auto_tag_settings = dlg.get_settings()
+        self.auto_tag_settings = st
         if st["mode"] == "ignore":
             keys = [k for k in keys if not self.ctx.session.get(k).has_caption]
             if not keys:

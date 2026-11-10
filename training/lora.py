@@ -33,6 +33,7 @@ family's Conv2d targets untrained (logged), the same as LyCORIS' default "LoKR f
 """
 import logging
 import math
+import os
 import re
 from typing import Dict
 
@@ -636,7 +637,19 @@ class FamilyLoRA:
 
     def save(self, path, metadata=None, dtype=torch.bfloat16):
         from safetensors.torch import save_file
-        save_file(self.state_dict(dtype), path, metadata={k: str(v) for k, v in (metadata or {}).items()})
+        # written under a temporary name and moved into place: a full disk or a kill mid-write leaves the previous
+        # file intact, never a truncated one under the real name
+        path = os.fspath(path)
+        tmp = path + ".tmp"
+        try:
+            save_file(self.state_dict(dtype), tmp, metadata={k: str(v) for k, v in (metadata or {}).items()})
+            os.replace(tmp, path)
+        finally:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
 
     @torch.no_grad()
     def load_trainable(self, path):

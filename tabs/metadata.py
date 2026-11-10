@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import html
 from collections import Counter
 from pathlib import Path
 
@@ -24,10 +25,44 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFormLay
 from core import metadata as md
 from core.presets import PresetError, camera_presets, metadata_presets
 from tabs import icons, theme
-from tabs.common import confirm, hint_label, run_in_background, show_job_summary
+from tabs.common import hint_label, run_in_background, show_job_summary
 from tabs.workspace.browser import DatasetBrowser
 from tabs.workspace.context import workspace
 from tabs.workspace.jobs import start_file_job
+
+
+# Text that comes out of an image file (EXIF Software / Make / Owner, XMP, PNG text, file names) or a preset file is
+# data. Qt would render a tooltip, a label or a message box as HTML when the text looks like it (and then load an
+# <img src> from a path or a network share), so every sink here shows it as plain text.
+def plain_tip(text: str) -> str:
+    """A tooltip that always renders ``text`` literally."""
+    return "<p style='white-space:pre-wrap'>" + html.escape(str(text)) + "</p>"
+
+
+def plain_label(lbl: QLabel) -> QLabel:
+    lbl.setTextFormat(Qt.PlainText)
+    return lbl
+
+
+def _box(parent, icon, title: str, text: str, buttons=QMessageBox.Ok) -> "QMessageBox":
+    box = QMessageBox(icon, title, text, buttons, parent)
+    box.setTextFormat(Qt.PlainText)
+    return box
+
+
+def _msg(parent, icon, title: str, text: str) -> None:
+    box = _box(parent, icon, title, text)
+    box.exec()
+    box.deleteLater()
+
+
+def confirm(parent, title: str, text: str, destructive: bool = False) -> bool:
+    box = _box(parent, QMessageBox.Warning if destructive else QMessageBox.Question, title, text,
+               QMessageBox.Yes | QMessageBox.Cancel)
+    box.setDefaultButton(QMessageBox.Cancel if destructive else QMessageBox.Yes)
+    answer = box.exec() == QMessageBox.Yes
+    box.deleteLater()
+    return answer
 
 
 def _scroll(w: QWidget) -> QScrollArea:
@@ -38,7 +73,17 @@ def _scroll(w: QWidget) -> QScrollArea:
     return sa
 
 
-FINDING_ROLE = Qt.UserRole + 20         # on a findings row: "ok" or its level, so a theme change can recolour it
+def clean_and_verify(path: str, opts: md.StripOptions) -> None:
+    """Clean one file, then re-read it from disk. If anything the options should have removed is still in it (or the
+    file cannot be examined), raise, so the job summary lists the file with the reason instead of a green tick."""
+    md.strip_metadata(path, opts)
+    left = md.leftovers(path, opts)
+    if left:
+        raise RuntimeError("cleaned, but still contains or could not be checked for: " +
+                           ", ".join(sorted({f.label for f in left})))
+
+
+FINDING_ROLE = Qt.UserRole + 20        # on a findings row: "ok" or its level, so a theme change can recolour it
 
 
 class MetadataTab(QWidget):
@@ -93,8 +138,11 @@ class MetadataTab(QWidget):
     def _build_inspect(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        self.lbl_file = QLabel("Select an image.")
+        self.lbl_file = plain_label(QLabel("Select an image."))
         self.lbl_file.setWordWrap(True)
+        f = self.lbl_file.font()
+        f.setBold(True)
+        self.lbl_file.setFont(f)
         lay.addWidget(self.lbl_file)
         self.list_findings = QListWidget()
         self.list_findings.setMaximumHeight(150)
@@ -137,12 +185,23 @@ class MetadataTab(QWidget):
         b_audit.clicked.connect(self.audit)
         lay.addWidget(b_audit)
         self.lbl_audit = hint_label("")
+        self.lbl_audit.setTextFormat(Qt.RichText)   # only ever set from html.escape()d text
         lay.addWidget(self.lbl_audit)
 
         g = QGroupBox("Remove")
         gl = QVBoxLayout(g)
-        self.chk_location = QCheckBox("GPS location")
+        self.chk_location = QCheckBox("Location (GPS, time zone, place names)")
+        self.chk_location.setToolTip(
+            "Removes the GPS block, time-zone offsets, the whole IPTC / Photoshop block (city, country, by-line, "
+            "contact), camera-internal MakerNote data, embedded preview pictures (EXIF thumbnail, multi-picture "
+            "data), content credentials, comments, extended XMP, other vendor blocks and any bytes after the end "
+            "of the picture. A kept XMP block that names a place is removed too.")
         self.chk_device = QCheckBox("Camera / device make, model, serial numbers, owner name")
+        self.chk_device.setToolTip(
+            "Removes make, model, lens, serial numbers, owner and computer name, MakerNote, the IPTC / Photoshop "
+            "block (by-line, contact), embedded previews, content credentials, comments, extended XMP and other "
+            "vendor blocks. A kept XMP block that names a camera or a person is removed too. Artist and "
+            "copyright you wrote yourself stay unless you choose Everything.")
         self.chk_ai = QCheckBox("AI generation data (prompts, seeds, models, ComfyUI workflows)")
         self.chk_xmp = QCheckBox("XMP editing history")
         self.chk_time = QCheckBox("Timestamps")
@@ -253,7 +312,7 @@ class MetadataTab(QWidget):
         row.addWidget(b_save)
         row.addWidget(b_del)
         lay.addLayout(row)
-        self.lbl_camera_note = hint_label("")
+        self.lbl_camera_note = plain_label(hint_label(""))   # a preset file's note is data
         lay.addWidget(self.lbl_camera_note)
 
         self.cam_inputs: dict[str, QLineEdit] = {}
@@ -351,7 +410,7 @@ class MetadataTab(QWidget):
             self._scope_keys(self.rad_pr_shown), replace=self.rad_pr_replace.isChecked()))
         lay.addWidget(b)
         lay.addWidget(hint_label("Results are unsaved and undoable in every tab until you press Save."))
-        self.lbl_prompts = hint_label("")
+        self.lbl_prompts = plain_label(hint_label(""))
         lay.addWidget(self.lbl_prompts)
         lay.addStretch()
         return w
@@ -406,7 +465,7 @@ class MetadataTab(QWidget):
                 v.setForeground(theme.qcolor("text_readonly"))
 
     def _show_report(self, r: md.MetaReport):
-        self.lbl_file.setText(f"<b>{Path(r.path).name}</b>" + (f"  — error: {r.error}" if r.error else ""))
+        self.lbl_file.setText(Path(r.path).name + (f"  — error: {r.error}" if r.error else ""))
         self.list_findings.clear()
         findings = md.privacy_findings(r)
         if not findings:
@@ -417,7 +476,7 @@ class MetadataTab(QWidget):
         for f in findings:
             item = QListWidgetItem(f"● {f.label} — {f.detail}")
             item.setForeground(QColor(theme.level_color(f.level)))
-            item.setToolTip(f.detail)
+            item.setToolTip(plain_tip(f.detail))
             item.setData(FINDING_ROLE, f.level)
             self.list_findings.addItem(item)
         self.table.blockSignals(True)
@@ -458,7 +517,7 @@ class MetadataTab(QWidget):
                 else:
                     md.set_exif_text(self.report.path, int(field), md.exif_ascii(value))
         except Exception as e:
-            QMessageBox.critical(self, "Save failed", str(e))
+            _msg(self, QMessageBox.Critical, "Save failed", str(e))
         self.load_metadata(self.report.path)
 
     # ------------------------------------------------------------------ audit / clean
@@ -481,11 +540,11 @@ class MetadataTab(QWidget):
                 self.lbl_audit.setText(f"✓ Nothing sensitive found in {len(keys)} image(s).")
                 return
             order = {"high": 0, "medium": 1, "low": 2}
-            lines = [f"<span style='color:{theme.level_color(lv)}'>● {label}: {n} of {len(keys)}</span>"
+            lines = [f"<span style='color:{theme.level_color(lv)}'>● {html.escape(label)}: {n} of {len(keys)}</span>"
                      for (lv, label), n in sorted(counts.items(), key=lambda kv: (order[kv[0][0]], -kv[1]))]
             self.lbl_audit.setText("<br>".join(lines))
 
-        run_in_background(work, done, lambda e: self.lbl_audit.setText(f"Audit failed: {e}"))
+        run_in_background(work, done, lambda e: self.lbl_audit.setText("Audit failed: " + html.escape(str(e))))
 
     def _run_file_job(self, keys, fn, title):
         if self.job is not None:
@@ -518,7 +577,7 @@ class MetadataTab(QWidget):
         if not confirm(self, "Clean metadata", f"Remove {what} from {len(keys)} image file(s)?\n\n"
                        "Pixels are not touched, but removed metadata can't be restored.", destructive=True):
             return
-        self._run_file_job(keys, lambda k: (md.strip_metadata(k, opts), None)[1], "Metadata cleanup")
+        self._run_file_job(keys, lambda k: clean_and_verify(k, opts), "Metadata cleanup")
 
     # ------------------------------------------------------------------ authorship
     def _author(self) -> md.Authorship:
@@ -548,7 +607,7 @@ class MetadataTab(QWidget):
         try:
             saved = self.presets.save(name, {k: v for k, v in vars(self._author()).items()})
         except PresetError as e:
-            QMessageBox.warning(self, "Save template", str(e))
+            _msg(self, QMessageBox.Warning, "Save template", str(e))
             return
         self._fill_author_presets(saved)
 
@@ -619,7 +678,7 @@ class MetadataTab(QWidget):
         try:
             saved = self.cam_presets.save(name, data)
         except PresetError as e:
-            QMessageBox.warning(self, "Save camera preset", str(e))
+            _msg(self, QMessageBox.Warning, "Save camera preset", str(e))
             return
         self._fill_camera_presets(saved)
 
@@ -642,7 +701,7 @@ class MetadataTab(QWidget):
         try:
             md.validate_camera(cam, var, series)
         except ValueError as e:
-            QMessageBox.warning(self, "Camera data", str(e))
+            _msg(self, QMessageBox.Warning, "Camera data", str(e))
             return
         keys = self._scope_keys(self.rad_cam_shown)
         if not keys:

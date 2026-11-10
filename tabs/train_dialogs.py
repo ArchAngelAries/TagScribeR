@@ -1,6 +1,7 @@
 """Train tab windows: loss chart, Problem Images, live sample override."""
 from __future__ import annotations
 
+import html
 import os
 from pathlib import Path
 
@@ -224,6 +225,7 @@ class ProblemImagesDialog(QDialog):
 
     def __init__(self, run_dir: str, caption_ext: str, image_folder: str, parent=None, on_saved=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WA_DeleteOnClose)
         self.run_dir, self.ext, self.folder, self.on_saved = run_dir, caption_ext, image_folder, on_saved
         self.setWindowTitle("Hard images")
         self.resize(1000, 640)
@@ -232,6 +234,7 @@ class ProblemImagesDialog(QDialog):
                                  "a wrong, missing or misleading caption. Edit it here and click Save fix: the "
                                  "caption file is updated and the run picks the new text up at the next epoch."))
         self.lbl_status = QLabel("Waiting for the first epoch report…")
+        self.lbl_status.setTextFormat(Qt.PlainText)      # shows numbers from a file in the run folder
         lay.addWidget(self.lbl_status)
         split = QSplitter()
         self.table = QTableWidget(0, 5)
@@ -266,12 +269,40 @@ class ProblemImagesDialog(QDialog):
         self._mtime = None
         self.refresh()
 
+    def done(self, result):
+        self.timer.stop()
+        super().done(result)
+
+    def closeEvent(self, e):
+        self.timer.stop()
+        super().closeEvent(e)
+
     def _image_path(self, key):
+        """The picture a report key names, but only inside the dataset folder the run was started on: the report is
+        a file from a run folder (possibly someone else's), so an absolute key, one with `..` or one that resolves
+        outside the folder is not a picture of this dataset."""
         from training.dataset import IMAGE_EXTENSIONS
+        if not self.folder or not isinstance(key, str) or not key.strip():
+            return None
+        if os.path.isabs(key) or os.path.splitdrive(key)[0] or key.startswith(("/", "\\")):
+            return None
+        if ".." in key.replace("\\", "/").split("/"):
+            return None
+        try:
+            root = os.path.realpath(self.folder)
+        except (OSError, ValueError):
+            return None
         for e in IMAGE_EXTENSIONS:
             p = os.path.join(self.folder, key + e)
-            if os.path.exists(p):
-                return p
+            try:
+                if not os.path.exists(p):
+                    continue
+                real = os.path.realpath(p)
+                if os.path.normcase(os.path.commonpath([root, real])) != os.path.normcase(root):
+                    continue
+            except (OSError, ValueError):
+                continue
+            return p
         return None
 
     def refresh(self):
@@ -317,11 +348,17 @@ class ProblemImagesDialog(QDialog):
         if not k:
             return
         rep = pipeline.read_problem_images(self.run_dir).get("images", {}).get(k, {})
-        v = rep.get("verdict", "")
-        self.lbl_verdict.setText(f"<b>{v}</b>: {VERDICT_HELP.get(v, '')}" + (
+        v = str(rep.get("verdict", ""))
+        self.lbl_verdict.setTextFormat(Qt.RichText)      # the markup is ours; everything from the file is escaped
+        self.lbl_verdict.setText(f"<b>{html.escape(v)}</b>: {html.escape(VERDICT_HELP.get(v, ''))}" + (
             "<br>Excluded by an earlier run: training normally; if it gets stuck again it is excluded at once."
             if rep.get("earlier_exclusion") else ""))
         img = self._image_path(k)
+        if not img:
+            self.preview.clear()
+            self.edit.setPlainText("")
+            self.lbl_verdict.setText(self.lbl_verdict.text() + "<br>Not in this dataset: the report names a picture "
+                                     "that is not in the folder this run was started on, so it is not shown or edited.")
         if img:
             pm = QPixmap(img)
             self.preview.setPixmap(pm.scaled(320, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation))

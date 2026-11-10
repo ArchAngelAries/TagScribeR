@@ -12,11 +12,14 @@ loaded whole); stream_save_file writes a file from lazy producers, one tensor in
 from __future__ import annotations
 
 import json
+import os
 import struct
 from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
+
+from training.st_header import check_span, read_header
 
 _TYPES = {torch.float64: "F64", torch.float32: "F32", torch.float16: "F16", torch.bfloat16: "BF16",
           torch.int64: "I64", torch.int32: "I32", torch.int16: "I16", torch.int8: "I8", torch.uint8: "U8",
@@ -102,20 +105,30 @@ class MemoryEfficientSafeOpen:
         return self.header.get("__metadata__", {})
 
     def _read_header(self):
-        header_size = struct.unpack("<Q", self.file.read(8))[0]
-        header_json = self.file.read(header_size).decode("utf-8")
-        return json.loads(header_json), header_size
+        # bounded (TagScribeR): a hostile length or a cut-short file is a clear error, not an allocation
+        try:
+            header, data_start = read_header(self.file)
+        except ValueError as e:
+            self.file.close()
+            raise RuntimeError(f"{self.filename}: not a readable safetensors file ({e})") from e
+        return header, data_start - 8
 
     def get_tensor(self, key: str, device=None, dtype: Optional[torch.dtype] = None):
         """The tensor under `key`, read from the file into memory (CPU), optionally cast / moved."""
         if key not in self.header:
             raise KeyError(f"Tensor '{key}' not found in the file")
         meta = self.header[key]
-        start, end = meta["data_offsets"]
-        n = end - start
-        src_dtype = torch_dtype(meta["dtype"])
+        if not isinstance(meta, dict):
+            raise ValueError(f"Tensor {key!r} has no entry in the header")
+        src_dtype = torch_dtype(meta.get("dtype"))
         if src_dtype is None:
-            raise ValueError(f"Unsupported safetensors dtype {meta['dtype']!r} for {key!r}")
+            raise ValueError(f"Unsupported safetensors dtype {meta.get('dtype')!r} for {key!r}")
+        payload = os.fstat(self.file.fileno()).st_size - self.header_size - 8
+        try:
+            start, end = check_span(meta, _ELEM[src_dtype], payload)
+        except ValueError as e:
+            raise ValueError(f"Tensor {key!r}: {e}") from e
+        n = end - start
         target = dtype if dtype is not None else src_dtype
         if n == 0:
             return torch.empty(meta["shape"], dtype=target, device=device)

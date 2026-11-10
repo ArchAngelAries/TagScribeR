@@ -14,11 +14,11 @@ import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import QProcess, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QIcon, QPixmap, QTextCursor
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox,
+from PySide6.QtGui import QCursor, QDesktopServices, QIcon, QPixmap, QTextCursor
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox,
-                               QSplitter, QTabWidget, QVBoxLayout, QWidget)
+                               QSplitter, QTabWidget, QToolTip, QVBoxLayout, QWidget)
 
 from core.config import settings
 from tabs.common import ClickToDeselect, CollapsibleSection, confirm, hint_label
@@ -38,6 +38,15 @@ _STEP_BAR_RE = re.compile(r"^\s*steps:\s+\d+%\|")
 _GLUED_RE = re.compile(r"^(\s*steps:\s+\d+%\|[^|]*\|\s*\d+/\d+\s+\[[^\]]*\])(.*\S.*)$")
 
 log = logging.getLogger(__name__)
+
+def _inside(path, folder) -> bool:
+    """`path` is `folder` or lies under it (links resolved, case ignored on Windows)."""
+    try:
+        root, p = os.path.realpath(str(folder)), os.path.realpath(str(path))
+        return os.path.normcase(os.path.commonpath([root, p])) == os.path.normcase(root)
+    except (OSError, ValueError):                 # another drive, an empty path, a NUL
+        return False
+
 
 IDLE, RUNNING, PAUSING, PAUSED = "idle", "running", "pausing", "paused"
 # What "simple mode" shows; the preset decides everything else.
@@ -175,7 +184,10 @@ class TrainTab(QWidget):
                                ("Delete", "Delete the selected user preset (to the Recycle Bin)", self._delete_preset),
                                ("Import…", "Import a preset file (.json): TagScribeR's own, or one from another trainer that uses "
                                            "the same setting names", self._import_preset),
-                               ("Last run", "Load the settings of the last training run", self._load_last_run)):
+                               ("Last run", "Load the settings of the last training run", self._load_last_run),
+                               ("Export for sharing…", "Save the current settings to a file you can send to someone "
+                                "else: without any folder or file paths and without personal text (LoRA name, "
+                                "author, title, description, tags, trigger phrase)", self._export_for_sharing)):
             b = QPushButton(label)
             b.setToolTip(tip)
             b.clicked.connect(fn)
@@ -711,7 +723,73 @@ class TrainTab(QWidget):
             except presets.PresetError as e:
                 QMessageBox.warning(self, "Import preset", str(e))
                 return
+            self._vet_imported_paths(name)
             self._refresh_presets(name)
+
+    def _vet_imported_paths(self, name):
+        """A preset from a file somewhere else may point the run at folders and files of its author's choosing (the
+        output folder, a picture to embed in the LoRA). Ask before keeping those; "without" removes them from the
+        imported copy, so loading it never sets them."""
+        p = self.store.path(name)
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        items = [(k, data[k]) for k in P.PATH_KEYS if k in data and str(data[k]).strip().lower() not in ("", "off")]
+        if not items or self._confirm_import_paths(items):
+            return
+        from core.caption_io import atomic_write_text
+        for k, _v in items:
+            del data[k]
+        atomic_write_text(p, json.dumps(data, indent=2))
+        self._console(f"[preset] imported '{name}' without its folder and file paths "
+                      f"({', '.join(k for k, _v in items)})")
+
+    def _confirm_import_paths(self, items) -> bool:
+        """True = keep the imported preset's paths ("Apply everything"); False = leave them out (the default)."""
+        box = QMessageBox(QMessageBox.Warning, "Import preset", "This preset sets folders or files:", QMessageBox.NoButton,
+                          self)
+        box.setTextFormat(Qt.PlainText)
+        box.setInformativeText("It came from a file somewhere else, so these were chosen by its author:\n\n" + "\n".join(
+            f"{k} = {v}" for k, v in items) + "\n\nApply them, or take the preset without these paths?")
+        without = box.addButton("Apply without these paths", QMessageBox.AcceptRole)
+        every = box.addButton("Apply everything", QMessageBox.DestructiveRole)
+        box.setDefaultButton(without)
+        box.setEscapeButton(without)
+        box.exec()
+        keep = box.clickedButton() is every
+        box.deleteLater()
+        return keep
+
+    def _export_for_sharing(self):
+        """The current settings without paths and personal text, in a file the user picks (to send to someone)."""
+        from training.presets import export_for_sharing
+        data = export_for_sharing(presets.collect(self.collect()))
+        path, _ = QFileDialog.getSaveFileName(self, "Export preset for sharing",
+                                              f"{self.desc.key}-preset.json" if self.desc else "preset.json",
+                                              "Preset (*.json)")
+        if not path:
+            return
+        from core.caption_io import atomic_write_text
+        try:
+            atomic_write_text(Path(path), json.dumps(data, indent=2, ensure_ascii=False))
+        except OSError as e:
+            QMessageBox.warning(self, "Export preset", f"Couldn't write the file: {e}")
+            return
+        self._console(f"[preset] exported {len(data)} setting(s) for sharing (no paths, no personal text)")
+
+    def _copy_log_for_sharing(self):
+        """The console's text on the clipboard with the home folder, the app folder and this run's own folders
+        replaced by placeholders, so it can be pasted into a message or an issue."""
+        from core.privacy import scrub
+        extra = []
+        for p in (self._run_dir(), self.ctx.folder, self.collect().get("LORA_OUTPUT_DIR"), *(
+                os.path.dirname(m) for m in self.models().values() if m)):
+            if p and str(p).strip():
+                extra.append(str(p))
+        text = scrub(self.console.toPlainText(), extra=extra)
+        QApplication.clipboard().setText(text)
+        QToolTip.showText(QCursor.pos(), "Copied: home, app and run folders are replaced by placeholders")
 
     def _load_last_run(self):
         snap = presets.load_last_run()
@@ -865,7 +943,21 @@ class TrainTab(QWidget):
         self.console.setReadOnly(True)
         self.console.setMaximumBlockCount(4000)
         self.console.setToolTip("The training processes' output (also saved as run.log in the run folder)")
-        split.addWidget(self.console)
+        cw = QWidget()
+        cl = QVBoxLayout(cw)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.addWidget(self.console, 1)
+        crow = QHBoxLayout()
+        self.btn_copy_log = QPushButton("Copy log for sharing")
+        self.btn_copy_log.setToolTip("Copy the console text to the clipboard with your user name and folders replaced "
+                                     "by placeholders (home, app, run, dataset, output and model folders), so you can "
+                                     "paste it into a message or a bug report")
+        icons.set(self.btn_copy_log, "review")
+        self.btn_copy_log.clicked.connect(self._copy_log_for_sharing)
+        crow.addWidget(self.btn_copy_log)
+        crow.addStretch(1)
+        cl.addLayout(crow)
+        split.addWidget(cw)
         split.setSizes([380, 300])
         lay.addWidget(split, 1)
         return w
@@ -1218,12 +1310,67 @@ class TrainTab(QWidget):
             return
         info = pipeline.read_paused(rd)
         st = (info or {}).get("state")
-        if not st or not os.path.exists(st):
+        if not isinstance(st, str) or not st or not os.path.exists(st):
+            return
+        if not _inside(st, rd):            # a sidecar from someone else's run folder can name any path
+            self._console(f"[resume] ignored the paused run in {rd}: its saved state is not inside that folder")
             return
         self._paused_dir, self._paused_state = rd, st
         self.lbl_status.setText(f"Paused run found: {os.path.basename(st)}. Resume continues it; Start begins a new "
                                 f"run.")
         self._set_state(PAUSED)
+
+    def _checked_paused(self, info, rd, st):
+        """(family, values, dataset folder) to resume with, from the paused run's sidecar, or None when it is refused.
+        The sidecar is a file in the run folder, so it is data from disk (possibly someone else's run folder): its
+        state must be inside that folder, its family must exist, and its values pass through the rules a preset's do
+        (a refused or unknown entry is dropped with a console note). An optimizer the family does not offer (a dotted
+        `module.Class` name) is replaced by the form's own: typing one into the form stays possible, a file may not
+        bring it in."""
+        if not info:                                   # no sidecar: what the form says
+            return self.desc, self.collect(), self.ctx.folder
+        if rd is not None and isinstance(st, str) and not _inside(st, rd):
+            self._console(f"[resume] refused: the paused state ({st}) is not inside the run folder {rd}")
+            QMessageBox.warning(self, "Resume", "This paused run's saved state is not inside its run folder, so it "
+                                "will not be used.")
+            return None
+        from training.registry import get
+        fam = info.get("family")
+        desc = get(fam) if fam else self.desc
+        if desc is None:
+            self._console(f"[resume] refused: the paused run names a model family that does not exist ({fam})")
+            QMessageBox.warning(self, "Resume", f"This paused run is for a model family TagScribeR does not have "
+                                f"({fam}), so it cannot be resumed.")
+            return None
+        raw = info.get("values")
+        if not isinstance(raw, dict) or not raw:
+            return desc, self.collect(), info.get("folder") if isinstance(info.get("folder"), str) and info.get(
+                "folder") else self.ctx.folder
+        values, rep = presets.apply(raw, P.defaults(), desc)
+        if rep.blocked:
+            self._console("[resume] refused: " + " ".join(rep.messages()))
+            QMessageBox.warning(self, "Resume", "This paused run's settings are for a kind of training TagScribeR "
+                                "cannot do for this model, so it will not be resumed.")
+            return None
+        for key, value, why in rep.refused:
+            self._console(f"[resume] dropped the saved value of {key} ({value!r}): {why}")
+        for key in rep.ignored:
+            self._console(f"[resume] dropped an unknown entry in the paused settings: {key}")
+        opt = P.BY_KEY["OPTIMIZER_TYPE"]
+        offered = P.options_for(opt, desc)
+        if "OPTIMIZER_TYPE" in raw and P.match_option(raw["OPTIMIZER_TYPE"], offered) is None:
+            now = self.collect()
+            keep = now.get("OPTIMIZER_TYPE")
+            if P.match_option(keep, offered) is None:
+                keep = values.get("OPTIMIZER_TYPE") if P.match_option(values.get("OPTIMIZER_TYPE"), offered) else (
+                    offered[0] if offered else keep)
+            self._console(f"[resume] the paused settings name an optimizer this model does not offer "
+                          f"({raw['OPTIMIZER_TYPE']!r}); the form's {keep!r} is used instead")
+            values["OPTIMIZER_TYPE"] = keep
+            if "OPTIMIZER_ARGS" in raw:
+                values["OPTIMIZER_ARGS"] = now.get("OPTIMIZER_ARGS", "")
+        folder = info.get("folder")
+        return desc, values, folder if isinstance(folder, str) and folder else self.ctx.folder
 
     def resume_paused(self):
         rd = self.run.run_dir if self.run else getattr(self, "_paused_dir", None)
@@ -1232,10 +1379,10 @@ class TrainTab(QWidget):
         if not st:
             QMessageBox.information(self, "Resume", "No paused state was found.")
             return
-        from training.registry import get
-        desc = get((info or {}).get("family", "")) or self.desc
-        values = (info or {}).get("values") or self.collect()
-        folder = (info or {}).get("folder") or self.ctx.folder
+        checked = self._checked_paused(info, rd, st)
+        if checked is None:
+            return
+        desc, values, folder = checked
         if (info or {}).get("mode") == "ft" or pipeline.ft_on(desc, values):
             # Fizgig web/server.py:3144-3160: from the paused checkpoint, for the rotations that are left
             if not os.path.isfile(st):
@@ -1347,14 +1494,25 @@ class TrainTab(QWidget):
                 self.ctx.reload_from_disk(paths)
             except Exception:
                 pass
-        dlg = ProblemImagesDialog(str(rd), str(self.values.get("DATASET_CAPTION_EXT") or ".txt"), self.ctx.folder,
-                                  self, on_saved=saved)
+        cur = getattr(self, "_problem_dlg", None)
+        if cur is not None:                       # one window: the open one comes forward (or goes, for another run)
+            if cur.isVisible() and cur.run_dir == str(rd) and cur.folder == self.ctx.folder:
+                cur.raise_()
+                cur.activateWindow()
+                return
+            cur.close()
+        dlg = self._problem_dlg = ProblemImagesDialog(
+            str(rd), str(self.values.get("DATASET_CAPTION_EXT") or ".txt"), self.ctx.folder, self, on_saved=saved)
+        dlg.destroyed.connect(lambda *_, d=dlg: setattr(self, "_problem_dlg", None)
+                              if getattr(self, "_problem_dlg", None) is d else None)
         dlg.show()
 
     def open_override(self):
         rd = self._run_dir_or_say()
         if rd is not None:
-            SampleOverrideDialog(str(rd), self).exec()
+            dlg = SampleOverrideDialog(str(rd), self)
+            dlg.exec()
+            dlg.deleteLater()
 
     def open_run_folder(self):
         rd = self._run_dir_or_say()
@@ -1390,7 +1548,14 @@ class TrainTab(QWidget):
         if sig == self._loss_sig:
             return
         self._loss_sig = sig
-        self.chart.set_steps(pipeline.read_step_log(rd, name) if sig[1] is not None else None)
+        if sig[1] is None:
+            self._step_reader = None
+            self.chart.set_steps(None)
+            return
+        reader = getattr(self, "_step_reader", None)
+        if reader is None or reader.path != path:     # only the lines added since the last look are parsed
+            reader = self._step_reader = step_log.StepReader(path)
+        self.chart.set_steps(reader.poll())
 
     def _refresh_checkpoints(self):
         rd, name = self._run_dir(), self._output_name()

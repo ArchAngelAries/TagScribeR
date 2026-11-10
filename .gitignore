@@ -21,6 +21,23 @@ models/
 Dataset Collections/
 Image Edits/
 
+# Secrets, logs and OS litter (Thumbs.db holds thumbnails of the pictures in a folder)
+.env.*
+!.env.example
+*.log
+*.pem
+*.key
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Weight and archive files (family assets that are tracked on purpose are .safetensors and are not listed here)
+*.ckpt
+*.pt
+*.pth
+*.gguf
+*.onnx
+
 # IDEs
 .vscode/
 .idea/

@@ -58,6 +58,25 @@ Next, in order (sizes and upstream lines are in the audits):
    training maps and the viewer. The rest of stage 5 (DOP, Multi Concept, LoRA Isolation) after masked training if
    the owner agrees (question below).
 
+**Done on 2026-11-10** (pushed; unit-tested only): TagScribeR's own names everywhere a user reads (below);
+the token themes "TagScribeR dark" / "TagScribeR light" (stage 1 of the theme plan, reviewed; `dark_teal` stays the
+default); the sidebar's Patreon and Ko-fi links (`core/support.py`); audit-12 fixes F4, F5 and F12; the security and
+privacy pass from `audit/14_security_privacy_safety_review.md` (no critical finding; its five high ones and most of
+the rest fixed: keys bound to their host and really deleted, a redacting log filter, allow-list metadata cleaning
+with a re-read check, untrusted text shown as plain text, "Copy log for sharing" and "Export for sharing", bounded
+header readers, atomic LoRA saves, windows and menus deleted after use, a stricter `tools/check_release.py`).
+
+**Three more studies (2026-11-10), each ending with questions for the owner:**
+
+- `audit/14_security_privacy_safety_review.md`: still open from it: a pixel limit for very large pictures (M4), a
+  way to clear the thumbnail / backup caches from the app (M5), a running trainer when the app itself crashes (L13),
+  caption files of absurd size (L7), and the commit e-mail in the public history (M7: the owner's decision).
+- `UI_UX_REDESIGN.md` with `mockups/tagscriber_trace_mockup.html`: the "Trace" design direction, measured freezes
+  (folder open 4.5 s at 5,000 pictures and 20 s at 20,000, return to the Gallery up to 4.6 s, start 2.8 s) with
+  budgets, and a nine-stage plan. Stage 0 ("stop the freezes") is the next UI work; stages 1-4 follow in its order.
+- `CAPTION_SPEED.md`: the captioning speed study and the new request pipeline for API servers (see that file for
+  what is on by default and what is opt-in).
+
 **Naming and credit (the owner, 2026-11-10):** TagScribeR is its own program, not affiliated with Fizgig. Names a
 user sees are TagScribeR's own (Fizgig-coined feature and preset names renamed; field-standard terms kept); hidden
 setting keys and stored option values stay, so Fizgig preset files import; Fizgig is credited in one place (Help

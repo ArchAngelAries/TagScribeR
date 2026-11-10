@@ -38,3 +38,27 @@ def make_image(path: Path, size=(32, 24), color=(200, 30, 30), mode="RGB", **sav
     fill = color if mode != "RGBA" else color + (128,)
     Image.new(mode, size, fill).save(path, **save_kwargs)
     return path
+
+
+@pytest.fixture(autouse=True, scope="module")
+def close_leftover_windows():
+    """After each test module, close and delete the windows its tests left open. Widget tests build whole tabs and
+    never destroy them; a later test that restyles the application (a theme switch re-polishes every live widget) then
+    pays for all of them, and the suite slows to a crawl."""
+    yield
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        return
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        return
+    for w in list(app.topLevelWidgets()):
+        try:
+            w.close()
+            w.deleteLater()
+        except RuntimeError:               # already deleted on the C++ side
+            pass
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    app.processEvents()

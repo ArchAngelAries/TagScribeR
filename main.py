@@ -134,6 +134,8 @@ class MainWindow(QMainWindow):
             Command("Undo", ctx.undo, "Edit", "Ctrl+Z", enabled=has_folder),
             Command("Redo", ctx.redo, "Edit", "Ctrl+Y", enabled=has_folder),
             Command("Select all shown images", lambda: b().select_all(), "Select", "Ctrl+A", enabled=has_folder),
+            Command("Deselect all images", lambda: b().deselect_all(), "Select", "Ctrl+Shift+A",
+                    keywords="clear selection none", enabled=has_folder),
             Command("Select images missing captions", lambda: b().select_matching("missing:caption"), "Select",
                     enabled=has_folder),
             Command("Select unsaved images", lambda: b().select_matching("is:unsaved"), "Select", enabled=has_folder),

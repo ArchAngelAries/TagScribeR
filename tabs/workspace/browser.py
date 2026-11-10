@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, 
                                QListView, QMenu, QPushButton, QSlider, QToolButton, QVBoxLayout, QWidget)
 
 from core.query import compile_query
-from tabs.common import ClickToDeselect, confirm
+from tabs.common import ClickToDeselect, SelectAllToggle, confirm
 from tabs.workspace.context import WorkspaceContext
 from tabs.workspace.delegate import CardDelegate
 from tabs.workspace.model import ENTRY_ROLE, KEY_ROLE, SORT_MODES, FilterProxy
@@ -161,6 +161,7 @@ class DatasetBrowser(QWidget):
         self.view.setStyleSheet("QListView { background-color: #1f1f1f; border: none; }")
         self.view.viewport().installEventFilter(self)
         self._deselect = ClickToDeselect(self.view)        # click a selected image again to deselect it
+        self._select_toggle = SelectAllToggle(self.view)   # Ctrl+A again deselects all; Ctrl+Shift+A deselects all
         lay.addWidget(self.view, 1)
         self.lbl_status = QLabel("Open a folder to start.")
         self.lbl_status.setStyleSheet("color: #9a9a9a; padding: 2px;")
@@ -314,6 +315,13 @@ class DatasetBrowser(QWidget):
     def select_all(self):
         self.view.selectAll()
 
+    def deselect_all(self):
+        self.view.clearSelection()
+
+    def toggle_select_all(self):
+        """What Ctrl+A does in the grid: select every shown image, or deselect them all when all are selected."""
+        self._select_toggle.toggle()
+
     def select_matching(self, query: str):
         q = compile_query(query)
         sel = self.view.selectionModel()
@@ -404,6 +412,7 @@ class DatasetBrowser(QWidget):
             menu.addAction(f"Move {len(keys)} to Recycle Bin…\tShift+Del", lambda: self.ctx.trash(self, keys))
             menu.addSeparator()
         menu.addAction("Select all\tCtrl+A", self.select_all)
+        menu.addAction("Deselect all\tCtrl+Shift+A", self.deselect_all).setEnabled(bool(keys))
         menu.addAction("Select images missing captions", lambda: self.select_matching("missing:caption"))
         menu.addAction("Select unsaved", lambda: self.select_matching("is:unsaved"))
         menu.exec(self.view.viewport().mapToGlobal(pos))

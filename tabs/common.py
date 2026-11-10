@@ -252,6 +252,41 @@ class ClickToDeselect(QObject):
         sm.select(keep, QItemSelectionModel.ClearAndSelect)
 
 
+class SelectAllToggle(QObject):
+    """Ctrl+A on an item view selects everything shown; pressed again while everything is selected it deselects
+    everything (Qt's own Ctrl+A only ever selects). Ctrl+Shift+A always deselects everything. Keys typed into an
+    editor inside the view (a caption being edited) never reach this filter."""
+
+    def __init__(self, view):
+        super().__init__(view)
+        self.view = view
+        view.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_A:
+            mods = event.modifiers() & ~Qt.KeypadModifier
+            if mods == Qt.ControlModifier:
+                self.toggle()
+                return True
+            if mods == (Qt.ControlModifier | Qt.ShiftModifier):
+                self.view.clearSelection()
+                return True
+        return False
+
+    def all_selected(self) -> bool:
+        model, sm = self.view.model(), self.view.selectionModel()
+        if model is None or sm is None:
+            return False
+        total = model.rowCount(self.view.rootIndex())
+        return total > 0 and len({i.row() for i in sm.selectedIndexes()}) >= total
+
+    def toggle(self):
+        if self.all_selected():
+            self.view.clearSelection()
+        else:
+            self.view.selectAll()
+
+
 class WheelGuard(QObject):
     """App-wide: the mouse wheel never changes a dropdown, number box or slider the pointer merely passes over while
     a panel scrolls. Until the control has keyboard focus (click it, or Tab to it) the wheel scrolls the panel it

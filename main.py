@@ -11,18 +11,23 @@ hardware.apply_runtime_env()
 setup_logging()
 os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut  # noqa: E402
-from PySide6.QtWidgets import (QApplication, QHBoxLayout, QListWidget, QMainWindow, QMessageBox,  # noqa: E402
-                               QPushButton, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QListWidget, QListWidgetItem, QMainWindow,  # noqa: E402
+                               QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
 from core import paths  # noqa: E402
 from core.config import settings  # noqa: E402
 from tabs import CaptionTab, DatasetsTab, EditorTab, GalleryTab, HelpDialog, MetadataTab, SettingsTab  # noqa: E402
+from tabs import icons, theme  # noqa: E402
 from tabs.settings import apply_theme  # noqa: E402
 
 log = logging.getLogger("tagscriber")
 APP_ID = "ArchAngelAries.TagScribeR"
 APP_TITLE = "TagScribeR"
+# The sidebar rows in stack order (Ctrl+1..7): label, icon name in tabs/icons.py (the icons the rows always had)
+SIDEBAR_TABS = (("Gallery", "gallery"), ("Auto Caption", "caption"), ("Image Editor", "editor"),
+                ("Datasets", "open"), ("Metadata", "metadata"), ("Train", "train"), ("Settings", "settings"))
 
 
 class MainWindow(QMainWindow):
@@ -40,26 +45,27 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
+        # The look of the sidebar comes from tabs/theme.py: its object names under the token themes, the styles it
+        # always had (theme.LEGACY_QSS) under the qt_material ones.
         sidebar_container = QWidget()
+        sidebar_container.setObjectName("sidebar_container")
         sidebar_container.setFixedWidth(200)
-        sidebar_container.setStyleSheet("background-color: #232323;")
+        theme.legacy_style(sidebar_container, "sidebar_container")
         sidebar_layout = QVBoxLayout(sidebar_container)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         self.sidebar = QListWidget()
-        for label in ("🖼️ Gallery", "🤖 Auto Caption", "✏️ Image Editor", "📂 Datasets", "ℹ️ Metadata", "🎓 Train",
-                      "⚙️ Settings"):
-            self.sidebar.addItem(label)
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        for i, (label, icon_name) in enumerate(SIDEBAR_TABS):
+            item = QListWidgetItem(icons.icon(icon_name), label)
+            item.setToolTip(f"{label} (Ctrl+{i + 1})")
+            self.sidebar.addItem(item)
         self.sidebar.currentRowChanged.connect(self.change_tab)
-        self.sidebar.setStyleSheet("""
-            QListWidget { border: none; background-color: #232323; font-size: 15px; }
-            QListWidget::item { padding: 15px; border-bottom: 1px solid #2c2c2c; }
-            QListWidget::item:selected { background-color: #00b894; color: white; }
-        """)
-        btn_help = QPushButton("❓ Help / Manual")
-        btn_help.setStyleSheet("""
-            QPushButton { background-color: #2d3436; color: #aaa; border: none; padding: 15px; text-align: left; }
-            QPushButton:hover { background-color: #333; color: white; }
-        """)
+        theme.legacy_style(self.sidebar, "sidebar")
+        btn_help = QPushButton("Help / Manual")
+        btn_help.setObjectName("sidebar_help")
+        icons.set(btn_help, "help", "nav")          # follows the theme, also after a later switch
+        theme.legacy_style(btn_help, "sidebar_help")
         btn_help.setToolTip("Help Center — guides for every tool (F1 opens help for the current tab)")
         btn_help.clicked.connect(lambda: self.show_help("start"))
         sidebar_layout.addWidget(self.sidebar)
@@ -126,8 +132,7 @@ class MainWindow(QMainWindow):
         has_folder = lambda: ctx.session is not None  # noqa: E731
         b = self._active_browser
         cmds = [Command(name, lambda i=i: self._goto(i), "Go to", f"Ctrl+{i + 1}")
-                for i, name in enumerate(("Gallery", "Auto Caption", "Image Editor", "Datasets", "Metadata",
-                                          "Train", "Settings"))]
+                for i, (name, _icon) in enumerate(SIDEBAR_TABS)]
         cmds += [
             Command("Open folder…", lambda: b().select_folder(), "File", "Ctrl+O"),
             Command("Save changed captions", lambda: b().save(), "File", "Ctrl+S", enabled=has_folder),
@@ -255,8 +260,8 @@ def main():
     apply_theme(settings().get("ui.theme"))
     preload_ai_runtime(app)
     window = MainWindow()
-    from tabs import icons
     icons.apply_icons(window)
+    theme.refresh_icons(window)         # a token theme recolours the icons just made; a qt_material one leaves them
     window.show()
     log.info("TagScribeR started")
     code = app.exec()

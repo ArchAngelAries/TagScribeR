@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QAbstractScrollArea, QAbstractSlider, QAbstractSp
                                QScrollBar, QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from core.image_utils import load_thumbnail
+from tabs import theme
 
 log = logging.getLogger(__name__)
 
@@ -97,7 +98,8 @@ class CollapsibleSection(QWidget):
     def __init__(self, title: str, expanded: bool = False, parent: QWidget | None = None):
         super().__init__(parent)
         self.toggle = QToolButton(text=title.replace("&", "&&"), checkable=True, checked=expanded)
-        self.toggle.setStyleSheet("QToolButton { border: none; font-weight: bold; color: #bbb; }")
+        self.toggle.setObjectName("section_toggle")
+        theme.legacy_style(self.toggle, "section_toggle")
         self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
         self.toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -336,7 +338,8 @@ def install_wheel_guard(app: QApplication) -> WheelGuard:
 def hint_label(text: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet("color: #8a8a8a; font-size: 11px;")
+    lbl.setObjectName("hint")
+    theme.legacy_style(lbl, "hint")
     return lbl
 
 

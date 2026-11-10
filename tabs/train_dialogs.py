@@ -5,11 +5,12 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, Qt, QTimer
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                                QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
+from tabs import theme
 from tabs.common import hint_label
 from training import pipeline
 
@@ -117,12 +118,13 @@ class LossChart(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         r = self._plot_rect()
-        p.fillRect(self.rect(), QColor("#1e1e1e"))
-        p.setPen(QColor("#555"))
+        c = theme.qcolor                                     # the chart's colours follow the theme (tabs/theme.py)
+        p.fillRect(self.rect(), c("chart_bg"))
+        p.setPen(c("chart_frame"))
         p.drawRect(r)
         steps = self.steps["points"] if self.steps else []
         if not self.points and not steps:
-            p.setPen(QColor("#888"))
+            p.setPen(c("chart_muted"))
             p.drawText(r, Qt.AlignCenter, "The loss chart fills in as the run trains.")
             return
         span = self._epoch_span() if steps else {}
@@ -149,40 +151,40 @@ class LossChart(QWidget):
             every = max(1, -(-len(span) // 10))
             for i, (e, (first, _last)) in enumerate(sorted(span.items())):
                 x = xy(first, lo, lo, hi).x()
-                p.setPen(QPen(QColor("#333"), 1))
+                p.setPen(QPen(c("chart_grid"), 1))
                 p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))
                 if i % every == 0:
-                    p.setPen(QColor("#777"))
+                    p.setPen(c("chart_faint"))
                     p.drawText(QPointF(x + 2, r.bottom() - 3), f"e{e}")
-        p.setPen(QColor("#aaa"))
+        p.setPen(c("chart_text"))
         p.drawText(2, r.top() + 10, f"{hi:.4f}")
         p.drawText(2, r.bottom(), f"{lo:.4f}")
         p.drawText(r.left(), self.height() - 4, f"step {x0:g}" if steps else f"epoch {x0:g}")
         right = f"step {x1:g}" if steps else f"epoch {x1:g}"
         p.drawText(r.right() - 10 - p.fontMetrics().horizontalAdvance(right), self.height() - 4, right)
         if lrs:
-            p.setPen(QPen(QColor("#e17055"), 1, Qt.DashLine))
+            p.setPen(QPen(c("chart_lr"), 1, Qt.DashLine))
             pts = [xy(x, v, lr_lo, lr_hi) for x, v in lr_pts]
             for a, b in zip(pts, pts[1:]):
                 p.drawLine(a, b)
             p.drawText(r.right() + 2, r.top() + 10, f"{lr_hi:.1e}")
         if steps:
-            p.setPen(QPen(QColor(0, 184, 148, 70), 1))
+            p.setPen(QPen(c("chart_raw", 70), 1))
             raw = [xy(pt[0], pt[2], lo, hi) for pt in steps]
             for a, b in zip(raw, raw[1:]):
                 p.drawLine(a, b)
-            p.setPen(QPen(QColor("#81ecec"), 2))
+            p.setPen(QPen(c("chart_smooth"), 2))
             sm = [xy(pt[0], v, lo, hi) for pt, v in zip(steps, self._smoothed())]
             for a, b in zip(sm, sm[1:]):
                 p.drawLine(a, b)
-        p.setPen(QPen(QColor("#00b894"), 2))
+        p.setPen(QPen(c("chart_avg"), 2))
         pts = [xy(x, l, lo, hi) for x, l, _ in avg]
         if not steps:
             for a, b in zip(pts, pts[1:]):
                 p.drawLine(a, b)
         for pt in pts:
             p.drawEllipse(pt, 2.5, 2.5)
-        p.setPen(QColor("#fdcb6e"))
+        p.setPen(c("chart_mark"))
         for e, act in self.marks.items():
             sym = "!" if "ROLLBACK" in act else ("↑" if "UP" in act else ("↓" if act.startswith("REDUCE") else ""))
             ex = (span[e][0] if e in span else None) if steps else e
@@ -191,12 +193,12 @@ class LossChart(QWidget):
         note = Qt.AlignTop | Qt.AlignHCenter
         if steps and self._hover is not None and self._hover < len(steps):
             x = xy(steps[self._hover][0], lo, lo, hi).x()
-            p.setPen(QPen(QColor("#dfe6e9"), 1, Qt.DotLine))
+            p.setPen(QPen(c("chart_cursor"), 1, Qt.DotLine))
             p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))
-            p.setPen(QColor("#dfe6e9"))
+            p.setPen(c("chart_cursor"))
             p.drawText(r.adjusted(6, 2, -6, 0), note, self.readout(self._hover))
         elif steps:
-            p.setPen(QColor("#888"))
+            p.setPen(c("chart_muted"))
             stride = self.steps.get("stride", 1)
             p.drawText(r.adjusted(6, 2, -6, 0), note,
                        f"{self.steps['steps']} steps" + (f" · every {stride}th drawn" if stride > 1 else ""))
@@ -296,7 +298,7 @@ class ProblemImagesDialog(QDialog):
                 it = QTableWidgetItem(v)
                 it.setData(Qt.UserRole, k)
                 if s.get("verdict") in ("stuck", "excluded", "suspect"):
-                    it.setForeground(QColor("#ff7675"))
+                    it.setForeground(theme.qcolor("level_high"))
                 self.table.setItem(i, c, it)
             if k == sel:
                 self.table.selectRow(i)

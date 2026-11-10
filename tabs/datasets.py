@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QInputDialog, QLabel, QListWidget, Q
 
 from core import caption_io, dataset, fileops, paths
 from core.config import settings
+from tabs import theme
 from tabs.common import confirm, hint_label, run_in_background
 from tabs.workspace.browser import DatasetBrowser
 from tabs.workspace.context import workspace
@@ -79,6 +80,7 @@ class DatasetsTab(QWidget):
         self.btn_del_col = QPushButton("🗑️ Delete")
         self.btn_del_col.setToolTip("Move the collection folder to the Recycle Bin")
         self.btn_del_col.clicked.connect(self.delete_collection)
+        theme.set_variant(self.btn_del_col, "danger")
         self.btn_refresh = QPushButton("🔄")
         self.btn_refresh.setFixedWidth(34)
         self.btn_refresh.setToolTip("Refresh (F5)")
@@ -97,13 +99,13 @@ class DatasetsTab(QWidget):
 
         self.btn_add = QPushButton("➕ Add Selected to Collection")
         self.btn_add.setToolTip("Copy the selected images and their captions into the chosen collection (Ctrl+Enter)")
-        self.btn_add.setStyleSheet("background-color: #00b894; color: white; font-weight: bold; padding: 8px;")
+        theme.set_variant(self.btn_add, "primary", legacy="accent_wide")
         self.btn_add.clicked.connect(self.add_to_collection)
         rl.addWidget(self.btn_add)
         self.btn_export = QPushButton("🚀 Export for Training…")
         self.btn_export.setToolTip("Training-ready copy of the selected images (or all shown, if none selected): "
                                    "bucket resize, metadata stripped, captions with trigger word, kohya folder layout")
-        self.btn_export.setStyleSheet("background-color: #6c5ce7; color: white; font-weight: bold; padding: 8px;")
+        theme.legacy_style(self.btn_export, "purple_wide")      # the panel has one primary action: Add
         self.btn_export.clicked.connect(self.export_for_training)
         rl.addWidget(self.btn_export)
         rl.addWidget(hint_label("Images are copied with their captions. Name clashes are renamed — nothing in a "

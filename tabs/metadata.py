@@ -23,13 +23,11 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFormLay
 
 from core import metadata as md
 from core.presets import PresetError, camera_presets, metadata_presets
-from tabs import icons
+from tabs import icons, theme
 from tabs.common import confirm, hint_label, run_in_background, show_job_summary
 from tabs.workspace.browser import DatasetBrowser
 from tabs.workspace.context import workspace
 from tabs.workspace.jobs import start_file_job
-
-LEVEL_COLORS = {"high": "#ff7675", "medium": "#fdcb6e", "low": "#9a9a9a"}
 
 
 def _scroll(w: QWidget) -> QScrollArea:
@@ -38,6 +36,9 @@ def _scroll(w: QWidget) -> QScrollArea:
     sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     sa.setWidget(w)
     return sa
+
+
+FINDING_ROLE = Qt.UserRole + 20         # on a findings row: "ok" or its level, so a theme change can recolour it
 
 
 class MetadataTab(QWidget):
@@ -114,6 +115,8 @@ class MetadataTab(QWidget):
         self.btn_save = QPushButton("💾 Save field edits")
         self.btn_save.setEnabled(False)
         self.btn_save.clicked.connect(self.save_edits)
+        theme.set_variant(self.btn_save, "primary")
+        theme.notifier().changed.connect(self._retheme)
         self.btn_use_prompt = QPushButton("Prompt → caption")
         self.btn_use_prompt.setToolTip("Copies the generation prompt into this image's caption (unsaved, undoable)")
         self.btn_use_prompt.clicked.connect(lambda: self.prompts_to_captions([self.current_key], replace=True))
@@ -154,7 +157,7 @@ class MetadataTab(QWidget):
             gl.addWidget(c)
         lay.addWidget(g)
         b_clean = QPushButton("🧹 Clean metadata…")
-        b_clean.setStyleSheet("background-color: #0984e3; color: white; font-weight: bold; padding: 6px;")
+        theme.set_variant(b_clean, "primary", legacy="blue")
         b_clean.clicked.connect(self.clean)
         lay.addWidget(b_clean)
         lay.addWidget(hint_label("Supported: JPEG, PNG, WebP. Captions (.txt) are separate files and aren't affected."))
@@ -177,6 +180,7 @@ class MetadataTab(QWidget):
         b_save.clicked.connect(self._save_author)
         b_del = QPushButton("Delete")
         b_del.clicked.connect(self._delete_author)
+        theme.set_variant(b_del, "danger")
         row.addWidget(self.combo_author, 1)
         row.addWidget(b_save)
         row.addWidget(b_del)
@@ -197,7 +201,7 @@ class MetadataTab(QWidget):
         lay.addLayout(f)
         self.rad_auth_sel, self.rad_auth_shown = self._scope_row(lay)
         b_apply = QPushButton("✍ Apply authorship…")
-        b_apply.setStyleSheet("background-color: #6c5ce7; color: white; font-weight: bold; padding: 6px;")
+        theme.set_variant(b_apply, "primary", legacy="purple")
         b_apply.clicked.connect(self.apply_author)
         lay.addWidget(b_apply)
         lay.addWidget(hint_label("Blank fields are left unchanged. Combine with Privacy & cleanup to remove other data."))
@@ -244,6 +248,7 @@ class MetadataTab(QWidget):
         b_del = QPushButton("Delete")
         b_del.setToolTip("Delete the selected preset. Built-in presets can't be deleted")
         b_del.clicked.connect(self._delete_camera)
+        theme.set_variant(b_del, "danger")
         row.addWidget(self.combo_camera, 1)
         row.addWidget(b_save)
         row.addWidget(b_del)
@@ -318,8 +323,8 @@ class MetadataTab(QWidget):
 
         self.rad_cam_sel, self.rad_cam_shown = self._scope_row(lay)
         b_apply = QPushButton("Apply camera data…")
-        icons.set(b_apply, "camera", "#ffffff")
-        b_apply.setStyleSheet("background-color: #00b894; color: white; font-weight: bold; padding: 6px;")
+        theme.set_variant(b_apply, "primary", legacy="accent")
+        icons.set(b_apply, "camera", "on_accent")
         b_apply.setToolTip("Write these camera fields to the chosen image files (JPEG, PNG, WebP)")
         b_apply.clicked.connect(self.apply_camera)
         lay.addWidget(b_apply)
@@ -385,18 +390,35 @@ class MetadataTab(QWidget):
 
         run_in_background(lambda: md.read_metadata(key), done)
 
+    def _retheme(self):
+        """A theme change: the findings and the read-only values hold colours. Recolour the existing items in place;
+        rebuilding the table would throw away field edits that are not saved yet."""
+        for i in range(self.list_findings.count()):
+            item = self.list_findings.item(i)
+            level = item.data(FINDING_ROLE)
+            if level == "ok":
+                item.setForeground(theme.qcolor("success"))
+            elif level:
+                item.setForeground(QColor(theme.level_color(level)))
+        for i in range(self.table.rowCount()):
+            v = self.table.item(i, 1)
+            if v is not None and not v.data(Qt.UserRole):            # a read-only value
+                v.setForeground(theme.qcolor("text_readonly"))
+
     def _show_report(self, r: md.MetaReport):
         self.lbl_file.setText(f"<b>{Path(r.path).name}</b>" + (f"  — error: {r.error}" if r.error else ""))
         self.list_findings.clear()
         findings = md.privacy_findings(r)
         if not findings:
             item = QListWidgetItem("✓ Nothing sensitive found")
-            item.setForeground(QColor("#00b894"))
+            item.setForeground(theme.qcolor("success"))
+            item.setData(FINDING_ROLE, "ok")
             self.list_findings.addItem(item)
         for f in findings:
             item = QListWidgetItem(f"● {f.label} — {f.detail}")
-            item.setForeground(QColor(LEVEL_COLORS[f.level]))
+            item.setForeground(QColor(theme.level_color(f.level)))
             item.setToolTip(f.detail)
+            item.setData(FINDING_ROLE, f.level)
             self.list_findings.addItem(item)
         self.table.blockSignals(True)
         rows = r.rows()
@@ -408,7 +430,7 @@ class MetadataTab(QWidget):
             v.setData(Qt.UserRole, edit)
             if not edit:
                 v.setFlags(v.flags() & ~Qt.ItemIsEditable)
-                v.setForeground(QColor("#9a9a9a"))
+                v.setForeground(theme.qcolor("text_readonly"))
             self.table.setItem(i, 0, k)
             self.table.setItem(i, 1, v)
         self.table.resizeRowsToContents()
@@ -459,7 +481,7 @@ class MetadataTab(QWidget):
                 self.lbl_audit.setText(f"✓ Nothing sensitive found in {len(keys)} image(s).")
                 return
             order = {"high": 0, "medium": 1, "low": 2}
-            lines = [f"<span style='color:{LEVEL_COLORS[lv]}'>● {label}: {n} of {len(keys)}</span>"
+            lines = [f"<span style='color:{theme.level_color(lv)}'>● {label}: {n} of {len(keys)}</span>"
                      for (lv, label), n in sorted(counts.items(), key=lambda kv: (order[kv[0][0]], -kv[1]))]
             self.lbl_audit.setText("<br>".join(lines))
 

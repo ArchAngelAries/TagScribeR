@@ -16,6 +16,8 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QAbstractButton, QListWidget, QTabWidget, QWidget
 
+from tabs import theme
+
 log = logging.getLogger(__name__)
 
 NAMES = {
@@ -47,8 +49,13 @@ EMOJI = {
 }
 
 _available: bool | None = None
-_cache: dict[tuple[str, str], QIcon] = {}
-DEFAULT_COLOR = "#dddddd"
+_cache: dict[tuple, QIcon] = {}
+_records: dict[int, tuple[str, str | None]] = {}     # QIcon.cacheKey() -> (icon name, colour request)
+DEFAULT_COLOR = "#dddddd"      # the icon colour under every qt_material theme
+DEFAULT_COLOR_NAV = "#ffffff"  # the sidebar's Help button has always had a white icon under them
+# A colour request is None (the theme's icon colour), "on_accent" (text on a filled button), "nav" (the sidebar's Help
+# button) or a hex colour that never changes. theme.refresh_icons rebuilds an icon from its record, so a request that is
+# not a hex follows the theme.
 
 
 def available() -> bool:
@@ -61,23 +68,57 @@ def available() -> bool:
     return _available
 
 
-def icon(name: str, color: str = DEFAULT_COLOR) -> QIcon:
-    key = (name, color)
+def resolve_color(spec: str | None, widget=None, nav: bool = False) -> str:
+    """The hex colour a colour request means in the theme in force (qt_material: the colours icons always had)."""
+    if spec is None:
+        return theme.color("icon_nav" if nav else "icon")
+    if spec == "nav":
+        return DEFAULT_COLOR_NAV if theme.is_legacy() else theme.color("icon_nav")
+    if spec == "on_accent":
+        filled = theme.is_legacy() or widget is None or widget.property("variant") in ("primary", "danger")
+        return theme.color("text_on_accent") if filled else theme.color("icon")
+    return spec
+
+
+def _make(name: str, spec: str | None, color: str) -> QIcon:
+    off = theme.color("text_disabled")
+    # a token theme also gives the selected state (a selected sidebar row) the full-strength colour
+    selected = color if theme.is_legacy() else theme.color("icon")
+    key = (name, spec, color, off, selected)
     if key in _cache:
         return _cache[key]
     ic = QIcon()
     if available() and name in NAMES:
         try:
             import qtawesome as qta
-            ic = qta.icon(NAMES[name], color=color, color_disabled="#666666")
+            extra = {} if theme.is_legacy() else {"color_selected": selected, "color_active": color}
+            ic = qta.icon(NAMES[name], color=color, color_disabled=off, **extra)
         except Exception as e:
             log.debug("icon %s failed: %s", name, e)
     _cache[key] = ic
+    if not ic.isNull():
+        _records[ic.cacheKey()] = (name, spec)        # the cache keeps `ic` alive, so its key is never reused
     return ic
 
 
-def set(button: QAbstractButton, name: str, color: str = DEFAULT_COLOR) -> None:  # noqa: A001 - short, readable API
-    button.setIcon(icon(name, color))
+def icon(name: str, color: str | None = None) -> QIcon:
+    """The icon `name`; `color` None takes the theme's icon colour (see the colour requests above)."""
+    return _make(name, color, resolve_color(color))
+
+
+def lookup(ic: QIcon) -> tuple[str, str | None] | None:
+    """(name, colour request) of an icon made here, or None for any other icon (a picture, a thumbnail ...)."""
+    return None if ic.isNull() else _records.get(ic.cacheKey())
+
+
+def rebuild(record: tuple[str, str | None], widget=None, nav: bool = False) -> QIcon:
+    """The icon of `record` (from lookup) in the colours of the theme in force."""
+    name, spec = record
+    return _make(name, spec, resolve_color(spec, widget, nav))
+
+
+def set(button: QAbstractButton, name: str, color: str | None = None) -> None:  # noqa: A001 - short, readable API
+    button.setIcon(_make(name, color, resolve_color(color, button)))
     if button.iconSize().width() < 16:
         button.setIconSize(QSize(18, 18))
 
@@ -100,7 +141,7 @@ def apply_icons(root: QWidget) -> int:
     for btn in root.findChildren(QAbstractButton):
         name, rest = split_emoji(btn.text())
         if name:
-            set(btn, name, "#ffffff" if "background-color" in btn.styleSheet() else DEFAULT_COLOR)
+            set(btn, name, "on_accent" if "background-color" in btn.styleSheet() else None)
             btn.setText(rest)
             n += 1
     for lst in root.findChildren(QListWidget):

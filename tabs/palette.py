@@ -7,6 +7,8 @@ from typing import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout
 
+from tabs import theme
+
 
 @dataclass
 class Command:
@@ -60,7 +62,8 @@ class CommandPalette(QDialog):
         super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
         self.commands = [c for c in commands if c.enabled()]
         self.setMinimumSize(620, 420)
-        self.setStyleSheet("QDialog { background-color: #26292c; border: 1px solid #00b894; border-radius: 8px; }")
+        self.setObjectName("palette")
+        theme.legacy_style(self, "palette")
         lay = QVBoxLayout(self)
         self.input = QLineEdit()
         self.input.setPlaceholderText("Type a command… (e.g. 'missing', 'save', 'health', 'help filter')")
@@ -70,7 +73,8 @@ class CommandPalette(QDialog):
         self.list = QListWidget()
         self.list.itemActivated.connect(lambda _i: self._run_current())
         self.hint = QLabel("↑↓ to choose · Enter to run · Esc to close")
-        self.hint.setStyleSheet("color: #888; font-size: 11px;")
+        self.hint.setObjectName("hint")
+        theme.legacy_style(self.hint, "palette_hint")
         lay.addWidget(self.input)
         lay.addWidget(self.list, 1)
         lay.addWidget(self.hint)

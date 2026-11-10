@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QListWidget, QListW
 
 from core import captions
 from core.image_utils import load_qimage
+from tabs import theme
 from tabs.common import hint_label, run_in_background
 
 
@@ -27,12 +28,12 @@ def diff_html(old: str, new: str) -> str:
             parts.append("<a name='first'></a>")  # the view scrolls here so changes are visible at once
             marked = True
         if op == "del":
-            parts.append(f"<span style='color:#ff7675;text-decoration:line-through'>{t}</span>")
+            parts.append(f"<span style='color:{theme.color('diff_del')};text-decoration:line-through'>{t}</span>")
         elif op == "add":
-            parts.append(f"<span style='color:#55efc4;font-weight:bold'>{t}</span>")
+            parts.append(f"<span style='color:{theme.color('diff_add')};font-weight:bold'>{t}</span>")
         else:
-            parts.append(f"<span style='color:#cfcfcf'>{t}</span>")
-    return "".join(parts) or "<i style='color:#777'>(empty)</i>"
+            parts.append(f"<span style='color:{theme.color('diff_same')}'>{t}</span>")
+    return "".join(parts) or f"<i style='color:{theme.color('diff_empty')}'>(empty)</i>"
 
 
 class ReviewDialog(QDialog):
@@ -67,19 +68,19 @@ class ReviewDialog(QDialog):
         self.preview = QLabel()
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setFixedSize(300, 300)
-        self.preview.setStyleSheet("background-color: #1a1a1a; border-radius: 6px;")
+        theme.set_surface(self.preview, "image", legacy="preview_plain")
         top.addWidget(self.preview)
         cur_box = QVBoxLayout()
         cur_box.addWidget(QLabel("<b>Current caption</b>"))
         self.current = QTextBrowser()
-        self.current.setStyleSheet("QTextBrowser { color: #bbb; background-color: #1e1e1e; }")
+        theme.set_role(self.current, "secondary", legacy="text_current")
         cur_box.addWidget(self.current)
         top.addLayout(cur_box, 1)
         rl.addLayout(top)
-        rl.addWidget(QLabel("<b>Changes</b>  <span style='color:#55efc4'>added</span> · "
-                            "<span style='color:#ff7675'>removed</span>"))
+        self.lbl_legend = QLabel()
+        rl.addWidget(self.lbl_legend)
         self.changes = QTextBrowser()
-        self.changes.setStyleSheet("QTextBrowser { background-color: #1e1e1e; }")
+        theme.legacy_style(self.changes, "text_changes")
         self.changes.setMaximumHeight(150)
         rl.addWidget(self.changes)
         rl.addWidget(QLabel("<b>Caption after accepting</b> (you can edit it)"))
@@ -91,7 +92,7 @@ class ReviewDialog(QDialog):
 
         btns = QHBoxLayout()
         self.btn_accept = QPushButton("✓ Accept  (Ctrl+Enter)")
-        self.btn_accept.setStyleSheet("background-color: #00b894; color: white; font-weight: bold; padding: 6px;")
+        theme.set_variant(self.btn_accept, "primary", legacy="accent")
         self.btn_accept.clicked.connect(self.accept_current)
         self.btn_reject = QPushButton("✗ Reject  (Ctrl+Backspace)")
         self.btn_reject.clicked.connect(self.reject_current)
@@ -119,7 +120,15 @@ class ReviewDialog(QDialog):
                         ("Ctrl+Backspace", self.reject_current), ("Ctrl+Right", lambda: self._move(1)),
                         ("Ctrl+Left", lambda: self._move(-1))):
             QShortcut(QKeySequence(seq), self).activated.connect(fn)
+        theme.notifier().changed.connect(self._retheme)
+        self._retheme()
         self._refill()
+
+    def _retheme(self):
+        """The legend and the changes view hold the theme's colours as HTML: write them again."""
+        self.lbl_legend.setText(f"<b>Changes</b>  <span style='color:{theme.color('diff_add')}'>added</span> · "
+                                f"<span style='color:{theme.color('diff_del')}'>removed</span>")
+        self._update_changes()
 
     # ------------------------------------------------------------------ queue
     def add_items(self, items: list[tuple[str, str, str]]) -> None:

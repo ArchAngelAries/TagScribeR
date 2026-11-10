@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, Q
 
 from core.config import settings
 from tabs.common import ClickToDeselect, CollapsibleSection, confirm, hint_label
-from tabs import icons, memory_bar
+from tabs import icons, memory_bar, theme
 from tabs.train_dialogs import LossChart, ProblemImagesDialog, SampleOverrideDialog, SliderPromptsDialog
 from tabs.workspace.context import workspace
 from training import params as P
@@ -787,6 +787,11 @@ class TrainTab(QWidget):
         self.btn_stop.setToolTip("Stop immediately (nothing more is saved; epochs already saved stay). Use Pause to "
                                  "stop cleanly.")
         self.btn_stop.clicked.connect(self.stop)
+        # the token themes show the one main action filled, and the one that throws work away in red; under the
+        # classic qt_material themes these buttons look as they always did
+        theme.set_variant(self.btn_start, "primary")
+        theme.set_variant(self.btn_resume, "primary")
+        theme.set_variant(self.btn_stop, "danger")
         for b in (self.btn_start, self.btn_pause, self.btn_resume, self.btn_stop):
             row.addWidget(b)
         lay.addLayout(row)

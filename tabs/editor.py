@@ -22,6 +22,7 @@ from core.caption_io import caption_path
 from core.config import settings
 from core.image_ops import ASPECTS, FOCUS_POINTS, FORMATS, Operation
 from core.image_utils import pil_to_qimage
+from tabs import theme
 from tabs.common import confirm, hint_label, run_in_background, show_job_summary
 from tabs.workspace.browser import DatasetBrowser
 from tabs.workspace.context import workspace
@@ -244,7 +245,7 @@ class EditorTab(QWidget):
         from PySide6.QtWidgets import QSizePolicy
         lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         lbl.setFixedHeight(170)
-        lbl.setStyleSheet("background-color: #1a1a1a; border-radius: 6px; color: #777;")
+        theme.set_surface(lbl, "image", legacy="preview")
         return lbl
 
     def _watch(self, op_factory, *widgets):

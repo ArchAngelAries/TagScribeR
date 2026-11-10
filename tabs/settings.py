@@ -5,24 +5,27 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
                                QScrollArea, QSpinBox, QVBoxLayout, QWidget)
-from qt_material import apply_stylesheet, list_themes
+from qt_material import apply_stylesheet
 
 from core import paths
 from core.config import settings
 from inference.models import stability_matrix_llm_dirs
+from tabs import theme as ui_theme
 from tabs.common import hint_label, run_in_background
 
-APP_STYLE_TWEAKS = """
-    QStackedWidget { background-color: #1e1e1e; }
-    QScrollBar:vertical { width: 12px; }
-    QLineEdit, QTextEdit, QPlainTextEdit { border-radius: 4px; }
-"""
+DEFAULT_THEME = "dark_teal.xml"
 
 
 def apply_theme(theme: str) -> None:
+    """Make `theme` (the ui.theme setting) the look of the running app, at once: a token theme of tabs.theme
+    ("tagscriber_dark", "tagscriber_light") or a qt_material theme file name such as "dark_teal.xml"."""
     app = QApplication.instance()
+    if ui_theme.is_token_theme(theme):
+        ui_theme.apply(app, theme)
+        return
+    theme = ui_theme.set_legacy(app, theme)         # an unknown, empty or None name becomes dark_teal.xml
     apply_stylesheet(app, theme=theme)
-    app.setStyleSheet(app.styleSheet() + APP_STYLE_TWEAKS)
+    app.setStyleSheet(app.styleSheet() + ui_theme.overlay_qss())
 
 
 class SettingsTab(QWidget):
@@ -43,11 +46,18 @@ class SettingsTab(QWidget):
         grp_app = QGroupBox("Appearance")
         f_app = QFormLayout(grp_app)
         self.combo_theme = QComboBox()
-        self.combo_theme.addItems([t for t in list_themes() if "dark" in t or "light" in t])
-        i = self.combo_theme.findText(self.cfg.get("ui.theme"))
-        if i >= 0:
-            self.combo_theme.setCurrentIndex(i)
-        self.combo_theme.currentTextChanged.connect(self._on_theme)
+        for label, value in ui_theme.theme_choices():
+            self.combo_theme.addItem(label, value)
+        i = self.combo_theme.findData(self.cfg.get("ui.theme"))
+        self.combo_theme.setCurrentIndex(i if i >= 0 else max(0, self.combo_theme.findData(DEFAULT_THEME)))
+        self.combo_theme.setToolTip(
+            "The look of the whole app. The colours change at once and the choice is remembered; a few icons and "
+            "sizes settle after a restart.\n"
+            "TagScribeR dark and TagScribeR light are the app's own new themes: calmer colours, one accent colour, "
+            "text on panels and on the accent colour checked for contrast, and a light theme for the main panels "
+            "and controls (the image grid and the inspector preview keep their dark colours for now).\n"
+            "The dark_... and light_... entries are the classic themes. dark_teal is the look TagScribeR always had.")
+        self.combo_theme.currentIndexChanged.connect(self._on_theme)
         f_app.addRow("Theme:", self.combo_theme)
         self.combo_scale = QComboBox()
         for pct in (100, 115, 125, 150, 175, 200):
@@ -142,7 +152,8 @@ class SettingsTab(QWidget):
                           lambda e: self.txt_env.setPlainText(f"Hardware detection failed: {e}"))
 
     # --- handlers ---
-    def _on_theme(self, theme: str):
+    def _on_theme(self, _index: int = 0):
+        theme = self.combo_theme.currentData()
         apply_theme(theme)
         self.cfg.set("ui.theme", theme)
 

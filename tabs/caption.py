@@ -26,7 +26,7 @@ from core.presets import PresetError, caption_presets
 from inference.prompts import DEFAULT_PRESET
 from inference.worker import (SAVE_APPEND, SAVE_NONE, SAVE_OVERWRITE, SAVE_PREPEND, SAVE_SKIP_EXISTING,
                               BatchJob, combine, start_job)
-from tabs import icons
+from tabs import icons, theme
 from tabs.common import CollapsibleSection, confirm, hint_label, run_in_background, show_job_summary
 from tabs.workspace.browser import DatasetBrowser
 from tabs.workspace.context import JOB_FAILED, JOB_QUEUED, JOB_WORKING, workspace
@@ -206,10 +206,11 @@ class CaptionTab(QWidget):
         # 4. Run
         self.btn_run = QPushButton()
         self.btn_run.setFixedHeight(48)
+        self.btn_run.setProperty("btnSize", "large")     # not "size": that is QWidget's own property
         self.btn_run.clicked.connect(self.toggle_process_state)
         rl.addWidget(self.btn_run)
         self.btn_review = QPushButton("📝 Review proposals")
-        self.btn_review.setStyleSheet("background-color: #00897b; color: white; font-weight: bold; padding: 6px;")
+        theme.set_variant(self.btn_review, "primary", legacy="teal")
         self.btn_review.setToolTip("Compare AI captions with the current ones and accept or reject them")
         self.btn_review.clicked.connect(self.open_review)
         self.btn_review.setVisible(False)
@@ -222,7 +223,7 @@ class CaptionTab(QWidget):
         rl.addWidget(self.progress_bar)
         self.lbl_status = QLabel("Ready")
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setStyleSheet("color: #aaa;")
+        theme.set_role(self.lbl_status, "secondary", legacy="status")
         rl.addWidget(self.lbl_status)
 
         self.sec_log = CollapsibleSection("Log")
@@ -348,7 +349,7 @@ class CaptionTab(QWidget):
         self.inp_api_url.textEdited.connect(self._on_api_url_edited)
         self.inp_api_key.textEdited.connect(self._on_api_key_edited)
         self.lbl_api_warn = hint_label("")
-        self.lbl_api_warn.setStyleSheet("color: #e17055;")
+        theme.set_role(self.lbl_api_warn, "warning", legacy="warn")
         model_row = QHBoxLayout()
         self.inp_api_model = QComboBox()
         self.inp_api_model.setEditable(True)
@@ -927,13 +928,13 @@ class CaptionTab(QWidget):
     def _update_run_button(self):
         if self.worker is not None:
             self.btn_run.setText("Abort  (Esc)")
-            icons.set(self.btn_run, "stop", "#ffffff")
-            self.btn_run.setStyleSheet("background-color: #ff4757; font-weight: bold; font-size: 14px;")
+            theme.set_variant(self.btn_run, "danger", legacy="abort")
+            icons.set(self.btn_run, "stop", "on_accent")
         else:
             n = len(self.selected_paths)
             self.btn_run.setText(f"Caption {n} Selected  (Ctrl+Enter)" if n else "Select images to caption")
-            icons.set(self.btn_run, "run", "#ffffff")
-            self.btn_run.setStyleSheet("background-color: #d63031; font-weight: bold; font-size: 14px;")
+            theme.set_variant(self.btn_run, "primary", legacy="run")
+            icons.set(self.btn_run, "run", "on_accent")
         self.browser.btn_open.setEnabled(self.worker is None)
 
     def abort_process(self):

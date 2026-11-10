@@ -8,15 +8,20 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
                                QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
+from tabs import theme
 from tabs.help_content import HOTKEYS, TOPICS
 
-_STYLE = """
+
+def _style() -> str:
+    """The page's CSS in the colours of the theme in force."""
+    c = theme.color
+    return f"""
 <style>
- body { font-size: 13px; line-height: 1.45; }
- h2 { color: #00b894; margin-bottom: 6px; }
- h3 { color: #d0d0d0; margin-top: 14px; }
- code { background: #2b2b2b; color: #fdcb6e; padding: 1px 4px; }
- td { vertical-align: top; }
+ body {{ font-size: 13px; line-height: 1.45; }}
+ h2 {{ color: {c('help_h2')}; margin-bottom: 6px; }}
+ h3 {{ color: {c('help_h3')}; margin-top: 14px; }}
+ code {{ background: {c('help_code_bg')}; color: {c('help_code')}; padding: 1px 4px; }}
+ td {{ vertical-align: top; }}
 </style>
 """
 
@@ -76,9 +81,19 @@ class HelpDialog(QDialog):
 
         self.view = QTextBrowser()
         self.view.setOpenExternalLinks(True)
-        self.view.setStyleSheet("QTextBrowser { color: #dcdcdc; background-color: #1e1e1e; padding: 10px; }")
+        self.view.setObjectName("help_view")
+        theme.legacy_style(self.view, "help_view")
         lay.addWidget(self.view, 1)
+        self._tid = "start"
         self._populate()
+        theme.notifier().changed.connect(self._retheme)
+
+    def _retheme(self):
+        """A theme change while the Help Center exists: the page and the group headers hold colours."""
+        for i in range(self.list.count()):
+            if not self.list.item(i).data(Qt.UserRole):
+                self.list.item(i).setForeground(theme.qcolor("list_header"))
+        self._render(self._tid)
 
     def _populate(self):
         self.list.clear()
@@ -91,7 +106,7 @@ class HelpDialog(QDialog):
                 if g != group:
                     header = QListWidgetItem(g.upper())
                     header.setFlags(Qt.NoItemFlags)
-                    header.setForeground(Qt.gray)
+                    header.setForeground(theme.qcolor("list_header"))
                     self.list.addItem(header)
                     group = g
                 item = QListWidgetItem("   " + title)
@@ -113,7 +128,8 @@ class HelpDialog(QDialog):
 
     def _render(self, tid: str):
         title, _group, body = self.topics[tid]
-        self.view.setHtml(_STYLE + body)
+        self._tid = tid
+        self.view.setHtml(_style() + body)
 
     def _filter(self, text: str):
         q = text.strip().lower()
@@ -145,8 +161,7 @@ def help_button(topic: str, parent: QWidget | None = None, tooltip: str = "Help 
         b.setText("?")
     b.setToolTip(tooltip)
     b.setFixedSize(26, 26)
-    b.setStyleSheet("QToolButton { border-radius: 13px; background: #3a3f44; color: #ddd; font-weight: bold;"
-                    " padding: 0px; margin: 0px; min-width: 0px; min-height: 0px; }"
-                    "QToolButton:hover { background: #00b894; color: white; }")
+    b.setObjectName("help_dot")
+    theme.legacy_style(b, "help_dot")
     b.clicked.connect(lambda: HelpDialog.open_topic(b.window(), topic))
     return b

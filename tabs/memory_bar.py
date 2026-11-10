@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from core.vram_monitor import MemoryReader
+from tabs import theme
 
 GIB = 1073741824          # binary GB: matches the "20 GB" on the card's box
 VISIBLE_KEY = "ui.stats_bar_visible"
@@ -53,15 +54,28 @@ class _Segment(QWidget):
             return f"{self.label} stats unavailable"
         return f"{self.label}  {self.used / GIB:.1f} / {self.total / GIB:.1f} GB · peak {self.peak / GIB:.1f}"
 
+    def _text_on_fill(self, w: int, fill_right: float, text_w: int) -> str:
+        """Under a token theme: dark or white text, whichever reads better over the part of the gradient the figures
+        cross (the fill's colours do not follow the theme, so the theme's own text colour can not be trusted)."""
+        a, b = self.c_start, self.c_end
+        right = max(10.0, min(fill_right, 10.0 + text_w))
+        samples = []
+        for i in range(5):
+            x = 10.0 + (right - 10.0) * i / 4
+            f = x / w if w else 0.0
+            samples.append("#%02x%02x%02x" % tuple(round(ca + (cb - ca) * f) for ca, cb in (
+                (a.red(), b.red()), (a.green(), b.green()), (a.blue(), b.blue()))))
+        return max(("#0b0d0f", "#ffffff"), key=lambda c: min(theme.contrast(c, s) for s in samples))
+
     def paintEvent(self, _event):
         p = QPainter(self)
         w, h = self.width(), self.height()
-        p.fillRect(0, 0, w, h, QColor("#15171c"))
+        p.fillRect(0, 0, w, h, theme.qcolor("bar_track"))
         font = QFont(self.font())
         font.setBold(bool(self.available))
         p.setFont(font)
         if not self.available:
-            p.setPen(QColor("#8b93a1"))
+            p.setPen(theme.qcolor("bar_muted"))
             p.drawText(QRectF(10, 0, w - 10, h), Qt.AlignVCenter | Qt.AlignLeft, self.text())
             return
         frac = max(0.0, min(1.0, self.used / self.total)) if self.total else 0.0
@@ -69,13 +83,20 @@ class _Segment(QWidget):
         grad = QLinearGradient(0, 0, w, 0)
         grad.setColorAt(0.0, self.c_start)
         grad.setColorAt(1.0, self.c_end)
-        p.fillRect(QRectF(0, 1, w * frac, h - 2), grad)
+        fill = QRectF(0, 1, w * frac, h - 2)
+        p.fillRect(fill, grad)
         if self.peak and self.total:
             px = int(w * max(0.0, min(1.0, self.peak / self.total)))
-            p.setPen(QPen(QColor("#FFFFFF"), 2))
+            p.setPen(QPen(theme.qcolor("bar_text"), 2))
             p.drawLine(px, 0, px, h)
-        p.setPen(QColor("#FFFFFF"))
-        p.drawText(QRectF(10, 0, w - 10, h), Qt.AlignVCenter | Qt.AlignLeft, self.text())
+        # the figures cross the fill and the empty track: each part is written in the colour that reads on it
+        for clip, key in ((fill, "bar_text_on_fill"), (QRectF(fill.right(), 0, w - fill.right(), h), "bar_text")):
+            p.setClipRect(clip)
+            if key == "bar_text_on_fill" and not theme.is_legacy():
+                p.setPen(QColor(self._text_on_fill(w, fill.right(), p.fontMetrics().horizontalAdvance(self.text()))))
+            else:
+                p.setPen(theme.qcolor(key))
+            p.drawText(QRectF(10, 0, w - 10, h), Qt.AlignVCenter | Qt.AlignLeft, self.text())
 
 
 class MemoryBar(QWidget):

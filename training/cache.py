@@ -211,13 +211,16 @@ def encode_captions(driver, te, desc, dataset, items, *, skip_existing=False, re
             if on_progress:
                 on_progress(n, len(todo))
         return written
-    for i in range(0, len(todo), 8):
-        chunk = todo[i:i + 8]
+    # 8 captions per call, or the batch a driver asks for (MOSS-Image: 4096, Fizgig's cache_stage - its streamed text
+    # encoder then moves each layer to the GPU once per group instead of once per 8 captions)
+    step = max(1, int(getattr(driver, "text_cache_batch_size", 8) or 8))
+    for i in range(0, len(todo), step):
+        chunk = todo[i:i + step]
         for (it, cap, path, refs), c in zip(chunk, driver.encode_text(te, [cap for _, cap, _, _ in chunk])):
             save_cond(desc, it, c, path=path, caption=cap)
             written += 1
         if on_progress:
-            on_progress(min(i + 8, len(todo)), len(todo))
+            on_progress(min(i + step, len(todo)), len(todo))
     return written
 
 

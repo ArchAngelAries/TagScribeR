@@ -165,6 +165,18 @@ class QwenImage21Driver(FamilyDriver):
         return dit(state["xt"].to(torch.bfloat16), enc.to(torch.bfloat16), tt, [[(1, h, w)]], img_mask,
                    enc_mask)[:, -n:]
 
+    # ---- full fine-tune (training/ft.py; Fizgig 8.7.3 qwen_image21/driver.py:113-122) -------------------------
+    def ft_spec(self, dit):
+        # four balanced windows per block (attention ~0.13 GB, each MLP matrix ~0.10); the file fuses the MLP's gate
+        # and projection into one gate_up tensor, [gate_layer; proj]
+        from training.ft import FTSpec
+        return FTSpec(blocks="transformer_blocks", components=("attn", "img_mlp.gate_layer", "img_mlp.proj", "img_mlp.out"),
+                      file_layout=(("img_mlp.gate_layer.weight", "img_mlp.gate_up.weight", 0, 2),
+                                   ("img_mlp.proj.weight", "img_mlp.gate_up.weight", 1, 2)),
+                      # measured upstream 30 Sep on a 5090 at 0.5 MP: resident base 5.06 GB (MLP windows), streaming
+                      # base 2.2; 0.5 -> 0.98 MP grew the peaks by up to +2.1 GB (~4 GB/MP)
+                      overhead_gb=5.5, stream_base_gb=2.7, calib_mp=0.5, act_gb_per_mp=4.2)
+
     # ---- sampling -------------------------------------------------------------------------------
     @torch.no_grad()
     def initial_noise(self, seed, width, height):

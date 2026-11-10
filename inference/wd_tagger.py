@@ -137,6 +137,8 @@ class WDTagger(Provider):
                 import onnxruntime as ort
             except ImportError as e:
                 raise InferenceError("onnxruntime is not installed.", "Run update.bat.") from e
+            from core.hardware import ort_telemetry_off
+            ort_telemetry_off()                          # nothing about this machine leaves it
             model_path, tags_path = self._files(report)
             with open(tags_path, newline="", encoding="utf-8") as f:
                 self.tags = [(row["name"], int(row["category"])) for row in csv.DictReader(f)]

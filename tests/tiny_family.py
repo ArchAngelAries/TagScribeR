@@ -47,6 +47,28 @@ class TinyDiT(nn.Module):
         return x
 
 
+class TinyFTBlock(nn.Module):
+    """A block with two Linears (`attn`, `mlp`): the two parts a full fine-tune's windows rotate through."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d(4, DIM, 3, padding=1)
+        self.attn = nn.Linear(DIM, DIM)
+        self.mlp = nn.Linear(DIM, DIM)
+        self.out = nn.Conv2d(DIM, 4, 1)
+
+    def forward(self, x, ctx):
+        h = F.silu(self.conv(x))
+        h = h + self.mlp(F.silu(self.attn(ctx)))[:, :, None, None]
+        return x + self.out(h)
+
+
+class TinyFTDiT(TinyDiT):
+    def __init__(self):
+        super().__init__()
+        self.blocks = nn.ModuleList([TinyFTBlock(), TinyFTBlock()])
+
+
 class TinyVAE(nn.Module):
     def __init__(self):
         super().__init__()
@@ -76,15 +98,16 @@ class TinyTE:
 
 class TinyDriver(FamilyDriver):
     fixed_len = None
+    dit_class = TinyDiT
 
     def load_dit(self, path, device):
-        dit = TinyDiT()
+        dit = self.dit_class()
         try:
             from safetensors.torch import load_file
             dit.load_state_dict(load_file(path))
         except Exception:
             torch.manual_seed(0)
-            dit = TinyDiT()
+            dit = self.dit_class()
         return dit.to(device).eval().requires_grad_(False)
 
     def load_vae(self, path, device):
@@ -159,6 +182,16 @@ class TinyBatchDriver(TinyDriver):
     supports_batching = True
 
 
+class TinyFTDriver(TinyDriver):
+    """The tiny family with a full fine-tune (training/ft.py): two parts, `attn` and `mlp`, in each of two blocks. On
+    the CPU there is no 4-bit trunk, so the rotator swaps the dense frozen Linears (the test-only path)."""
+    dit_class = TinyFTDiT
+
+    def ft_spec(self, dit):
+        from training.ft import FTSpec
+        return FTSpec(blocks="blocks", components=("attn", "mlp"), overhead_gb=0.0, trunk_gb_per_block=0.0)
+
+
 def _preset(rank, adaptive=None, epochs=2):
     lo, hi = adaptive or ("2e-4", "4e-4")
     return {"NETWORK_DIM": rank, "NETWORK_ALPHA": rank, "NETWORK_TYPE": "LoRA (standard)", "LEARNING_RATE": 1e-3,
@@ -168,7 +201,7 @@ def _preset(rank, adaptive=None, epochs=2):
             "KREA2_LOSS_WATCH": True}
 
 
-def _desc(key, arch, driver):
+def _desc(key, arch, driver, block_modules=("conv", "lin", "out"), **extra):
     return FamilyDescription(
         key=key, arch_id=arch, display_name=f"Tiny test family ({key})", gui_label=key, lora_name_suffix=arch,
         model_files=(ModelFile(f"{arch}_dit", "Tiny DiT", True, role="dit"),
@@ -176,23 +209,26 @@ def _desc(key, arch, driver):
                      ModelFile(f"{arch}_te", "Tiny text encoder", True, role="text_encoder")),
         latent_channels=4, spatial_factor=8, bucket_step=32, n_blocks=2, block_prefix="blocks",
         lora=LoRAFormat(key_template="diffusion_model.blocks.{block}.{module}.{ab}.weight", down="lora_down",
-                        up="lora_up", block_modules=("conv", "lin", "out"), file_prefix="diffusion_model.",
+                        up="lora_up", block_modules=block_modules, file_prefix="diffusion_model.",
                         source="test"),
         driver=f"tests.tiny_family:{driver}", modelspec_arch="Tiny-Test", implementation="https://example.invalid",
         precisions=("bf16",), optimizers=("adamw", "adamw8bit"), network_types=("lora", "lokr"),
         ema_default="0.98", sampling=(SamplingSettings("tiny", steps=3, cfg=1.0, source="test"),),
         preview_steps=3, preview_width=64, preview_height=64, slider_training=True,
         presets=(("Tiny Fast (rank 4, adaptive)", _preset(4, adaptive=("2e-4", "4e-4"))),
-                 ("Tiny Flat (rank 8)", _preset(8))))
+                 ("Tiny Flat (rank 8)", _preset(8))) + tuple(extra.pop("more_presets", ())), **extra)
 
 
 TINY = _desc("_tiny", "tiny", "TinyDriver")
 TINY_BATCH = _desc("_tinyb", "tinyb", "TinyBatchDriver")
+TINY_FT = _desc("_tinyft", "tinyft", "TinyFTDriver", block_modules=("conv", "attn", "mlp", "out"), finetune=True,
+                ft_learning_rate=1e-3,
+                more_presets=(("Tiny Fine-tune", {**_preset(8), "FAMILY_FT": True, "FAMILY_FT_ROTATIONS": "2"}),))
 
 
 def register():
     from training import registry
-    for d in (TINY, TINY_BATCH):
+    for d in (TINY, TINY_BATCH, TINY_FT):
         if registry.get(d.key) is None:
             registry.register(d)
     return TINY
@@ -215,7 +251,7 @@ def make_dataset(folder, n=4, captions=None, sizes=None):
     return folder
 
 
-def write_models(folder, arch="tiny"):
+def write_models(folder, arch="tiny", dit_class=TinyDiT):
     """Dummy model files (the tiny driver builds its own weights; the DiT file holds a real state dict)."""
     import os
 
@@ -223,7 +259,7 @@ def write_models(folder, arch="tiny"):
     os.makedirs(folder, exist_ok=True)
     torch.manual_seed(0)
     dit = os.path.join(folder, "dit.safetensors")
-    save_file({k: v.contiguous() for k, v in TinyDiT().state_dict().items()}, dit)
+    save_file({k: v.contiguous() for k, v in dit_class().state_dict().items()}, dit)
     paths = {f"{arch}_dit": dit}
     for role in ("vae", "te"):
         p = os.path.join(folder, f"{role}.bin")

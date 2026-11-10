@@ -75,8 +75,14 @@ def _fizgig_preset(rank, lr, epochs=30, mp="1.0", slider=False):
         "DATASET_MEGAPIXELS": mp, "BLOCKS_SWAP": "Auto (detect from GPU)",
         "FAMILY_PRECISION": "Auto (fits your free VRAM)", "FAMILY_EMA": "0.98 (recommended)",
         "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": False, "KREA2_AUTO_RECAPTION": False,
-        "KREA2_WARMUP_LOOK": False, "FAMILY_SLIDER": slider,
+        "KREA2_WARMUP_LOOK": False, "FAMILY_SLIDER": slider, "FAMILY_FT": False,   # FZ 8.7.3 anima.py:23
     }
+
+
+def _ft_preset(lr):
+    # FZ 8.7.3 families/anima.py:161-166, verbatim: rank 16 at the fine-tune rate, 10 rotations (rank is not used by
+    # a fine-tune)
+    return {**_fizgig_preset(16, lr), "FAMILY_FT": True, "FAMILY_FT_ROTATIONS": "10"}
 
 
 def _preset(rank, epochs, adaptive, lo, hi, lr, mp):
@@ -212,16 +218,24 @@ ANIMA = FamilyDescription(
     preview_height=1024,
 
     slider_training=True,                   # Fizgig 7.0.1: from photo pairs or prompts
+    # full fine-tune (training/ft.py, the driver's ft_spec): attention and MLP of every block, rotating on an NF4 trunk;
+    # the shared default rate 1e-5 (FZ 8.7.3 families/anima.py:85-87). Not measured on Anima; not run on AMD hardware
+    finetune=True,
     presets=(
         # Fizgig 7.0.1's (community values, not measured in Fizgig either): characters at rank 16 and 1e-4 for 50 epochs
         # (the guides aim for ~1,000-1,500 steps on 20-30 images), styles at 5e-5, the card's rank 32 at 2e-5. The
-        # first is a first visit's preset. The Fine-tune presets wait for that mode (port plan stage 5)
+        # first is a first visit's preset
         ("✨ Anima Character (rank 16, 1e-4)", _fizgig_preset(16, 1e-4, epochs=50)),
         ("✨ Anima Style (rank 16, 5e-5)", _fizgig_preset(16, 5e-5)),
         ("✨ Anima Official (rank 32, 2e-5)", _fizgig_preset(32, 2e-5)),
         # Slider: Qwen's slider recipe (rank 8 since Fizgig 7.3.0, 2e-4, 30 epochs; FZ 8.7.1 families/anima.py:159-160);
         # "not yet measured on Anima" (Fizgig)
         ("✨ Anima Slider (rank 8, 2e-4)", _fizgig_preset(8, 2e-4, slider=True)),
+        # full fine-tune at the shared fine-tune rate (Fizgig), and at OneTrainer's ("#anima Finetune.json": 1e-6,
+        # Adafactor, the transformer blocks, text encoder frozen - the same scope as here) (FZ 8.7.3
+        # families/anima.py:161-166). "Not yet measured on Anima" (Fizgig)
+        ("✨ Anima Fine-tune (1e-5)", _ft_preset(1e-5)),
+        ("✨ Anima Fine-tune Official (1e-6)", _ft_preset(1e-6)),
         # TagScribeR's earlier presets: community starting points. The model author's own guidance: "a light touch" - rank 32
         # starts at LR 2e-5 (model card); sd-scripts' documented example is rank 8, LR 1e-4 at alpha 1 (a 1/8 scale -
         # these presets use alpha = rank, scale 1, so they start lower).

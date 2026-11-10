@@ -408,7 +408,7 @@ ones it learns.</p>
 <ol>
 <li><b>Open and caption your dataset</b> (Gallery / Auto Caption). Every image needs a caption file, so filter
 <code>missing:caption</code> to find gaps. Put your trigger word in the captions (Auto Caption → Subject).</li>
-<li><b>Pick a family</b> (Krea 2, Qwen Image 2.1, MiniMax H3, FLUX.2 Klein, SDXL / Pony / Illustrious / NoobAI, Anima) and set its <b>Model files</b> once. <i>Get</i> opens the download page;
+<li><b>Pick a family</b> (Krea 2, Qwen Image 2.1, MiniMax H3, FLUX.2 Klein, MOSS-Image, SDXL / Pony / Illustrious / NoobAI, Anima) and set its <b>Model files</b> once. <i>Get</i> opens the download page;
 the paths are remembered.</li>
 <li><b>Load a preset.</b> ✨ presets are measured recipes; the first one is applied on your first visit.</li>
 <li>The tab starts in a <b>simple view</b>: name, epochs, resolution and preview prompts, with the preset deciding
@@ -448,6 +448,9 @@ trains at batch size 1. Previews show the dial at -1, 0 and +1 side by side. Kre
 Slider preset (Fizgig's recipes: tried on Qwen, Krea 2 and MiniMax H3, starting points on SDXL and Anima). Krea 2 adds <i>Slider Ultra mode</i>
 (composition blocks only, for sliders that hold up at higher strengths). The file records that it is a slider
 (<code>ss_slider</code>).</li>
+<li><b>Fine-tune the whole model</b> (Show all settings; Krea 2, Qwen Image 2.1, FLUX.2 Klein, MOSS-Image, the SDXL
+family and Anima): the base model itself trains instead of a LoRA, and the result is a full model file. See <i>Full
+fine-tune</i>. A run is one kind of training: ticking Edit, Slider or Fine-tune unticks the other two.</li>
 <li>A <b>Context LoRA</b> (Show all settings) stays frozen and active while you train, so the new LoRA learns on top
 of it; it is never saved into the output. LoRA, LoKR and LoHa files load, in kohya, diffusers, OneTrainer or
 AI-Toolkit naming.</li>
@@ -462,12 +465,14 @@ can be resumed (they are loaded as plain tensors, never as arbitrary Python obje
 <li>To train more epochs on a finished LoRA: raise <i>Epochs</i>, click <i>Latest</i> under Resume, Start. The
 finished LoRA is also saved under its epoch number (for example <code>name-000030.safetensors</code>), so extending a
 run never overwrites its last epoch.</li>
+<li>A <b>fine-tune</b> has no state folders: Pause waits for the rotation in progress to finish, saves a full
+checkpoint and stops; Resume continues from that checkpoint for the rotations that are left.</li>
 <li>Start while a run is going <b>queues</b> the current settings; queued runs start one after another. The queue is
 never started automatically when the app opens.</li>
 <li><b>Last run</b> reloads the settings of the most recent run.</li>
 </ul>
 <p>See also: <i>Training presets</i>, <i>Adaptive learning rate</i>, <i>Problem images</i>, <i>Training previews</i>,
-<i>Training memory &amp; speed</i>.</p>
+<i>Full fine-tune</i>, <i>MOSS-Image</i>, <i>Training memory &amp; speed</i>.</p>
 """),
     "train_presets": ("Training presets", "Train", """
 <h2>Training presets</h2>
@@ -484,8 +489,93 @@ is named in the console when you load it: check those paths, especially in a pre
 <li><b>Import…</b> adds a preset file. Fizgig preset files work as they are (same setting names).</li>
 <li>When a preset holds a value this family doesn't offer (an optimizer, a learning-rate bound, a precision), that
 setting is kept as it was and the console says so. Settings this version doesn't know are ignored.</li>
-<li>Fizgig's <b>Fine-tune</b> presets are refused with a message and change nothing: TagScribeR can't train full
-fine-tunes yet, and applied anyway they would train an ordinary LoRA. Its <b>Slider</b> presets work.</li>
+<li>Fizgig's <b>Slider</b> and <b>Fine-tune</b> presets work on the families that offer those kinds of training.
+On a family that does not (a Fine-tune preset on MiniMax H3, whose fine-tune is not ported yet) the preset is refused
+with a message and changes nothing: applied anyway it would train an ordinary LoRA.</li>
+</ul>
+"""),
+    "train_finetune": ("Full fine-tune", "Train", """
+<h2>Full fine-tune (training the model itself)</h2>
+<p>A LoRA is a small file that sits on top of a model. A <b>full fine-tune</b> changes the model itself: the result
+is a complete model file, as large as the one you started from, that you load <i>in place of</i> the base model. Use
+it when a LoRA is not enough (a large or varied dataset, a new base for further LoRAs). For one person, one style or
+one concept a LoRA is faster, far smaller and usually all you need.</p>
+<p><b>Status:</b> ported from Fizgig and tested here only on a tiny made-up model on the CPU. It has not been run
+on real weights by TagScribeR, on AMD or on NVIDIA; Fizgig documents its fine-tune as tested on NVIDIA cards. Treat
+your first run as a trial and keep an eye on the console.</p>
+<h3>How to start one</h3>
+<ol>
+<li>Pick a family that offers it: Krea 2, Qwen Image 2.1, FLUX.2 Klein, MOSS-Image, SDXL / Pony / Illustrious /
+NoobAI or Anima. (MiniMax H3's fine-tune needs its own back end, which is not ported yet.)</li>
+<li>Tick <b>Show all settings</b>, then <b>Fine-tune the whole model</b> (Training Parameters), or load a ✨
+Fine-tune preset where the family has one (SDXL, Anima, MOSS-Image). Ticking it sets the learning rate to the
+family's fine-tune rate (1e-5) and turns Adaptive LR off.</li>
+<li>Set <b>Rotations</b> (how long it trains) and check the preview prompts. Start.</li>
+</ol>
+<h3>What is different from a LoRA run</h3>
+<ul>
+<li><b>The model file must be 16-bit or fp32</b> (bf16 / fp16 / fp32). An fp8 or pre-quantised file is refused with a
+message: there are no full-precision weights in it to train.</li>
+<li><b>Windows and rotations.</b> The frozen model sits on the card in 4-bit (NF4). One <i>window</i> of its parts
+at a time (for example every block's attention, then every block's MLP) is brought up to full precision, trained and
+written back. A <b>rotation</b> trains every part once. On a card that holds the whole model at once there is one
+window and nothing rotates. The console says how many windows your card needs and how many epochs one rotation is.</li>
+<li><b>Rotations replace Epochs.</b> <i>Checkpoint + preview every N rotations</i> replaces <i>Save every N
+epochs</i>. Saves only happen at whole rotations, so no saved file has some parts trained more than others.</li>
+<li><b>Every save is a full model</b> (several GB to tens of GB). Keep the output folder on a roomy drive.</li>
+<li><b>System memory:</b> a full-precision master copy of the trained weights lives in RAM, or on disk in the run
+folder when RAM is short (the console says which).</li>
+<li><b>Not used:</b> rank, alpha, network type, Model Area, the timestep range, Adaptive LR, EMA, the LR scheduler,
+torch.compile, the Context LoRA, auto-recaption, Fast Identity Mode, Sample now / Save now and Resume from a state
+folder. The boxes that do not apply are hidden.</li>
+<li><b>Optimizer:</b> Adafactor (its state is about a tenth of AdamW's, which is what keeps a fine-tune on the
+card), whatever the Optimizer box says.</li>
+<li><b>Free each gradient as soon as it's used</b> (on by default) steps each weight the moment its gradient arrives,
+so only one gradient is held at a time. Gradient clipping and gradient accumulation are off with it.</li>
+<li><b>Window size</b> (Auto by default): choose a smaller cap if Auto runs too close to your card's limit.</li>
+<li><b>Regularisation images (optional):</b> a folder of ordinary, well-captioned real photos of the broader class
+(men, women, people). They train at a fraction of the learning rate (<i>Regularisation LR x</i>, 0.2 by default) and
+keep the model's general sense of that class from drifting. Use real photos, not generated ones.</li>
+<li><b>Previews</b> render on the model being trained, after each saved checkpoint.</li>
+<li><b>Pause</b> finishes the rotation in progress, saves a checkpoint and stops. <b>Resume</b> continues from that
+checkpoint for the rotations that are left.</li>
+<li>The checkpoint is written in the source file's own layout and names, so it is meant to load wherever the base
+model loads (ComfyUI included); that has not been tried here on a real model yet. Its metadata uses Fizgig's keys.</li>
+<li><b>Krea 2 note:</b> the fp8-scaled RAW file many people train LoRAs on cannot be fine-tuned (it is refused
+before the run starts); a fine-tune needs the bf16 model file.</li>
+<li><b>Never under the same name as its source:</b> to train a finished fine-tune further, set its file as the
+model file and give the new run another LoRA name. A run refuses to start from one of its own checkpoints.</li>
+<li><b>Batch size 1</b> is the path the memory plan is measured for; a larger batch gets a warning.</li>
+</ul>
+"""),
+    "train_moss": ("MOSS-Image", "Train", """
+<h2>MOSS-Image</h2>
+<p>MOSS-Image (OpenMOSS) is a text-to-image model with strong text rendering, a Qwen3.5-9B text encoder and the
+FLUX.2 autoencoder. The family is ported from Fizgig (v8.7.3). <b>Status:</b> tested here only on tiny made-up
+models; it has not been run on real weights by TagScribeR. Fizgig has changed its MOSS-Image recipes since that
+version (a newer optimizer, a clean-end schedule that changes during the run, a different preview recipe); those
+are on the list to follow.</p>
+<ul>
+<li><b>Train on Base, use the LoRA on SFT.</b> Base is the model to train on; SFT is the sharper model people
+generate with. Previews therefore render on the SFT model by default (set its file under Model files), so they
+show the LoRA where you will use it.</li>
+<li><b>Another Base</b> (a fine-tune of Base, or SFT itself): the previews tick switches off once, because the model
+you train on is then the model you will use. You can tick it again.</li>
+<li><b>Train attention only</b>: recommended when the model you train on is SFT or a fine-tune of it (training its
+feed-forward layers breaks anatomy). On Base leave it off.</li>
+<li><b>Clean-end share (% of steps)</b> (Timesteps): how much of the training happens on nearly clean images, where
+faces and fine detail are refined. 30 is Fizgig's default and an experimental figure; empty uses the model's own
+schedule (about 11%).</li>
+<li><b>Epochs:</b> the presets use 70. MOSS-Image learns slowly and steadily; small datasets were still improving
+late in Fizgig's runs. Adaptive LR is off in the presets (it walks down to its floor on this model's flat loss).</li>
+<li><b>Captions</b> may be long (up to 4096 tokens) and are read through the model's chat template.</li>
+<li><b>No Edit LoRAs:</b> the released checkpoints are text-to-image only.</li>
+<li><b>Full fine-tune:</b> offered (see <i>Full fine-tune</i>); with Train attention only it trains attention alone
+and fits a smaller card.</li>
+<li><b>First run on your card:</b> the Qwen3.5 text encoder runs in plain PyTorch on every GPU. It has not been
+checked on an AMD card here, so compare your first previews with a known-good render before a long run.</li>
+<li><b>Previews with the SFT tick on</b> use the SFT model's own recipe (30 steps, CFG 4) and your negative prompt;
+the Turbo LoRA and its steps apply only when previews render on the training model (tick off).</li>
 </ul>
 """),
     "train_lr": ("Adaptive learning rate", "Train", """

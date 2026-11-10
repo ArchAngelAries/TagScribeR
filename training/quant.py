@@ -191,12 +191,17 @@ def _peak(entry, megapixels):
     return y0 + (y1 - y0) * (megapixels - x0) / (x1 - x0)
 
 
+TIGHT_MARGIN_GB = 0.5      # nf4 with no swap beats a swapped int8 base down to this much headroom (Fizgig 8.9, #216)
+
+
 def plan(desc, driver, precision="auto", blocks_to_swap=-1, free_gb=None, margin_gb=1.5, megapixels=1.0):
     """Resolve 'auto' precision and/or block swap (-1) from free VRAM and the description's measured training
     memory (desc.train_memory: {precision: (peak GB at no swap, GB saved per swapped block)}).
 
     Auto precision takes the most precise base that fits without swap (bf16, then int8, then nf4), since swap costs
-    far more speed than quantisation. Only if nothing fits does it swap (int8, the smaller swappable base). An
+    far more speed than quantisation. If none fits with the full margin, nf4 still goes first when it fits with a
+    small one (TIGHT_MARGIN_GB): swapping int8 instead cost 4.4x the step time and 4x the CPU on a 16 GB NVIDIA card
+    (Fizgig #216, its measurement). Only if nothing fits does it swap (int8, the smaller swappable base). An
     explicit precision with auto swap gets the fewest blocks that fit. Returns (precision, blocks_to_swap, reason)."""
     if free_gb is None:
         free_gb = free_vram_gb()
@@ -235,6 +240,9 @@ def plan(desc, driver, precision="auto", blocks_to_swap=-1, free_gb=None, margin
         for p in order:
             if p in mem and mem[p][0] <= budget:
                 return p, 0 if blocks_to_swap < 0 else blocks_to_swap, f"{p} fits {free_gb:.1f} GB free"
+        if "nf4" in order and "nf4" in mem and mem["nf4"][0] <= free_gb - TIGHT_MARGIN_GB:
+            return "nf4", 0 if blocks_to_swap < 0 else blocks_to_swap, (f"nf4 fits {free_gb:.1f} GB free, closely "
+                                                                        "(block swap would be far slower)")
         swappable = [p for p in swap_order if p in mem and mem[p][1] > 0]    # no measured saving: no Auto swap
         if swappable and cap > 0:
             p = swappable[0]

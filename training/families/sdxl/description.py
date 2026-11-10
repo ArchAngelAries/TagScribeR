@@ -48,8 +48,15 @@ def _fizgig_preset(rank, alpha, lr=5e-5, epochs=20, slider=False):
         "FAMILY_PRECISION": "Auto (fits your free VRAM)", "FAMILY_EMA": "0.98 (recommended)",
         # the loss watch with per-image LR and auto-recaption on, except for sliders (Fizgig, 5 Oct 2026)
         "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": not slider, "KREA2_AUTO_RECAPTION": not slider,
-        "KREA2_WARMUP_LOOK": False, "FAMILY_SLIDER": slider,
+        "KREA2_WARMUP_LOOK": False, "FAMILY_SLIDER": slider, "FAMILY_FT": False,   # FZ 8.7.3 sdxl.py:18
     }
+
+
+def _ft_preset(lr):
+    # FZ 8.7.3 families/sdxl.py:174-181, verbatim: rank 32 / alpha 16 at the fine-tune rate, 10 rotations, the loss
+    # watch on but per-image LR and auto-recaption off (rank and alpha are not used by a fine-tune)
+    return {**_fizgig_preset(32, 16, lr=lr), "FAMILY_FT": True, "FAMILY_FT_ROTATIONS": "10",
+            "KREA2_PER_IMAGE_LR": False, "KREA2_AUTO_RECAPTION": False}
 
 
 def _presets(name):
@@ -59,13 +66,17 @@ def _presets(name):
     #  * Style: rank 16 / alpha 8, gentle adaptive range 5e-5..1e-4, 40 epochs, every epoch saved to scrub for the sweet spot.
     return (
         # Fizgig's (Peter, 5 Oct 2026): the first is a first visit's preset. alpha at half the rank ("SDXL LoRAs gain
-        # from the halved alpha"); 5e-5 "clearly better results than 1e-4 in his comparisons". The Fine-tune presets
-        # wait for that mode (port plan stage 5)
+        # from the halved alpha"); 5e-5 "clearly better results than 1e-4 in his comparisons".
         # 50 epochs for both (FZ 8.7.1 families/sdxl.py:170-171; the _preset default stays 20, the Slider keeps 30)
         (f"✨ {name} Strong (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16, epochs=50)),
         (f"✨ {name} Standard (rank 16, alpha 8, 5e-5)", _fizgig_preset(16, 8, epochs=50)),
         # Slider: the default's rank 32 / alpha 16 at 5e-5 (Fizgig, 5 Oct 2026; "not yet measured on SDXL")
         (f"✨ {name} Slider (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16, epochs=30, slider=True)),
+        # full fine-tune at the shared fine-tune rate (Fizgig), and at OneTrainer's: its "#sdxl 1.0" preset takes the
+        # TrainConfig default 3e-6 (modules/util/config/TrainConfig.py), text encoders frozen as here (FZ 8.7.3
+        # families/sdxl.py:174-181). Not measured on SDXL by Fizgig
+        (f"✨ {name} Fine-tune (1e-5)", _ft_preset(1e-5)),
+        (f"✨ {name} Fine-tune Official (3e-6)", _ft_preset(3e-6)),
         # TagScribeR's earlier presets, community starting points (not measured)
         (f"✨ {name} Fast (rank 16, adaptive LR)", _preset(16, 16, 20, "5e-5", "2e-4")),
         (f"✨ {name} Cosine (rank 32, community)", _preset(32, 16, 30, "1e-4", "4e-4", adaptive=False,
@@ -136,6 +147,9 @@ def _variant(key, arch, display, *, repo, file, size_gb, ckpt_note, sampling, pr
         # Slider LoRAs (prompt pairs or before/after photo pairs): epsilon prediction works as Concept Sliders' SDXL
         # recipe does - the target is built from the UNet's own predictions (Fizgig 7.0.1)
         slider_training=True,
+        # full fine-tune (the driver's ft_spec): the UNet's transformer Linears, text encoders frozen; the shared 1e-5
+        # rate (FZ 8.7.3 families/sdxl.py:127-128). Not run on AMD hardware
+        finetune=True,
         presets=_presets(display),
         helper_files=(("openai/clip-vit-large-patch14",
                        ("vocab.json", "merges.txt", "tokenizer_config.json", "special_tokens_map.json")),),

@@ -237,6 +237,27 @@ class SDXLDriver(FamilyDriver):
         px = (vae.decode(z).sample[0].float() / 2 + 0.5).clamp(0, 1)
         return Image.fromarray((px * 255.0).permute(1, 2, 0).cpu().numpy().round().astype(np.uint8))
 
+    # ---- full fine-tune (training/ft.py; Fizgig 8.7.3 sdxl/driver.py:341-357) ---------------------------------
+    def ft_spec(self, dit):
+        """Fine-tuning: every Linear of the UNet's 70 transformer blocks (the 11 attention modules' lists), as
+        self-attention, cross-attention and the two feed-forward matrices, plus each module's proj_in / proj_out all
+        run. Convs, the time and added embeddings and the text encoders stay frozen: the community's SDXL tunes keep
+        the text encoders frozen (OneTrainer's SDXL fine-tune preset, sd-scripts' 24 GB recipe, Animagine 3.1) and
+        attention + MLP is LyCORIS's recommended scope. The checkpoint names the blocks in LDM layout; the saved file
+        keeps it, text encoders and VAE included, so it loads as a checkpoint. The attention modules come from the
+        UNet config in use (a test's tiny config as well as SDXL's)."""
+        from training.ft import FTSpec
+        attentions = [u for u in U.structure(self._config(dit)) if u.kind == "attn"]
+        return FTSpec(blocks=tuple(f"{u.diffusers}.transformer_blocks" for u in attentions),
+                      components=("attn1", "attn2", "ff.net.0", "ff.net.2"),
+                      always_on=tuple(f"{u.diffusers}.{m}" for u in attentions for m in ("proj_in", "proj_out")),
+                      file_prefix=U.LDM_UNET_PREFIX,
+                      file_names=tuple((f"{u.diffusers}.", f"{u.ldm}.") for u in attentions),
+                      # measured upstream 5 Oct on a 5090, one part per window: peaks 3.8-4.6 GB at 1 MP, 3.2-4.4 at
+                      # 0.25 MP (2.39 GB allocated at planning, ~1.2 GB NF4 trunk) -> resident base 1.75 GB at 1 MP,
+                      # growing ~0.8 GB/MP; every part at once peaked 6.7 GB (0.2 over a 2.0 base), so 2.3
+                      overhead_gb=2.3, calib_mp=1.0, act_gb_per_mp=1.0)
+
     # ---- LoRA and the block map -------------------------------------------------------------------
     def quant_target_names(self, dit):
         """INT8 / NF4 quantise the transformer Linears the LoRA targets except proj_in / proj_out (Fizgig 7.0.1

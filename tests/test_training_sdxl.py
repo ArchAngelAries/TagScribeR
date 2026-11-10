@@ -218,16 +218,16 @@ def test_descriptions_validate_and_are_distinct():
 
 def test_presets_resolve_without_refusals():
     for d in VARIANTS:
-        assert len(d.presets) == 6 and "Slider" in d.presets[2][0] and "Strong (rank 32, alpha 16, 5e-5)" in d.presets[0][0]     # Fizgig's first
+        assert len(d.presets) == 8 and "Slider" in d.presets[2][0] and "Fine-tune" in d.presets[3][0] and d.presets[3][1]["FAMILY_FT"] and "Strong (rank 32, alpha 16, 5e-5)" in d.presets[0][0]     # Fizgig's first
         first = d.presets[0][1]
         assert (first["NETWORK_DIM"], first["NETWORK_ALPHA"], first["LEARNING_RATE"], first["ADAPTIVE_LR"],
                 first["OPTIMIZER_TYPE"]) == (32, 16, 5e-5, False, "adamw")
-        assert "Fast" in d.presets[3][0]                                                      # TagScribeR's kept
+        assert "Fast" in d.presets[5][0]                                                      # TagScribeR's kept
         for name, values in d.presets:
             new, rep = presets.apply(values, P.defaults(), d)
             assert rep.refused == [] and rep.ignored == [], (name, rep.refused, rep.ignored)
             assert new["DATASET_MEGAPIXELS"] == "1.0" and new["FAMILY_EMA"] == "0.98 (recommended)"
-        fast = d.presets[3][1]
+        fast = d.presets[5][1]
         assert fast["ADAPTIVE_LR"] is True and fast["NETWORK_DIM"] == 16
 
 

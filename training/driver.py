@@ -11,7 +11,8 @@
 # `compile_targets` / `compile_blocks` / `compile_plan` (shared torch.compile, decided on the empty card),
 # `park_for_preview` / `load_preview_checkpoint` / `unpark_after_preview` (previews on a preview checkpoint),
 # `convert_lora_state_dict`; Fizgig 8.0.3's `practice_latent` (a prompt slider's practice item, the default being what
-# train.py used to inline). Not yet (they arrive with their features): sliders, fine-tune, clips,
+# train.py used to inline); Fizgig 8.7.3's fine-tune hooks `ft_spec` / `ft_backend` / `ft_card_plan` / `ft_cycle` /
+# `ft_source_unfit` / `install_ft_streamer` (training/ft.py). Not yet (they arrive with their features): clips,
 # legacy state order, `cache_stage`.
 """FamilyDriver: the one interface a new model family implements.
 
@@ -390,6 +391,52 @@ class FamilyDriver:
         small or delicate Linears it would rather keep bf16 (Krea 2's text fusion, embedders and output layer)
         overrides this with the heavy repeated ones."""
         return self.lora_target_names(dit)
+
+    # ---- full fine-tune (optional: training/ft.py; Fizgig 8.7.3 families/driver.py:314-355) ------------------------
+    def ft_spec(self, dit):
+        """The family's fine-tune declaration (training.ft.FTSpec), or None: no fine-tune. Descriptions that set
+        finetune=True return one."""
+        return None
+
+    def ft_backend(self, dit, device, src, group):
+        """The fine-tune's model-side backend (training.ft.SharedBackend's surface), or None for the shared one. A
+        family whose base file and trunk differ from the shared bf16 + NF4 path brings its own (H3)."""
+        return None
+
+    def ft_card_plan(self, path, free_gb, mp=None, options=None, max_parts=0):
+        """The fine-tune card's estimate before anything loads: (windows, stream) for this file on a card with
+        `free_gb` free, or None. Default: the shared planner over the file's header (training.ft.plan_from_file).
+        max_parts: the Train tab's cap on parts per window (0 = as many as fit)."""
+        from training.ft import plan_from_file
+        spec = self.ft_spec(None)
+        if spec is None:
+            return None
+        plan = plan_from_file(path, spec, free_gb, mp=mp, max_parts=max_parts)
+        return (plan[0], plan[1]) if plan else None
+
+    def ft_cycle(self, cycle: int, offset: int, total: int) -> None:
+        """The fine-tune's rotation cycle is known (`cycle` epochs; `offset` epochs done before this leg; `total`
+        epochs this leg runs): a family whose options land on epochs (H3's retirement) snaps them here."""
+
+    def ft_source_unfit(self, path):
+        """Why `path` cannot be fine-tuned by this family, or None. Default: the shared rule (a bf16 file)."""
+        from training.ft import source_unfit_reason
+        return source_unfit_reason(path)
+
+    def install_ft_streamer(self, dit, streamer) -> None:
+        """Hand the fine-tune's block streamer to the model: it implements the block-swap interface the forward
+        already calls (wait_for_block / submit_move_blocks_forward). The default suits the common
+        `offloader` + `blocks_to_swap` convention; a family without block swap cannot stream (small cards then refuse
+        up front)."""
+        if not self.max_blocks_to_swap(dit):
+            raise RuntimeError(f"{self.description.display_name} has no block swap, so a fine-tune cannot stream "
+                               f"frozen blocks on this card - it needs more free VRAM")
+        old = getattr(dit, "offloader", None)
+        for fn in ("remove", "remove_hooks"):
+            if old is not None and hasattr(old, fn):
+                getattr(old, fn)()
+        dit.offloader = streamer
+        dit.blocks_to_swap = 1
 
     def block_of(self, module_name: str) -> Optional[str]:
         """The block id a module belongs to, or None for modules outside the map (e.g. a speed LoRA's extras)."""

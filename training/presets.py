@@ -230,10 +230,13 @@ def migrate_legacy(preset: dict) -> tuple[dict, list, list]:
     return out, notes, ignored
 
 
-# Fizgig preset keys whose True turns the run into something other than a LoRA - not available here yet (port plan
-# stage 5: the full fine-tune); a slider preset is refused only for a family without slider training
+# Fizgig preset keys whose True turns the run into something other than a LoRA. A slider preset is refused only for a
+# family without slider training, a FAMILY_FT preset only for a family without the shared fine-tune (MiniMax H3 until
+# its own backend is ported). The pre-v7 per-family keys (KREA2_FINETUNE, MINIMAX_FINETUNE) belong to trainers Fizgig
+# has since deleted: their presets stay refused rather than run as something else.
 UNSUPPORTED_MODES = {"FAMILY_SLIDER": "slider training", "FAMILY_FT": "full fine-tuning",
                      "KREA2_FINETUNE": "full fine-tuning", "MINIMAX_FINETUNE": "full fine-tuning"}
+_FAMILY_MODES = {"FAMILY_SLIDER": "slider_training", "FAMILY_FT": "finetune"}     # key -> the description's switch
 
 
 def _on(value) -> bool:
@@ -242,8 +245,9 @@ def _on(value) -> bool:
 
 def unsupported_modes(preset: dict, desc=None) -> list:
     """(key, mode) for each training mode `preset` switches on that this app (or this family) cannot train."""
-    return [(k, what) for k, what in UNSUPPORTED_MODES.items() if _on((preset or {}).get(k))
-            and not (k == "FAMILY_SLIDER" and (desc is None or desc.slider_training))]
+    def offered(k):
+        return k in _FAMILY_MODES and (desc is None or bool(getattr(desc, _FAMILY_MODES[k], False)))
+    return [(k, what) for k, what in UNSUPPORTED_MODES.items() if _on((preset or {}).get(k)) and not offered(k)]
 
 
 def apply(preset: dict, current: dict, desc=None) -> tuple[dict, P.ApplyReport]:
@@ -283,6 +287,28 @@ def apply(preset: dict, current: dict, desc=None) -> tuple[dict, P.ApplyReport]:
             # a shared preset can point the run at a folder or file of its author's choosing: say so
             rep.notes.append(f"[preset] also set {param.label} ({key}) to '{out[key]}' - check that this is "
                              f"where you want it")
+    kinds = ("FAMILY_EDIT", "FAMILY_SLIDER", "FAMILY_FT")
+    if any(k in (preset or {}) for k in kinds):
+        # a preset that names a kind of training sets THE kind (Fizgig families/form.py:667-670): the kinds it does
+        # not name go off, so a LoRA preset never leaves Fine-tune ticked from before
+        for k in kinds:
+            if k not in preset and k in P.BY_KEY and out.get(k):
+                out[k] = False
+                rep.applied[k] = False
+    elif out.get("FAMILY_FT") and any(k in (preset or {}) for k in ("LEARNING_RATE", "ADAPTIVE_LR")):
+        # TagScribeR: a preset with no kind at all (Klein's, the community ones) is a LoRA recipe, and its learning
+        # rate is ten times a fine-tune's or more - Fine-tune goes off rather than train the model itself at it
+        out["FAMILY_FT"] = False
+        rep.applied["FAMILY_FT"] = False
+        rep.notes.append("[preset] this is a LoRA preset: Fine-tune the whole model was unticked (its learning rate "
+                         "is a LoRA's, far too high for a fine-tune)")
+    if any(k == "OPTIMIZER_TYPE" for k, _v, _why in rep.refused) and "OPTIMIZER_ARGS" in rep.applied:
+        # the preset's optimizer is not offered here (a Fizgig 9 preset on Muon), so its Optimizer Args do not belong
+        # to the optimizer that stays selected: handed to it they would make it fail to build, and the run would fall
+        # back to plain AdamW with only a log line
+        out["OPTIMIZER_ARGS"] = current.get("OPTIMIZER_ARGS", "")
+        del rep.applied["OPTIMIZER_ARGS"]
+        rep.notes.append("[preset] its Optimizer Args belong to that optimizer and were not applied either")
     return out, rep
 
 

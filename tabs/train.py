@@ -42,7 +42,16 @@ log = logging.getLogger(__name__)
 IDLE, RUNNING, PAUSING, PAUSED = "idle", "running", "pausing", "paused"
 # What "simple mode" shows; the preset decides everything else.
 SIMPLE_KEYS = {"LORA_OUTPUT_DIR", "LORA_NAME", "MAX_TRAIN_EPOCHS", "DATASET_MEGAPIXELS", "SAMPLE_ENABLED",
-               "SAMPLE_PROMPT"}
+               "SAMPLE_PROMPT", "FAMILY_FT_ROTATIONS"}       # Rotations: a fine-tune's length (shown only for one)
+# The kinds of training: a run is one of them, so ticking one unticks the others (Fizgig's "Kind of training" choice)
+KIND_KEYS = ("FAMILY_EDIT", "FAMILY_SLIDER", "FAMILY_FT")
+# What a full fine-tune does not use (Fizgig 8.7.3 families/form.py:730-751, :857-863): there is no LoRA (rank, alpha,
+# network type, Model Area), it trains every noise level at its own fixed rate, and it has no Context LoRA
+FT_HIDDEN = {"NETWORK_DIM", "NETWORK_ALPHA", "NETWORK_TYPE", "LOKR_FACTOR", "TARGET_LAYERS", "TRAINING_BLOCKS",
+             "MIN_TIMESTEP", "MAX_TIMESTEP", "ADAPTIVE_LR", "ADAPTIVE_LR_MIN", "ADAPTIVE_LR_MAX", "CONTEXT_LORA_PATH",
+             "CONTEXT_LORA_STRENGTH", "FAMILY_FAST_ID"}
+FT_EPOCHS_TIP = ("Not used by a fine-tune: its length is Rotations, and it saves every N rotations (the Fine-tune "
+                 "section).")
 # the Edit rows' labels when extra pictures are chosen (Fizgig families/form.py:376-389 and :884-891)
 EDIT_STEP_LABELS = {"FAMILY_EDIT_DIR": "1. Originals folder (before editing)",
                     "FAMILY_EDIT_EXTRAS_DIR": "2. Extra pictures folder",
@@ -137,6 +146,7 @@ class TrainTab(QWidget):
         self._update_dataset_label()
         self._refresh_queue()
         self._set_state(IDLE)
+        self._restore_paused()
 
     # ======================================================================================== settings side
     def _build_settings(self) -> QWidget:
@@ -277,6 +287,8 @@ class TrainTab(QWidget):
     def _make_widget(self, p: P.Param, form: QFormLayout):
         if p.kind == P.BOOL:
             w = QCheckBox(p.label)
+            if p.key in KIND_KEYS:                                 # before _changed: it collects the settled ticks
+                w.toggled.connect(lambda on, k=p.key: self._on_kind_toggled(k, on))
             w.toggled.connect(self._changed)
             if p.key == "SAMPLE_USE_DISTILLED":
                 w.toggled.connect(self._on_distilled_toggled)      # Steps / CFG follow the tick
@@ -395,16 +407,41 @@ class TrainTab(QWidget):
         self.cfg.set("training.show_all", bool(on))
         self._update_visibility()
 
+    def _on_kind_toggled(self, key, on):
+        """A kind of training was ticked by hand: the other kinds go off (a run is one kind), and Fine-tune takes
+        the family's fine-tune learning rate with Adaptive LR off (Fizgig families/form.py kind_sets). Loading a
+        preset or a saved form sets the boxes as they were saved and changes nothing else."""
+        if self._loading or not on:
+            return
+        self._loading = True
+        try:
+            for other in KIND_KEYS:
+                if other != key and other in self.widgets:
+                    self._set_widget(other, False)
+            if key == "FAMILY_FT" and self.desc is not None:
+                self._set_widget("LEARNING_RATE", float(self.desc.ft_learning_rate))
+                self._set_widget("ADAPTIVE_LR", False)
+        finally:
+            self._loading = False
+
     def _update_visibility(self):
         simple = not self.chk_all.isChecked()
         shown_groups = set()
-        adaptive = bool(self.values.get("ADAPTIVE_LR"))
+        ft = self.desc is not None and pipeline.ft_on(self.desc, self.values)
+        adaptive = bool(self.values.get("ADAPTIVE_LR")) and not ft
         lokr = str(self.values.get("NETWORK_TYPE", "")).startswith("LoKR")
         edit = bool(self.values.get("FAMILY_EDIT"))
         extras = str(self.values.get("FAMILY_EDIT_PICTURES") or "").strip() == P.EDIT_WITH_EXTRAS
         for key, (w, label) in self.widgets.items():
             p = P.BY_KEY[key]
             show = P.family_shows(p, self.desc) and (not simple or key in SIMPLE_KEYS)
+            if p.group == "Fine-tune":                        # the fine-tune's own settings: only for a fine-tune
+                show = show and ft
+            if ft and key in FT_HIDDEN:
+                show = False
+            if key in ("MAX_TRAIN_EPOCHS", "SAVE_EVERY_N_EPOCHS"):    # a fine-tune's length is its rotations
+                w.setEnabled(not ft)
+                w.setToolTip(FT_EPOCHS_TIP if ft else p.tip)
             if key in ("NETWORK_DIM", "NETWORK_ALPHA"):
                 show = show and not lokr
             if key == "LOKR_FACTOR":
@@ -429,7 +466,7 @@ class TrainTab(QWidget):
             if simple and group in shown_groups and not sec.toggle.isChecked():
                 sec.toggle.setChecked(True)
         self.grp_captioner.setVisible(not simple)
-        self.grp_resume.setVisible(not simple)
+        self.grp_resume.setVisible(not simple and not ft)     # a fine-tune continues from its checkpoint (Resume)
         if adaptive:
             try:
                 lo = float(P.first_token(self.values.get("ADAPTIVE_LR_MIN")))
@@ -492,6 +529,39 @@ class TrainTab(QWidget):
         otherwise."""
         w = self.widgets["SAMPLE_USE_DISTILLED"][0]
         w.setText(P.preview_checkpoint_tick(self.desc))
+        w.setToolTip(P.BY_KEY["SAMPLE_USE_DISTILLED"].tip + " (not part of presets)")
+
+    def _base_check_update(self):
+        """A family that previews on a separate checkpoint because its own Base is too soft to judge a LoRA on
+        (MOSS-Image on SFT; description.standard_base): with another Base file set (Kromoss, a fine-tune, SFT itself)
+        previews belong on that model, the one the LoRA will be used on, so the tick goes off - once per Base file, so
+        a choice made after that stays. Back on the released Base the tick returns to the family's default (Fizgig
+        families/form.py:890-901). Reads the file's header and one small norm tensor, never the model."""
+        d = self.desc
+        if d is None or not d.train_preview_checkpoint or not getattr(d, "standard_base", ()):
+            return
+        e = self.model_edits.get(d.pref_for("dit"))
+        if e is None or "SAMPLE_USE_DISTILLED" not in self.widgets:
+            return
+        from training.families.moss_image.base_check import is_standard_base
+        base_file = e.text().strip()
+        # only a file is looked at while the path is being typed: a half-typed path that happens to be a folder
+        # would otherwise open every model in it
+        std = is_standard_base(d, base_file) if os.path.isfile(base_file) else None
+        key = f"training.preview_base_mark.{d.key}"
+        mark = str(self.cfg.get(key, "") or "")
+        tick = self.widgets["SAMPLE_USE_DISTILLED"][0]
+        tip = P.BY_KEY["SAMPLE_USE_DISTILLED"].tip + " (not part of presets)"
+        if std is False:
+            tip = (f"Your Base DiT isn't {d.display_name}'s own Base, so previews render on it, the model you'll use "
+                   f"the LoRA on. Tick this to preview on the other model instead.\n\n") + tip
+            if mark != base_file:
+                self._set_widget("SAMPLE_USE_DISTILLED", False)
+                self.cfg.set(key, base_file)
+        elif std and mark:                      # back on the released Base: its default again
+            self._set_widget("SAMPLE_USE_DISTILLED", bool(d.preview_checkpoint_on))
+            self.cfg.set(key, "")
+        tick.setToolTip(tip)
 
     # ---- family / presets ---------------------------------------------------------------------------
     def _on_family(self, idx):
@@ -533,6 +603,7 @@ class TrainTab(QWidget):
                 self._apply_preset(self.store.default_name, quiet=True)
         if not self.values.get("LORA_NAME") or self.values.get("LORA_NAME") == "my_lora":
             self._set_widget("LORA_NAME", f"my_lora_{self.desc.lora_name_suffix}")
+        self._base_check_update()
 
     def _build_model_rows(self):
         while self.models_form.rowCount():
@@ -546,6 +617,8 @@ class TrainTab(QWidget):
             e.textChanged.connect(lambda t, k=f.pref_key: self.cfg.set(pipeline.model_setting_key(k), t.strip()))
             if f.role == "preview_dit":                  # the Distilled's file being set is part of the tick's follow
                 e.textChanged.connect(lambda _t: self._follow_update())
+            if f.role == "dit" and getattr(self.desc, "standard_base", ()):    # another Base: previews on it, once
+                e.textChanged.connect(lambda _t: self._base_check_update())
             holder = QWidget()
             hl = QHBoxLayout(holder)
             hl.setContentsMargins(0, 0, 0, 0)
@@ -836,6 +909,8 @@ class TrainTab(QWidget):
         values = self.collect()
         folder = self.ctx.folder
         resume = self.inp_resume.text().strip()
+        if pipeline.ft_on(self.desc, values):      # no state folders: the State box is hidden and not used
+            resume = ""
         if self.state in (RUNNING, PAUSING):
             self.queue.append(presets.queue_item(self.desc.key, values, folder))
             presets.save_queue(self.queue)
@@ -865,8 +940,15 @@ class TrainTab(QWidget):
             out[f.pref_key] = moved
         return out
 
-    def _launch(self, desc, values, folder, resume=""):
+    def _launch(self, desc, values, folder, resume="", ft_continue=None):
+        """ft_continue: a paused fine-tune's continuation ({"continue": FAMILY_FT_CONTINUE, "rotations": left}, from
+        pipeline.ft_rotations_left) - the run starts from its checkpoint for the rotations left."""
         models = self.models_for(desc)
+        saved_values = dict(values)                # what a later Resume starts from: the whole run's settings
+        if ft_continue:
+            values = {**values, "FAMILY_FT_CONTINUE": ft_continue["continue"],
+                      "FAMILY_FT_ROTATIONS": int(ft_continue["rotations"])}
+        continuing = bool(resume or ft_continue)
         checks = pipeline.preflight(desc, values, folder, models, captioner=self.captioner(), resume=resume)
         errors = [c.message for c in checks if c.level == "error"]
         warnings = [c.message for c in checks if c.level == "warning"]
@@ -875,7 +957,7 @@ class TrainTab(QWidget):
             return False
         if warnings and not confirm(self, "Start training?", "\n\n".join(warnings) + "\n\nStart anyway?"):
             return False
-        if not resume and pipeline.checkpoints(pipeline.run_dir_for(values), str(values.get("LORA_NAME")).strip()):
+        if not continuing and pipeline.checkpoints(pipeline.run_dir_for(values), str(values.get("LORA_NAME")).strip()):
             if not confirm(self, "LoRA name in use", f"The run folder for '{values.get('LORA_NAME')}' already has "
                            "checkpoints. A fresh run overwrites files with the same names. Continue?"):
                 return False
@@ -887,14 +969,14 @@ class TrainTab(QWidget):
         except (OSError, ValueError) as e:
             QMessageBox.warning(self, "Can't start", str(e))
             return False
-        presets.save_last_run(desc.key, values, folder)
-        self._run_ctx = (desc, dict(values), folder)
+        presets.save_last_run(desc.key, saved_values, folder)
+        self._run_ctx = (desc, saved_values, folder)
         self.cfg.set("training.enable_cache", self.chk_cache.isChecked())
         self.cfg.update({"training.captioner_kind": self.combo_cap_kind.currentData(),
                          "training.captioner_model": self.inp_cap_model.text().strip(),
                          "training.captioner_prompt": self.inp_cap_prompt.text().strip()})
         pipeline.clear_paused(self.run.run_dir)
-        if not resume:                  # a fresh run starts on its own slider prompts, not the last run's
+        if not continuing:              # a fresh run starts on its own slider prompts, not the last run's
             for name in (pipeline.SLIDER_LIVE_FILE, pipeline.SLIDER_LIVE_APPLIED_FILE):
                 try:
                     Path(self.run.run_dir, name).unlink()
@@ -905,7 +987,7 @@ class TrainTab(QWidget):
         except OSError:
             self._log_file = None
         self._chart_key, self._loss_sig = (str(self.run.run_dir), self.run.output_name), None
-        if not resume:
+        if not continuing:
             self.chart.clear()
         else:
             self.chart.set_steps(pipeline.read_step_log(self.run.run_dir, self.run.output_name))
@@ -1009,14 +1091,18 @@ class TrainTab(QWidget):
             return
         if paused:
             from training.train_utils import latest_state_dir
-            st = latest_state_dir(str(self.run.run_dir), self.run.output_name)
-            pipeline.clear_pause(self.run.run_dir)
             desc, values, folder = self._run_ctx
+            ft = pipeline.ft_on(desc, values)
+            # a fine-tune has no state folders: it pauses at a whole rotation and continues from that checkpoint
+            st = (pipeline.latest_ft_checkpoint(str(self.run.run_dir), self.run.output_name,
+                                                since=self._stage_started) if ft else
+                  latest_state_dir(str(self.run.run_dir), self.run.output_name))
+            pipeline.clear_pause(self.run.run_dir)
             pipeline.write_paused(self.run.run_dir, {"state": st, "family": desc.key, "values": values,
-                                                     "folder": folder})
+                                                     "folder": folder, "mode": "ft" if ft else "state"})
             self._paused_state = st
-            self._end(f"Paused - state saved ({os.path.basename(st or '')}). Resume continues from there.",
-                      state=PAUSED)
+            self._end(f"Paused - {'checkpoint' if ft else 'state'} saved ({os.path.basename(st or '')}). Resume "
+                      f"continues from there.", state=PAUSED)
             return
         self.stage_index += 1
         if self.stage_index < len(self.run.stages):
@@ -1055,12 +1141,22 @@ class TrainTab(QWidget):
 
     def _update_now_buttons(self):
         live = self._training_stage()
-        previews = live and run_previews_set_up(self.run.run_dir)
-        self.btn_save_now.setEnabled(live)
-        self.btn_sample_now.setEnabled(previews)
-        self.btn_sample_now.setToolTip(SAMPLE_NOW_TIP if previews or not live else
-                                       "Previews are not set up for this run (Every N epochs is 0 or there is no "
-                                       "prompt), so there is nothing to render. " + SAMPLE_NOW_TIP)
+        ctx = getattr(self, "_run_ctx", None)
+        ft = bool(live and ctx and pipeline.ft_on(ctx[0], ctx[1]))
+        if ft:          # a fine-tune saves and previews at whole rotations only (the trainer takes neither request)
+            tip = ("Not during a fine-tune: it saves a full model and renders previews at whole rotations only "
+                   "(Checkpoint + preview every N rotations).")
+            for b in (self.btn_save_now, self.btn_sample_now):
+                b.setEnabled(False)
+                b.setToolTip(tip)
+        else:
+            previews = live and run_previews_set_up(self.run.run_dir)
+            self.btn_save_now.setEnabled(live)
+            self.btn_save_now.setToolTip(SAVE_NOW_TIP)
+            self.btn_sample_now.setEnabled(previews)
+            self.btn_sample_now.setToolTip(SAMPLE_NOW_TIP if previews or not live else
+                                           "Previews are not set up for this run (Every N epochs is 0 or there is no "
+                                           "prompt), so there is nothing to render. " + SAMPLE_NOW_TIP)
         slider = self._slider_prompt_run()
         self.btn_slider.setVisible(slider)
         self.btn_slider.setEnabled(slider)
@@ -1102,16 +1198,52 @@ class TrainTab(QWidget):
         dlg.destroyed.connect(lambda *_: setattr(self, "_slider_dlg", None))
         dlg.show()
 
+    def _restore_paused(self):
+        """A run paused before the app was closed: its sidecar in the run folder of the LoRA name on the form brings
+        the Resume button back (a fine-tune has no state folder to pick by hand, so this is its only way back)."""
+        if self.state != IDLE or self.desc is None:
+            return
+        try:
+            rd = pipeline.run_dir_for(self.collect())
+        except (OSError, ValueError):
+            return
+        info = pipeline.read_paused(rd)
+        st = (info or {}).get("state")
+        if not st or not os.path.exists(st):
+            return
+        self._paused_dir, self._paused_state = rd, st
+        self.lbl_status.setText(f"Paused run found: {os.path.basename(st)}. Resume continues it; Start begins a new "
+                                f"run.")
+        self._set_state(PAUSED)
+
     def resume_paused(self):
-        info = pipeline.read_paused(self.run.run_dir) if self.run else None
+        rd = self.run.run_dir if self.run else getattr(self, "_paused_dir", None)
+        info = pipeline.read_paused(rd) if rd else None
         st = (info or {}).get("state") or getattr(self, "_paused_state", None)
         if not st:
             QMessageBox.information(self, "Resume", "No paused state was found.")
             return
         from training.registry import get
         desc = get((info or {}).get("family", "")) or self.desc
-        self._launch(desc, (info or {}).get("values") or self.collect(), (info or {}).get("folder") or self.ctx.folder,
-                     resume=st)
+        values = (info or {}).get("values") or self.collect()
+        folder = (info or {}).get("folder") or self.ctx.folder
+        if (info or {}).get("mode") == "ft" or pipeline.ft_on(desc, values):
+            # Fizgig web/server.py:3144-3160: from the paused checkpoint, for the rotations that are left
+            if not os.path.isfile(st):
+                QMessageBox.warning(self, "Resume", f"The paused fine-tune's checkpoint isn't there any more:\n{st}")
+                return
+            left, done, cont = pipeline.ft_rotations_left(st, values.get("FAMILY_FT_ROTATIONS"),
+                                                          values.get("FAMILY_FT_ROTATE_EVERY"))
+            if left <= 0:
+                QMessageBox.information(
+                    self, "Resume", f"This fine-tune has already trained {done} rotation(s), and Rotations is "
+                    f"{values.get('FAMILY_FT_ROTATIONS')}: {os.path.basename(st)} is the finished model.\n\nTo train "
+                    f"it further, set that file as the model file and start a new run under another LoRA name.")
+                return
+            self._console(f"=== Resuming the fine-tune from {os.path.basename(st)}: {left} rotation(s) left ===")
+            self._launch(desc, values, folder, ft_continue={"continue": cont, "rotations": left})
+            return
+        self._launch(desc, values, folder, resume=st)
 
     def stop(self):
         if not self.proc:

@@ -130,6 +130,10 @@ KLEIN_9B = FamilyDescription(
     edit_references=4,
     edit_note=("Pairs of an original and its edited version, the same crop and shape - about 40 pairs is a good "
                "start (20 at least). Each photo 1 MP or larger."),
+    # full fine-tune (the driver's ft_spec: double then single blocks on an NF4 trunk, training/ft.py): FZ 8.7.3
+    # families/klein.py:133 finetune=True, at the shared 1e-5 rate (upstream sets no ft_learning_rate for Klein; the
+    # 5e-5 in docs/FINETUNE.md is Flux 3 Image Klein's). Not run on AMD hardware
+    finetune=True,
     compiles=True,
     compile_fullgraph=False,
     compile_boundary="outside",

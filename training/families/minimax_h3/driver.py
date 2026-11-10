@@ -478,6 +478,16 @@ class MiniMaxH3Driver(FamilyDriver):
                                                   else []))
         return md
 
+    # ---- full fine-tune (training/ft.py) ------------------------------------------------------------
+    def ft_spec(self, dit):
+        """H3's component windows (Fizgig 8.7.3 minimax/driver.py:904-910, rotation_ft.py H3_COMPONENT_PREFIXES) - the
+        shared runner's checks and the Train tab's plan line read this. The work itself needs H3's own backend
+        (Fizgig minimax/ft_backend.py: a master dequantised from the int8 ConvRot file and int8 saves with stochastic
+        rounding), which is not ported yet, so the description keeps finetune=False."""
+        from training.ft import FTSpec
+        return FTSpec(blocks="blocks", components=_BLOCK_MODULES, overhead_gb=14.5, trunk_gb_per_block=0.21,
+                      slots_gb=2.0)
+
     # ---- LoRA and the block map -------------------------------------------------------------------
     def block_map(self, dit=None):
         """The 50 blocks (4 Linears each) and the two token-refiner blocks - the model's map, whatever the training

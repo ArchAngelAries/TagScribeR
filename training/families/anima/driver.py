@@ -158,6 +158,21 @@ class AnimaDriver(FamilyDriver):
         px = vae.decode_to_pixels(latents.to(vae.device))[0]                   # (3, H, W) in [0, 1]
         return Image.fromarray((px * 255.0).permute(1, 2, 0).cpu().float().numpy().round().astype(np.uint8))
 
+    # ---- full fine-tune (training/ft.py; Fizgig 8.7.3 anima/driver.py:250-262) --------------------------------
+    def ft_spec(self, dit):
+        """Fine-tuning: the 28 blocks' attention and MLP Linears (the NF4 trunk's), in four windows of similar size per
+        block (self-attention ~17M parameters, cross-attention ~13M, each MLP matrix ~17M). The LLM adapter is never
+        trained (the model card: it degrades easily), nor are the modulation layers. The file names every DiT weight
+        under "net."; checkpoints keep that layout, so ComfyUI loads them as it loads the base."""
+        from training.ft import FTSpec
+        return FTSpec(blocks="blocks", components=("self_attn", "cross_attn", "mlp.layer1", "mlp.layer2"),
+                      file_prefix="net.",
+                      # measured upstream 5 Oct on a 5090: window peaks 2.7-3.7 GB at 0.25 MP, 4.0-4.3 GB at 1 MP
+                      # (1.92 GB allocated at planning, 0.93 GB NF4 trunk) -> resident base 2.4 GB at 1 MP (+0.1; the
+                      # planner keeps 1.5 GB besides); the attention windows grew 1.7 GB/MP from 0.25 to 1 MP.
+                      # Calibrated at 1 MP, so smaller runs plan with ~0.6 GB to spare
+                      overhead_gb=2.5, calib_mp=1.0, act_gb_per_mp=2.0)
+
     # ---- LoRA and the block map -------------------------------------------------------------------
     def block_map(self, dit=None):
         """One group of the 28 blocks; each covers its attention and MLP Linears (with `dit`, only modules it has)."""

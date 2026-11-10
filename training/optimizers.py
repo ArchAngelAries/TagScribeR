@@ -199,6 +199,13 @@ def _warn_lr(name: str, lr: float) -> None:
         logger.warning("[optimizer] LR %.2e is very high for %s.", lr, name)
 
 
+# The default Optimizer Args Fizgig's presets carry for Muon (every picture preset since 9.0.8) and Prodigy. They
+# belong to those optimizers only: handed to another one they make it fail to build (training/presets.py and
+# create_optimizer drop them)
+PRODIGY_DEFAULT_ARGS = "decouple=True weight_decay=0.01 d_coef=1.0 use_bias_correction=True safeguard_warmup=True"
+MUON_DEFAULT_ARGS = "adjust_lr_fn=match_rms_adamw weight_decay=0.01 momentum=0.95 nesterov=True ns_steps=5"
+
+
 def create_optimizer(name: str, params, lr: float, args_str: str = "",
                      eps_floor_8bit: bool = False) -> tuple:
     """Build an optimizer. Returns `(optimizer, label)`; the label goes into LoRA metadata.
@@ -211,6 +218,11 @@ def create_optimizer(name: str, params, lr: float, args_str: str = "",
     MiniMax H3 workaround and every other family keeps the library default. See the note below.
     """
     name = (name or DEFAULT_OPTIMIZER).strip()
+    if name.lower() not in ("muon", "prodigy") and (args_str or "").strip() in (MUON_DEFAULT_ARGS, PRODIGY_DEFAULT_ARGS):
+        # Muon's / Prodigy's own default args left over from a preset: they'd make this optimizer fail to build and
+        # fall back to plain AdamW - they don't belong to it, so they're dropped (Fizgig 9.2.0)
+        logger.info("[optimizer] %s: ignoring the Optimizer Args left from Muon / Prodigy (%s)", name, args_str.strip())
+        args_str = ""
     kwargs = parse_optimizer_args(args_str)
     key = name.lower()
     _warn_lr(key, lr)

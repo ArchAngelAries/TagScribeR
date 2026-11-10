@@ -418,19 +418,26 @@ def test_step_scheduler_shapes():
     assert math.isclose(lrs[2], 1.0)
 
 
-def test_finetune_presets_are_refused_not_run_as_loras_and_sliders_apply():
-    """A Fizgig Fine-tune preset changes nothing here (that mode is not ported yet): applied, its settings would
-    silently train an ordinary LoRA. A Slider preset applies to a family with slider training, and is refused for one
-    without."""
+def test_finetune_presets_are_refused_where_they_cannot_run_and_sliders_apply():
+    """A Fizgig Fine-tune preset changes nothing on a family without the fine-tune (MiniMax H3: its own back end is
+    not ported): applied, its settings would silently train an ordinary LoRA. The deleted per-family trainers' keys
+    are refused everywhere. A Slider preset applies to a family with slider training, and is refused for one without."""
     import dataclasses
 
     from training import params as P
     from training import presets, registry
     cur = P.defaults()
-    for key in ("FAMILY_FT", "KREA2_FINETUNE", "MINIMAX_FINETUNE"):
-        new, rep = presets.apply({key: True, "NETWORK_DIM": 4, "LEARNING_RATE": 2e-4}, cur)
-        assert new == cur and rep.blocked and not rep.applied, key
-        assert "cannot train yet" in rep.messages()[0]
+    ft = {"FAMILY_FT": True, "NETWORK_DIM": 4, "LEARNING_RATE": 2e-4}
+    new, rep = presets.apply(ft, cur, registry.get("minimax_h3"))
+    assert new == cur and rep.blocked == [("FAMILY_FT", "full fine-tuning")] and not rep.applied
+    assert "cannot train yet" in rep.messages()[0]
+    new, rep = presets.apply(ft, cur, registry.get("krea2"))                 # offered there: it applies
+    assert not rep.blocked and new["FAMILY_FT"] is True and new["LEARNING_RATE"] == 2e-4
+    for key in ("KREA2_FINETUNE", "MINIMAX_FINETUNE"):
+        for desc in (None, registry.get("krea2"), registry.get("minimax_h3")):
+            new, rep = presets.apply({key: True, "NETWORK_DIM": 4, "LEARNING_RATE": 2e-4}, cur, desc)
+            assert new == cur and rep.blocked and not rep.applied, key
+            assert "cannot train yet" in rep.messages()[0]
     new, rep = presets.apply({"FAMILY_FT": False, "FAMILY_SLIDER": False, "NETWORK_DIM": 4}, cur)   # Fizgig's LoRAs
     assert not rep.blocked and new["NETWORK_DIM"] == 4
     slider = {"FAMILY_SLIDER": True, "NETWORK_DIM": 4, "LEARNING_RATE": 2e-4}

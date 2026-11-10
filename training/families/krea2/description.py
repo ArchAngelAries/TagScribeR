@@ -174,6 +174,9 @@ KREA2 = FamilyDescription(
     preview_width=1024,                                      # audit 4.4: SAMPLE_WIDTH per-family default Krea 2 1024
     preview_height=1024,
 
+    # full fine-tune (the driver's ft_spec, training/ft.py): FZ 8.7.3 families/krea2.py:112 finetune=True; the shared
+    # 1e-5 rate choosing Fine-tune sets (docs/FINETUNE.md "Krea 2 and Qwen Image 2.1: 1e-5"). Not run on AMD hardware
+    finetune=True,
     slider_training=True,
     slider_guidance=3.0,              # Fizgig's slider tests (1 Oct 2026): 3 on Krea 2, where Qwen's 2 pushes too little
     # Ultra mode (Fizgig, 1 Oct 2026): blocks 0-7 and the four text-fusion blocks (Fizgig's txt_lw_0/1, txt_rf_0/1)

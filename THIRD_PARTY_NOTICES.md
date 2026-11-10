@@ -38,6 +38,9 @@ uses:
 | `training/hf_cache.py` | `src/fizgig/utils/hf_cache.py` (cache-first Hugging Face loading) |
 | `training/modules/offloading.py`, `int8_train.py`, `int8.py`, `nf4.py`, `sdpa.py`, `compile_util.py` | `src/fizgig/modules/` |
 | `training/modules/fp8.py` | `src/fizgig/krea2/fp8_optimization_utils.py`, `krea2/utils.py` (adapted by Fizgig from musubi-tuner) |
+| `training/ft.py` | `src/fizgig/families/ft.py` (the full fine-tune: rotating component windows on an NF4 trunk) |
+| `training/modules/rotation.py` | `src/fizgig/krea2/rotation.py` (the window schedule, the planner and the block streamer) |
+| `training/modules/safetensors_io.py` | `src/fizgig/krea2/safetensors_utils.py` (lazy header reader and streamed writer; adapted by Fizgig from musubi-tuner, Apache-2.0) |
 | `training/families/qwen_image21/` | `src/fizgig/families/qwen_image.py` and `src/fizgig/qwen_image21/` |
 | `training/families/krea2/` | `src/fizgig/krea2/` (`model.py`, `sampling.py`, `vae.py`, `vae_loader.py`, `embedder.py`, `trainer.py`, `caching.py`, `utils.py`), `lora_trainer_gui.py` (presets, model paths), `scripts/fetch_models.py`, `utils/capabilities.py` (measured memory) |
 | `core/vram_monitor.py`, `tabs/memory_bar.py` | `src/fizgig/utils/vram_monitor.py` and the status bar of `lora_trainer_gui.py` (VRAM / RAM readers, peak marker; redrawn in Qt) |
@@ -93,6 +96,25 @@ recipe (`src/fizgig/training/trainer.py`, `src/fizgig/networks/lora_klein.py`).
 
 Model weights are not included and have their own licences (FLUX.2 Klein Base 9B and the FLUX.2 autoencoder are gated
 by Black Forest Labs).
+
+## MOSS-Image (Fizgig, OpenMOSS, Qwen / HuggingFace transformers, Black Forest Labs): Apache License 2.0
+
+`training/families/moss_image/` ports Fizgig v8.7.3's MOSS-Image family (`src/fizgig/families/moss_image.py`,
+`src/fizgig/moss_image/`, `src/fizgig/families/base_check.py`), and carries its upstream credits:
+
+| TagScribeR | Source |
+|---|---|
+| `training/families/moss_image/description.py`, `driver.py`, `sampling.py` | Fizgig `families/moss_image.py`, `moss_image/driver.py`, `moss_image/sampling.py` (Copyright 2026 Peter Neill, Apache-2.0) |
+| `training/families/moss_image/base_check.py` | Fizgig `families/base_check.py` (rewritten without torch) |
+| `training/families/moss_image/model.py` | Fizgig `moss_image/model.py`, itself ported from `pipeline_moss_image.py` shipped with the OpenMOSS-Team/MOSS-Image-Base weights (Copyright 2026 OpenMOSS, Apache-2.0, https://github.com/OpenMOSS/MOSS-Image) |
+| `training/families/moss_image/embedder.py` | Fizgig `moss_image/embedder.py`, whose Qwen3.5 text model is ported from huggingface/transformers `models/qwen3_5/modeling_qwen3_5.py` (Copyright 2025 The Qwen Team and The HuggingFace Inc. team, Apache-2.0) |
+| `training/modules/flux2_vae.py` | Fizgig `flux3/autoencoder.py`, vendored from black-forest-labs/flux-3-image-klein `src/flux3/autoencoder.py` (Copyright Black Forest Labs, Apache-2.0); the FLUX.2 autoencoder shared by MOSS-Image (and, in time, Klein) |
+
+Provenance to be aware of: the MOSS-Image sampler's res_multistep step uses `_res_multistep_coeffs` from
+`training/families/minimax_h3/sampling.py`, whose provenance is ComfyUI's `comfy/k_diffusion` (GPL-3.0, see the
+MiniMax H3 section). The int8 ConvRot decode it loads ComfyUI's repacked files with is `training/families/minimax_h3/
+weights.py` (Fizgig, Apache-2.0). The MOSS-Image weights (Apache-2.0), the Qwen3.5-9B text encoder, the FLUX.2
+autoencoder, Kromoss and the Turbo LoRAs are not included; their publishers' licences apply when you download them.
 
 ## SDXL family (diffusers, kohya-ss sd-scripts): Apache License 2.0
 

@@ -82,6 +82,18 @@ def apply_runtime_env() -> None:
     os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True,garbage_collection_threshold:0.8")
     # Don't phone home to the Hub on every from_pretrained when files are cached.
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    # onnxruntime (the WD tagger): its Linux builds from 1.29 send a device ID and machine details to Microsoft
+    # unless this is set; the Windows builds have their own switch (ort_telemetry_off). Child processes inherit it.
+    os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
+
+def ort_telemetry_off() -> None:
+    """Turn off onnxruntime's telemetry events (the Windows builds' switch). Call before a session is created."""
+    try:
+        import onnxruntime
+        onnxruntime.disable_telemetry_events()
+    except Exception:  # noqa: BLE001 - no onnxruntime, or a build without the switch: nothing to turn off
+        pass
 
 
 def _expose_pip_rocm_sdk() -> None:

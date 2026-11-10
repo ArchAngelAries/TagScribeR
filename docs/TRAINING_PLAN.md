@@ -181,6 +181,32 @@ The options as originally presented:
     tick keeps TagScribeR's wording for Klein; the loss graph has fixed smoothing (0.9) and no log-scale or
     outlier switches.
 
+- **Full fine-tune (2026-11-09, unit-tested only on a tiny CPU model; never run on real weights here).**
+  `training/ft.py` ports Fizgig 8.7.3's `families/ft.py` with `training/modules/rotation.py` and
+  `training/modules/safetensors_io.py`: the base stays frozen in NF4, one window of its parts at a time is swapped up
+  from a full-precision master, trained with Adafactor and written back; checkpoints are full model files in the
+  source's own layout, written only at whole rotations, with Fizgig's metadata keys. Offered by Krea 2, Qwen Image
+  2.1, FLUX.2 Klein, MOSS-Image, the SDXL family and Anima (`description.finetune`, the driver's `ft_spec`).
+  - *Train tab:* `FAMILY_FT` and its `FAMILY_FT_*` settings (Fizgig's keys); ticking Fine-tune sets the family's
+    fine-tune rate, unticks Edit / Slider and hides what a fine-tune does not use. Pause stops at a whole rotation;
+    Resume continues from that checkpoint for the rotations left (`pipeline.ft_rotations_left`).
+  - *TagScribeR's own:* on a CPU device the trunk stays dense and the rotator swaps dense frozen Linears (the test
+    path; a GPU run uses NF4 exactly as upstream); the streamer's prefetch thread exists only on a CUDA / HIP device.
+  - *Not yet:* MiniMax H3's fine-tune (its own back end, Fizgig `minimax/ft_backend.py`); DOP's fine-tune targets;
+    the choice of fine-tune optimizer and batch sizes above 1 for a fine-tune (Fizgig 9.x); checkpoint-to-LoRA
+    extraction. One later upstream fix is in: a step's LR multiplier reaches the free-each-gradient steps.
+  - *Needs a real run:* everything about memory planning (window plans, streaming, the disk master) and the NF4
+    swap. Fizgig documents its fine-tune as tested on NVIDIA; nothing here has been run on AMD.
+
+- **MOSS-Image (2026-11-09, ported from Fizgig 8.7.3, unit-tested only on tiny random models).**
+  `training/families/moss_image/` (description, driver, DiT, sampler, the Qwen3.5-9B text encoder, a torch-free base
+  check) and the shared `training/modules/flux2_vae.py` (the FLUX.2 autoencoder with the ROCm wide-attention fix).
+  Fizgig's five presets, memory figures, SFT preview checkpoint and Turbo previews; `MOSS_LORA_SFT` (Train attention
+  only) and `MOSS_LOWNOISE_PCT` (Clean-end share, default 30) under Fizgig's keys; the text cache encodes in the
+  driver's batch (`text_cache_batch_size`); the Train tab unticks the SFT previews once when the Base file is not the
+  released Base. Fizgig has moved on since 8.7.3 (Muon presets, a clean-end share that changes during the run, a new
+  preview recipe, Kromoss withdrawn as a Base): see `docs/dev/audit/12_fizgig_v9_4_0_training_core.md`.
+
 ## 6. Verification policy
 
 The owner runs all real training. Development verification uses:

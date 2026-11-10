@@ -197,6 +197,9 @@ QWEN_IMAGE_21 = FamilyDescription(
     preview_width=1024,
     preview_height=1024,
 
+    # full fine-tune (the driver's ft_spec, training/ft.py): FZ 8.7.3 families/qwen_image.py:190 finetune=True; the
+    # shared 1e-5 rate choosing Fine-tune sets (docs/FINETUNE.md). Not run on AMD hardware
+    finetune=True,
     slider_training=True,
     presets=(
         # Peter, 27 Sep 2026, from a same-dataset comparison re-rendered identically (Desktop qwen_optimizer_ab/

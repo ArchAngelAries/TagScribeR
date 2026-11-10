@@ -45,6 +45,13 @@ H3_RAMPS = ("Off", "0.003 (slow build)", "0.005 (recommended)", "0.01 (fast buil
 # them (a test keeps the two equal) because it imports this module
 EDIT_PHOTO_ONLY, EDIT_WITH_EXTRAS = "The photo only", "The photo + extra pictures"
 
+# the Fine-tune card (Fizgig 8.7.3 families/launch.py:336-337 FT_WINDOW_SIZES, families/form.py:39 FT_REG_MULT): how
+# many parts of the model train together (0 = as many as the card holds), and the regularisation set's LR multipliers.
+# pipeline.py reads the labels from here (it imports this module)
+FT_WINDOW_SIZES = (("Auto - as few windows as fit", 0), ("At most 3 parts per window", 3),
+                   ("At most 2 parts per window", 2), ("One part per window (most headroom)", 1))
+FT_REG_MULT = ("0.05", "0.1", "0.2", "0.3", "0.5", "0.75", "1.0")
+
 # the Samples tick for a family's preview checkpoint: its description's preview_checkpoint_tick (Fizgig 8.x), else
 # Klein's wording, which is what TagScribeR has always shown
 SAMPLE_CHECKPOINT_TICK = "Use Distilled model for samples (4-step, matches ComfyUI)"
@@ -54,7 +61,7 @@ def preview_checkpoint_tick(desc) -> str:
     return str(getattr(desc, "preview_checkpoint_tick", "") or SAMPLE_CHECKPOINT_TICK)
 
 
-GROUPS = ("Output", "Training Parameters", "Loss watch", "Optimizer", "Memory & Precision", "Timesteps",
+GROUPS = ("Output", "Training Parameters", "Fine-tune", "Loss watch", "Optimizer", "Memory & Precision", "Timesteps",
           "Dataset", "Caption augmentation (extension)", "Metadata", "Samples")
 
 
@@ -72,7 +79,7 @@ class Param:
     minimum: float | None = None
     maximum: float | None = None
     advanced: bool = False         # collapsed by default in the UI
-    family_only: str = ""          # "adapter" | "ema" | "precision" | "lokr" | "edit" | "edit_multi" | "speed" | "option": shown when the
+    family_only: str = ""          # "adapter" | "ema" | "precision" | "lokr" | "edit" | "edit_multi" | "speed" | "finetune" | "option": shown when the
     #                                family declares that feature
 
 
@@ -162,6 +169,45 @@ PARAMS: tuple[Param, ...] = (
     P("FAMILY_SLIDER_ULTRA", "Slider Ultra mode", BOOL, False, "Training Parameters",
       "Krea 2 sliders: train only the composition blocks (blocks 0-7 and the text-fusion blocks), so the slider "
       "holds up at far higher strengths.", advanced=True, family_only="slider_ultra"),
+    # Full fine-tune (Fizgig 8.7.3's FAMILY_FT_* keys, families/form.py:65-66 and :466-486): the base model itself
+    # trains, one window of its parts at a time (training/ft.py). Not run on AMD hardware
+    P("FAMILY_FT", "Fine-tune the whole model", BOOL, False, "Training Parameters",
+      "Train the base model itself instead of a LoRA on top of it. The result is a full model file the size of the "
+      "base, loaded in place of it. The frozen part stays in 4-bit (NF4) and the model trains one window of its parts "
+      "at a time, so it fits cards a whole-model fine-tune would not. Needs a 16-bit (bf16 / fp16) or fp32 model "
+      "file - not an fp8 or pre-quantised one - plenty of system memory, and a roomy drive (every save is a full "
+      "model). Rank, alpha, network type, Adaptive LR, EMA, the timestep range, the Context LoRA and Resume from a "
+      "state folder are not used. Ticking it sets the learning rate to the family's fine-tune rate. Not yet run on "
+      "AMD hardware.", family_only="finetune"),
+    P("FAMILY_FT_ROTATIONS", "Rotations", INT, 10, "Fine-tune",
+      "How long the fine-tune runs. Each rotation trains every part of the model once; the console says how many "
+      "epochs one rotation is on your card (one, when the whole model fits at once). Replaces Epochs.",
+      minimum=1, maximum=10000, family_only="finetune"),
+    P("FAMILY_FT_SAVE_EVERY", "Checkpoint + preview every N rotations", INT, 1, "Fine-tune",
+      "A full model file is saved (and previews rendered) every N whole rotations, never in the middle of one, so "
+      "no saved file has some parts trained more than others. Each save is as large as the model file.",
+      minimum=1, maximum=10000, family_only="finetune"),
+    P("FAMILY_FT_ROTATE_EVERY", "Epochs per part before the next", INT, 1, "Fine-tune",
+      "How many epochs each window trains before the next one takes its place. 1 = move on every epoch.",
+      minimum=1, maximum=1000, advanced=True, family_only="finetune"),
+    P("FAMILY_FT_MAX_PARTS", "Window size", CHOICE, FT_WINDOW_SIZES[0][0], "Fine-tune",
+      "How many parts train together. Auto packs as many as your card holds - the whole model at once when it fits, "
+      "so nothing rotates. A smaller cap means more windows and more memory to spare, if Auto runs too close to "
+      "your card's limit.", options=tuple(lab for lab, _ in FT_WINDOW_SIZES), strict=True, advanced=True,
+      family_only="finetune"),
+    P("FAMILY_FT_FUSED", "Free each gradient as soon as it's used (less memory - recommended)", BOOL, True,
+      "Fine-tune",
+      "Each weight is stepped the moment its gradient arrives and the gradient is freed at once, so only one "
+      "gradient is ever held (several GB saved on the large models). Gradient clipping and gradient accumulation "
+      "are off with it, because both need every gradient at the same time.", advanced=True, family_only="finetune"),
+    P("FAMILY_FT_REG_DIR", "Regularisation images (optional)", DIR, "", "Fine-tune",
+      "A folder of ordinary photos of the broader class (men, women, people) with normal detailed captions. They "
+      "hold the model's sense of that class in place while your images train - a full fine-tune moves every "
+      "weight, so nothing else bounds that drift. Use real photos, not model output: generated images anchor the "
+      "model to its own artifacts. Leave empty to train without one.", family_only="finetune_reg"),
+    P("FAMILY_FT_REG_MULT", "Regularisation LR x", CHOICE, "0.2", "Fine-tune",
+      "The regularisation photos train at this fraction of the learning rate: 0.1-0.3 keeps them a light anchor; "
+      "at 1.0 they are a second subject set.", options=FT_REG_MULT, family_only="finetune_reg"),
     P("FAMILY_FAST_ID", "Fast Identity Mode", BOOL, False, "Training Parameters",
       "Train only the blocks measured to carry a character's identity (Qwen Image 2.1: blocks 10-14). About 1.5x "
       "faster per step, with likeness very close to a full-model LoRA. For characters and faces, not styles. Not "
@@ -347,6 +393,16 @@ PARAMS: tuple[Param, ...] = (
       "previews judder between epochs. It does not affect trigger words. As in Fizgig, it trains only with Training "
       "mode Off and Blocks to train 'all' (the other modes stop the backward before it).", advanced=True,
       family_only="option"),
+    # MOSS-Image's two options (Fizgig 8.7.3 families/moss_image.py:260-271, its keys and labels)
+    P("MOSS_LORA_SFT", "Train attention only", BOOL, False, "Training Parameters",
+      "MOSS-Image: a LoRA or a fine-tune trains only attention (q, k, v, o), not the feed-forward layers. "
+      "Recommended when the model you train on is MOSS-Image SFT or a fine-tune of it, where training the "
+      "feed-forward layers breaks anatomy. Uses less VRAM, so a fine-tune fits a smaller card. On the Base model "
+      "(the usual choice) leave it off: there it may cost quality or slow convergence.", family_only="option"),
+    P("MOSS_LOWNOISE_PCT", "Clean-end share (% of steps)", TEXT, "30", "Timesteps",
+      "MOSS-Image: the share of training steps on nearly-clean images (noise below half), where faces and fine "
+      "detail are refined. 30 is Fizgig's default and an experimental figure; empty = the model's own schedule, "
+      "about 11%. A number strictly between 0 and 100.", family_only="option"),
     # ---- dataset ----------------------------------------------------------------------------------
     P("DATASET_MEGAPIXELS", "Target megapixels", CHOICE, "0.25", "Dataset",
       "Training resolution as an area. Images are bucketed by aspect ratio at about this many pixels (0.5 MP is "
@@ -460,6 +516,7 @@ DRIVER_OPTIONS.update({"TARGET_LAYERS": "target_layers", "TRAINING_BLOCKS": "tra
                        "PRESERVE_DISTRIBUTION": "preserve_distribution"})
 DRIVER_OPTIONS.update({"COMPILE_BLOCKS": "compile_blocks"})
 DRIVER_OPTIONS.update({"ATTENTION_MECHANISM": "attention_mechanism"})
+DRIVER_OPTIONS.update({"MOSS_LORA_SFT": "lora_sft", "MOSS_LOWNOISE_PCT": "lownoise_pct"})
 DRIVER_OPTIONS.update({"H3_STRUCTURE": "structure", "H3_LOWNOISE_PCT": "lownoise_pct",
                        "H3_HIGHNOISE_LR_PCT": "highnoise_lr_pct", "H3_LIKENESS_MODE": "likeness_mode",
                        "H3_BLOCKS": "blocks", "H3_ADAPTER_RAMP": "adapter_ramp", "H3_TRAIN_REFINER": "train_token_refiner"})
@@ -503,7 +560,8 @@ def match_option(value, options) -> str | None:
 
 
 # Keys whose value is a place on disk. A preset that sets one is worth a note (presets.apply).
-PATH_KEYS = ("LORA_OUTPUT_DIR", "FAMILY_EDIT_DIR", "FAMILY_EDIT_EXTRAS_DIR", "FAMILY_SLIDER_DIR", "CONTEXT_LORA_PATH", "METADATA_THUMBNAIL")
+PATH_KEYS = ("LORA_OUTPUT_DIR", "FAMILY_EDIT_DIR", "FAMILY_EDIT_EXTRAS_DIR", "FAMILY_SLIDER_DIR", "FAMILY_FT_REG_DIR",
+             "CONTEXT_LORA_PATH", "METADATA_THUMBNAIL")
 
 # Image file extensions a caption file must never use (writing a caption there would overwrite the picture).
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".jxl", ".avif"}
@@ -575,6 +633,10 @@ def family_shows(param: Param, desc) -> bool:
         return bool(desc.slider_training)
     if f == "slider_ultra":
         return bool(desc.slider_training and desc.slider_ultra_blocks)
+    if f == "finetune":
+        return bool(getattr(desc, "finetune", False))
+    if f == "finetune_reg":
+        return bool(getattr(desc, "finetune", False) and getattr(desc, "ft_regularisation", True))
     if f == "speed":
         return bool(desc.preview_speed()) and not desc.samples_turbo_pace
     if f == "turbo_pace":

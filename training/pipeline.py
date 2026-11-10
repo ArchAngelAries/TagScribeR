@@ -16,6 +16,10 @@ a checkpoint at the next optimizer step), .slider_prompts.json (a prompt slider'
 boundary; answered in .slider_prompts_applied.json), loss_log/caption_updates.json (caption fixes at the next
 boundary). The trainer writes .tagscriber_loss_<name>.jsonl (the loss graph) and sample/.prompts_<name>.json (each
 preview round's prompts). Stop kills the process tree.
+
+A full fine-tune (FAMILY_FT, families whose description sets finetune) runs the same stages; it has no state folders:
+Pause finishes the rotation and saves a full checkpoint, and Resume continues from it (latest_ft_checkpoint,
+ft_rotations_left -> FAMILY_FT_CONTINUE, which replaces the model file for that leg).
 """
 from __future__ import annotations
 
@@ -111,6 +115,109 @@ def slider_on(desc, values, source=None) -> bool:
 
 def edit_on(desc, values) -> bool:
     return bool(desc.edit_training and values.get("FAMILY_EDIT"))
+
+
+# ---- full fine-tune (Fizgig 8.7.3 families/launch.py:141-216, 336-341) ----------------------------------------
+def ft_on(desc, values) -> bool:
+    """A full fine-tune of the base model, for a family whose driver offers one (description.finetune)."""
+    return bool(getattr(desc, "finetune", False) and values.get("FAMILY_FT"))
+
+
+def latest_ft_checkpoint(out_dir, name, since=None) -> str:
+    """A fine-tune's newest checkpoint (<name>-NNNNNN.safetensors - a fine-tune has no state folders), or "".
+    since: a time; only checkpoints written at or after it count (the leg that just paused), so an earlier, longer
+    run's higher-numbered file under the same name is never taken for this run's."""
+    try:
+        found = [f for f in os.listdir(out_dir) if re.fullmatch(re.escape(name) + r"-\d{6}\.safetensors", f)]
+        if since is not None:
+            found = [f for f in found if os.path.getmtime(os.path.join(out_dir, f)) >= since]
+    except OSError:
+        return ""
+    return os.path.join(out_dir, max(found)) if found else ""
+
+
+def ft_source_unfit(path) -> str:
+    """Why a model file cannot be fine-tuned, from its header alone, or "" (training.ft.source_unfit_reason's rule,
+    without torch): a pre-quantised or fp8 file has no 16-bit weights to build the master from or to write the
+    checkpoint into. "" as well for a file that cannot be read here (the trainer then says what is wrong)."""
+    import struct
+    try:
+        with open(path, "rb") as f:
+            n = struct.unpack("<Q", f.read(8))[0]
+            if n > 256 * 1024 * 1024:          # no real header is this large: not a file to read into memory
+                return ""
+            header = json.loads(f.read(n))
+    except (OSError, ValueError, struct.error):
+        return ""
+    if not isinstance(header, dict):
+        return ""
+    header.pop("__metadata__", None)
+    if any(k.endswith(".weight_scale") or k.endswith(".scale_weight") for k in header):
+        return "is a pre-quantized checkpoint (weight scale tensors)"
+    low = [k for k, v in header.items() if isinstance(v, dict) and str(v.get("dtype", "")).startswith(("F8", "I8", "U8"))]
+    return f"stores {len(low)} tensor(s) below 16 bits (e.g. {low[0]})" if low else ""
+
+
+def ft_continuation(path) -> tuple[int, int, int]:
+    """(next_window, epochs_done, n_windows) from a fine-tune checkpoint's metadata (the trainer stamps Fizgig's
+    keys); the -NNNNNN in the file name wins for the epochs. Anything missing reads as 0."""
+    import struct
+    md = {}
+    try:
+        with open(path, "rb") as f:
+            n = struct.unpack("<Q", f.read(8))[0]
+            md = json.loads(f.read(n)).get("__metadata__") or {}
+    except (OSError, ValueError, struct.error):
+        pass
+
+    def num(k):
+        try:
+            return int(float(md.get(k) or 0))
+        except (TypeError, ValueError):
+            return 0
+    epochs = num("fizgig_ft_epochs_done")
+    m = re.search(r"-(\d{6})\.safetensors$", os.path.basename(path or ""))
+    if m:
+        epochs = int(m.group(1))
+    return num("fizgig_next_start_window"), epochs, num("fizgig_ft_n_windows")
+
+
+def ft_rotations_left(path, rotations, rotate_every) -> tuple[int, int, dict]:
+    """(rotations left, rotations done, FAMILY_FT_CONTINUE) for a fine-tune paused at `path`, of `rotations` whole
+    rotations of its cycle - what Resume works out (Fizgig launch.py ft_rotations_left)."""
+    nxt, done, nw = ft_continuation(path)
+    per = max(1, _ft_int({"x": rotate_every}, "x", 1) or 1)
+    rot = max(1, _ft_int({"x": rotations}, "x", 1) or 1)
+    done_rot = round(done / (nw * per)) if nw else 0
+    return rot - done_rot, done_rot, {"checkpoint": path, "start_window": nxt, "epochs_done": done}
+
+
+def ft_reg_dir(desc, values) -> str:
+    """A fine-tune's regularisation folder, when fine-tune is on and one is set (else "")."""
+    return (str(values.get("FAMILY_FT_REG_DIR") or "").strip()
+            if ft_on(desc, values) and getattr(desc, "ft_regularisation", True) else "")
+
+
+def _ft_reg_mult(values):
+    try:
+        return max(0.0, float(str(values.get("FAMILY_FT_REG_MULT", "") or 0.2)))
+    except ValueError:
+        return None
+
+
+def _ft_int(values, key, default):
+    try:
+        return max(1, int(float(str(values.get(key, "") or default))))
+    except ValueError:
+        return None
+
+
+# the fine-tune card's Window size choice: how many parts train together (0 = as many as fit)
+FT_WINDOW_SIZES = P.FT_WINDOW_SIZES
+
+
+def ft_max_parts(values) -> int:
+    return dict(FT_WINDOW_SIZES).get(str(values.get("FAMILY_FT_MAX_PARTS") or "").strip(), 0)
 
 
 # the Edit pairs card's "What the edit uses" choice (a family with edit_references > 1): FAMILY_EDIT_PICTURES, and the
@@ -359,6 +466,62 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
         info("Slider from prompts: no dataset is used; the model renders its own practice pictures first.")
     if edit_on(desc, values) and slider_on(desc, values):
         err("Edit LoRA and Slider are both on - a run is one kind of LoRA: pick Edit or Slider.")
+    if ft_on(desc, values):
+        if slider_on(desc, values) or edit_on(desc, values):
+            err("Fine-tune and a Slider / Edit LoRA are both on - a fine-tune trains the base model itself: untick "
+                "one of them.")
+        for key, label in (("FAMILY_FT_ROTATIONS", "Rotations"), ("FAMILY_FT_SAVE_EVERY", "Save every"),
+                           ("FAMILY_FT_ROTATE_EVERY", "Epochs per window")):
+            if _ft_int(values, key, 1) is None:
+                err(f"Fine-tune: {label} must be a whole number of 1 or more")
+        reg = ft_reg_dir(desc, values)
+        if reg and not os.path.isdir(reg):
+            err(f"Fine-tune: the regularisation folder {reg} does not exist - clear the box to train without one")
+        elif reg and _ft_reg_mult(values) is None:
+            err("Fine-tune: the regularisation LR multiplier must be a number")
+        if resume:
+            err("Fine-tune: a fine-tune continues from its last saved checkpoint (Resume picks it up), not from a "
+                "state folder.")
+        if not bitsandbytes_available():
+            err("Fine-tune: the frozen base is held in 4-bit NF4, which needs the bitsandbytes package.")
+        cont = values.get("FAMILY_FT_CONTINUE") or {}
+        cont = cont if isinstance(cont, dict) and cont.get("checkpoint") else {}
+        src = str(cont.get("checkpoint") or "") or ((models.get(dit_key(desc, values)) or "").strip()
+                                                     if alt_base_on(desc, values) else model_path(desc, models, "dit"))
+        if src and os.path.isfile(src):
+            why = ft_source_unfit(src)
+            if why:
+                err(f"Fine-tune: {os.path.basename(src)} {why}. A fine-tune needs the 16-bit (bf16 / fp16) or fp32 "
+                    f"model file - set that one under Model files.")
+            name = str(values.get("LORA_NAME") or "").strip()
+            try:
+                own = (not cont and os.path.abspath(os.path.dirname(src)) == os.path.abspath(str(run_dir_for(values)))
+                       and re.fullmatch(re.escape(name) + r"(-\d{6})?\.safetensors", os.path.basename(src)))
+            except (OSError, ValueError):
+                own = False
+            if own:
+                err(f"Fine-tune: the model file {os.path.basename(src)} is one of this LoRA name's own checkpoints. "
+                    f"A new run under the same name would write over it - give this run another LoRA name.")
+        if int(values.get("DATASET_BATCH_SIZE") or 1) > 1:
+            warn("Fine-tune: batch sizes above 1 are not planned for - the memory plan is measured at batch size 1, "
+                 "and a batch that mixes a regularisation image with yours trains at the full rate. Batch size 1 is "
+                 "the tested path.")
+        if str(values.get("CONTEXT_LORA_PATH") or "").strip():
+            warn("Fine-tune: the Context LoRA is not used - a fine-tune trains the base model itself.")
+        if values.get("ADAPTIVE_LR"):
+            info("Fine-tune: Adaptive LR is off - a fine-tune trains at the Learning Rate box's rate.")
+        info("Fine-tune: every save is a full checkpoint the size of the model file - keep the output folder on a "
+             "roomy drive. Not yet run on AMD hardware.")
+    elif values.get("FAMILY_FT"):
+        err(f"{desc.display_name} does not offer a full fine-tune - untick Fine-tune.")
+    if "MOSS_LOWNOISE_PCT" in desc.family_options:      # checked here, not after the dataset has been cached
+        raw = str(values.get("MOSS_LOWNOISE_PCT") or "").rstrip("%").strip()
+        try:
+            if raw and not 0.0 < float(raw) < 100.0:
+                raise ValueError
+        except ValueError:
+            err(f"Clean-end share: '{raw}' is not a number strictly between 0 and 100 (leave it empty for the "
+                f"model's own schedule).")
     if prompt_slider:
         image_folder = ""
     elif not image_folder or not os.path.isdir(image_folder):
@@ -509,8 +672,9 @@ def _driver_supports_batching(desc) -> bool:
 
 
 def _exif_rotation_check(folder, names, limit=400) -> list[Check]:
-    """Training reads pixels as stored (as Fizgig does), ignoring EXIF rotation - photos shown upright here would
-    train sideways. Bake the rotation in with the Image Editor first."""
+    """Training reads pixels as stored, ignoring EXIF rotation - photos shown upright here would train sideways. Bake
+    the rotation in with the Image Editor first. (Fizgig reads pictures upright since 8.9.5; mirroring that needs a
+    cache revision and is on the port plan, F6 - this warning stays until then.)"""
     try:
         from PIL import Image
     except ImportError:
@@ -560,7 +724,12 @@ def dataset_config(desc, values: dict, image_folder: str, cache_root_dir: Path |
             ds["extra_reference_directory"] = os.path.abspath(str(values["FAMILY_EDIT_EXTRAS_DIR"]))
     elif slider_on(desc, values, "pairs") and values.get("FAMILY_SLIDER_DIR"):
         ds["control_directory"] = os.path.abspath(str(values["FAMILY_SLIDER_DIR"]))   # the -1 end
-    return {"datasets": [ds], "resolution": [side, side],
+    blocks = [ds]
+    reg = ft_reg_dir(desc, values)
+    if reg:                              # a fine-tune's regularisation set: its own block (and cache folder)
+        blocks.append({"image_directory": os.path.abspath(reg), "cache_directory": str(cache_dir_for(reg, cache_root_dir)),
+                       "num_repeats": 1, "is_reg": True})
+    return {"datasets": blocks, "resolution": [side, side],
             "caption_extension": str(values.get("DATASET_CAPTION_EXT") or ".txt"),
             "batch_size": max(1, int(values.get("DATASET_BATCH_SIZE") or 1)),
             "enable_bucket": bool(values.get("ENABLE_BUCKET", True)),
@@ -599,8 +768,27 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
         "vae_path": m("vae") or None, "te_path": m("text_encoder") or None,
         "resume_state_dir": resume or None,
     }
+    ft = ft_on(desc, values)
+    if ft:
+        # Fizgig 8.7.3 launch.py:670-684: the length and cadence in whole rotations; a continuation starts from the
+        # paused run's checkpoint (FAMILY_FT_CONTINUE from ft_rotations_left), which replaces the model file. No
+        # Adaptive LR (:638), no resume state folder (:618), no Context LoRA (:623), no block subset (:750-756), no
+        # timestep range (:756, form.py:862-863)
+        kw.update(finetune=True, ft_rotations=_ft_int(values, "FAMILY_FT_ROTATIONS", 10) or 10,
+                  ft_save_every_rotations=_ft_int(values, "FAMILY_FT_SAVE_EVERY", 1) or 1,
+                  ft_rotate_every=_ft_int(values, "FAMILY_FT_ROTATE_EVERY", 1) or 1,
+                  ft_fused_backward=bool(values.get("FAMILY_FT_FUSED", True)), resume_state_dir=None,
+                  min_timestep=0.0, max_timestep=1.0)       # every noise level: the (hidden) range is a LoRA's
+        if ft_max_parts(values):
+            kw["ft_max_parts"] = ft_max_parts(values)
+        if ft_reg_dir(desc, values):
+            kw["reg_lr_multiplier"] = _ft_reg_mult(values) if _ft_reg_mult(values) is not None else 0.2
+        cont = values.get("FAMILY_FT_CONTINUE") or {}
+        if isinstance(cont, dict) and cont.get("checkpoint"):
+            kw.update(ft_start_window=int(cont.get("start_window", 0)), ft_epochs_done=int(cont.get("epochs_done", 0)),
+                      dit_path=str(cont["checkpoint"]))
     if desc.identity_blocks and values.get("FAMILY_FAST_ID") and not (edit_on(desc, values) or
-                                                                       slider_on(desc, values)):
+                                                                       slider_on(desc, values) or ft):
         kw["train_blocks"] = list(desc.identity_blocks)          # Fast Identity Mode (Fizgig --train_blocks)
     if slider_on(desc, values):                                  # Fizgig 7.0.1 launch.py's slider flags
         if desc.slider_ultra_blocks and values.get("FAMILY_SLIDER_ULTRA"):
@@ -621,7 +809,7 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
     opts = driver_options(desc, values)
     if opts:
         kw["driver_options"] = opts
-    if values.get("ADAPTIVE_LR"):
+    if values.get("ADAPTIVE_LR") and not ft:                    # a fine-tune trains at its own rate
         kw.update(adaptive_lr=True, adaptive_lr_min=float(P.first_token(values.get("ADAPTIVE_LR_MIN", "1e-5"))),
                   adaptive_lr_max=float(P.first_token(values.get("ADAPTIVE_LR_MAX", "4e-4"))))
     akey = training_adapter_key(desc, values)
@@ -629,7 +817,7 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
     if adapter and os.path.isfile(adapter):
         kw["training_adapter"] = adapter
     ctx = str(values.get("CONTEXT_LORA_PATH") or "").strip()
-    if ctx:
+    if ctx and not ft:                   # a fine-tune trains the base itself: there is no LoRA to stack on
         kw.update(context_lora_path=ctx, context_lora_strength=_num(values, "CONTEXT_LORA_STRENGTH"))
     bs1 = int(values.get("DATASET_BATCH_SIZE") or 1) <= 1
     if bs1:
@@ -666,6 +854,11 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
             neg = str(values.get("SAMPLE_NEGATIVE") or "").strip()
             if neg and kw["sample_cfg_scale"] > 1.0:
                 kw["sample_negative"] = neg
+            # the preview checkpoint renders these previews (its tick on and its file set; never for a fine-tune)
+            _ck = desc.preview_checkpoint()
+            _ck_path = (models.get(_ck[0].pref_key) or "").strip() if _ck else ""
+            ck_live = bool(desc.train_preview_checkpoint and _ck and values.get("SAMPLE_USE_DISTILLED", True)
+                           and not ft and _ck_path and os.path.isfile(_ck_path))
             sp = desc.preview_speed()
             speed_path = (models.get(sp.pref_key) or "").strip() if sp and sp.pref_key else ""
             if speed_path and os.path.isfile(speed_path):
@@ -682,18 +875,21 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                             desc.preview_speed_defaults()[0]
                     # The Train tab fills Steps with the family's plain-model default; with the speed LoRA on, the
                     # untouched default means "the LoRA's own steps" (Krea 2: 28 -> 10, Qwen: 25 -> 8)
-                    elif kw.get("sample_steps") == desc.preview_steps:
+                    # (not while the preview checkpoint renders: the Turbo is the training model's, and its steps
+                    # would reach the checkpoint without it - Fizgig greys the Turbo strength then, form.py:906-910)
+                    elif kw.get("sample_steps") == desc.preview_steps and not ck_live:
                         kw["sample_steps"] = desc.preview_speed_defaults()[0]
                     # ... and CFG the same way: an untouched (or empty) CFG box means the LoRA's own CFG, 1 for every
                     # Turbo here (Fizgig 8.6.1: Steps / CFG follow what previews render with; "The Turbo samples
                     # always use CFG 1", families/qwen_image.py). A CFG the user typed is kept (the trainer honours
                     # CFG > 1 with the Turbo, its negative too)
-                    if cfg <= 0 or abs(cfg - desc.preview_cfg) < 1e-9:
+                    if (cfg <= 0 or abs(cfg - desc.preview_cfg) < 1e-9) and not ck_live:
                         kw["sample_cfg_scale"] = sp.settings.cfg
                         if kw["sample_cfg_scale"] <= 1.0:
                             kw.pop("sample_negative", None)
             ck = desc.preview_checkpoint()
-            if desc.train_preview_checkpoint and ck and values.get("SAMPLE_USE_DISTILLED", True):
+            # a fine-tune previews the model it trains, not the Distilled (Fizgig launch.py:896)
+            if desc.train_preview_checkpoint and ck and values.get("SAMPLE_USE_DISTILLED", True) and not ft:
                 ck_path = (models.get(ck[0].pref_key) or "").strip()
                 if ck_path and os.path.isfile(ck_path):        # Klein's "Use Distilled model for samples"
                     kw.update(preview_checkpoint=ck_path,
@@ -710,7 +906,13 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                             kw.pop("sample_steps", None)
                         if cfg <= 0 or abs(cfg - desc.preview_cfg) < 1e-9:
                             kw.pop("sample_cfg_scale", None)
-                            kw.pop("sample_negative", None)
+                            # the checkpoint renders at its own CFG: without CFG (the Distilled's 1) there is no
+                            # negative; with it (MOSS-Image's SFT, CFG 4) the Samples negative applies, as Fizgig
+                            # always passes it (launch.py:861-868)
+                            if (desc.preview_checkpoint_sampling or ck[1]).cfg > 1.0 and neg:
+                                kw["sample_negative"] = neg
+                            else:
+                                kw.pop("sample_negative", None)
             if edit:
                 ref = str(values.get("FAMILY_EDIT_REF") or "").strip() or \
                     (edit_pairs(image_folder, str(values.get("FAMILY_EDIT_DIR") or ""))[2] or "")
@@ -750,6 +952,8 @@ def build_run(desc, values: dict, image_folder: str, models: dict, *, captioner:
                                                 model_path(desc, models, role), "--skip_existing"]
                            + (["--slider"] if slider_on(desc, values, "pairs") else [])))
     stages.append(("Training", [py, "-m", "training.train", "--config", str(cfg_path)]))
+    # a fine-tune's epoch count is its rotations times the window plan's cycle, known only once the trainer has
+    # planned the card: the tab reads the real total from the console / the loss log
     return Run(desc.key, run_dir, kw["output_name"], stages, kw["max_train_epochs"], resume)
 
 

@@ -410,6 +410,24 @@ class KleinDriver(FamilyDriver):
         px = (px / 2 + 0.5).clamp(0, 1)
         return Image.fromarray((px * 255.0).permute(1, 2, 0).cpu().numpy().astype(np.uint8))
 
+    # ---- full fine-tune (training/ft.py; Fizgig 8.7.3 klein/driver.py:382-397) ---------------------
+    def ft_spec(self, dit):
+        # the double blocks then the single blocks as one cycle; each stream's attention and MLP a window, the single
+        # blocks' fused linear1 (qkv + MLP in) and linear2 (attention out + MLP out) theirs (linear1 is the largest:
+        # the planner splits it by depth where it does not fit). The modulation, embedders and final layer stay frozen.
+        from training.ft import FTSpec
+        return FTSpec(blocks=("double_blocks", "single_blocks"),
+                      components=("img_attn", "img_mlp", "txt_attn", "txt_mlp", "linear1", "linear2"))
+
+    def install_ft_streamer(self, dit, streamer):
+        # Klein's forward swaps the double and the single blocks through two offloaders, each counting from 0; the
+        # streamer holds the double blocks then the single blocks (ft_spec's cycle), so each list gets its view
+        dit.disable_block_swap()
+        nd = len(dit.double_blocks)
+        dit.offloader_double = streamer.view(0, nd)
+        dit.offloader_single = streamer.view(nd, len(dit.single_blocks))
+        dit.blocks_to_swap = 1
+
     # ---- LoRA and the block map -------------------------------------------------------------------
     def block_map(self, dit=None):
         """8 double blocks and 24 single blocks, ids 'double_N' / 'single_N' (Fizgig 7.0.1's, the old Repair Studio's).

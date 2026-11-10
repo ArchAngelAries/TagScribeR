@@ -73,8 +73,10 @@ def _lokr_forward_update(x: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor, a:
 
 
 def lycoris_scale_from_keys(mod_keys: Dict[str, torch.Tensor]) -> float:
-    """Effective scale of a LoKR/LoHa module's dense delta (the LyCORIS rule): alpha / min(decomposition ranks in use);
-    a full-matrix LoKR has dim 1, so scale = alpha."""
+    """Effective scale of a LoKR/LoHa module's dense delta (the LyCORIS rule): alpha / min(decomposition ranks in use).
+    A full-matrix LoKR (lokr_w1 / lokr_w2 with no decomposition factors) has no rank to normalise: its scale is 1 and
+    the stored alpha is ignored, as LyCORIS (which writes the network dim there) and ComfyUI do (Fizgig 9.0.7, #304:
+    scaled by that alpha, a LyCORIS LoKR used as a Context LoRA played 16x or more too strong)."""
     alpha_t = mod_keys.get("alpha")
     alpha = float(alpha_t.item()) if alpha_t is not None else 1.0
     if alpha >= _ALPHA_SENTINEL_THRESHOLD:
@@ -86,7 +88,9 @@ def lycoris_scale_from_keys(mod_keys: Dict[str, torch.Tensor]) -> float:
         dims.append(int(mod_keys["lokr_w1_a"].shape[1]))
     if mod_keys.get("lokr_w2_a") is not None:
         dims.append(int(mod_keys["lokr_w2_a"].shape[1]))
-    return alpha / (max(1, min(dims)) if dims else 1)
+    if not dims:
+        return 1.0
+    return alpha / max(1, min(dims))
 
 
 class LoRAFactor(nn.Linear):

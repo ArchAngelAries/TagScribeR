@@ -63,7 +63,10 @@ is a dataset studio with training built in.
 
 - **Native LoRA training** inside the app, ported from the [Fizgig](https://github.com/shootthesound/Fizgig) trainer:
   its presets, adaptive learning rate, per-image loss watch, EMA, pause and resume, previews and memory planning.
-- **Ten model families** across six architectures. See [Model families](#model-families).
+- **Eleven model families** across seven architectures. See [Model families](#model-families).
+- **Slider LoRAs** (a dial between two looks, from image pairs or prompts), **Edit LoRAs** from before/after pairs
+  (with extra reference pictures on Klein and Qwen Image 2.1) and a **full fine-tune** of the base model for most
+  families. The full fine-tune is new and has not been run on real weights yet.
 - **fp8, INT8 and 4-bit bases** chosen automatically from your free VRAM, with block swap as the last resort.
 - **A VRAM and RAM bar** under every tab, with a marker for the peak of the current run.
 - **A fix for streaked previews on AMD.** PyTorch's built-in attention gives wrong results on ROCm for the very wide
@@ -285,8 +288,9 @@ Training runs as separate processes, so the app stays responsive and a crash can
 | Qwen Image 2.1 (including edit LoRAs from before/after pairs) | Fizgig's presets and measured settings |
 | MiniMax H3 (still images only) | Fizgig's presets |
 | FLUX.2 Klein Base 9B | Fizgig's presets, with Model Area block targeting |
-| SDXL 1.0, Pony Diffusion V6 XL, Illustrious-XL, NoobAI-XL (eps and v-pred) | Community starting points |
-| Anima | Community starting points |
+| MOSS-Image | Fizgig's presets (as of Fizgig 8.7.3) |
+| SDXL 1.0, Pony Diffusion V6 XL, Illustrious-XL, NoobAI-XL (eps and v-pred) | Fizgig's presets first, then community starting points |
+| Anima | Fizgig's presets first, then community starting points |
 
 **What has actually been run.** Krea 2 has been trained end to end on real weights on the author's RX 7900 XT: an
 fp8-scaled RAW checkpoint on the INT8 base, 60 images at 0.25 MP, with checkpoints, resume states and both preview
@@ -294,8 +298,11 @@ engines. On that card its step speed matched Fizgig's (about 4.9 s per step in t
 each trainer). **Every other family is experimental:** the code is ported and unit-tested on small random models, but
 nobody has trained it on real weights yet. Reports are very welcome.
 
-Fizgig has no code for the SDXL family or Anima, so their presets are community starting points, not measured
-recipes. Model weights are not included and have their own licences.
+The SDXL family and Anima were written here before Fizgig had them. Fizgig's own presets for both are listed first;
+the presets marked as community starting points are not measured recipes. Fizgig keeps moving (its presets now
+train on a newer optimizer, Muon, and it has added more model families); TagScribeR follows it in stages, and the
+notes under `docs/dev/` say which Fizgig version each part was ported from. Model weights are not included and have
+their own licences.
 
 ### How much VRAM
 
@@ -350,12 +357,11 @@ Planned, roughly in this order. Nothing here is promised by a date.
 
 **Finishing the Fizgig port**
 
-- The remaining FLUX.2 Klein settings (dropout, LoRA+, extra schedulers, logging, the Distilled preview model).
-- The remaining Krea 2 features (the NVIDIA fp8 fast path, rotating full fine-tune, Turbo-checkpoint previews,
-  reference modules).
-- The remaining MiniMax H3 features (video clips, audio and voice, Turbo previews, 4-bit HQQ).
+- Catching up with Fizgig 9: the Muon optimizer and its presets, MOSS-Image's newer recipes, training maps, masked
+  training, and the newer model families (Z-Image Turbo and Base, Flux 3 Image Klein, Fibo 2.0).
+- The remaining Krea 2 features (the NVIDIA fp8 fast path, Turbo-checkpoint previews, reference modules).
+- The remaining MiniMax H3 features (video clips, audio and voice, its full fine-tune, 4-bit HQQ).
 - Fizgig's workbench tools: face-aware tools and face likeness compare first, then LoRA comparison and repair.
-- A tracker that follows Fizgig's repository, so its fixes and new model support can be picked up quickly.
 
 **Image editor**
 

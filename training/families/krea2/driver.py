@@ -266,6 +266,17 @@ class Krea2Driver(FamilyDriver):
         px = vae.decode_to_pixels(latents.to(vae.device))[0]                   # (3, H, W) in [0, 1]
         return Image.fromarray((px * 255.0).permute(1, 2, 0).cpu().float().numpy().round().astype(np.uint8))
 
+    # ---- full fine-tune (training/ft.py) ------------------------------------------------------------
+    def ft_spec(self, dit):
+        # Fizgig 8.7.3 krea2/driver.py:40-47: the original's component windows (balanced: attention ~30% of a block,
+        # the MLP split in its three matrices), text fusion trained throughout, and its measured NF4-trunk planner
+        # calibration
+        from training.ft import FTSpec
+        return FTSpec(blocks="blocks", components=("attn", "mlp.gate", "mlp.up", "mlp.down"),
+                      always_on=("txtfusion",), overhead_gb=9.5, trunk_gb_per_block=0.217,
+                      stream_base_gb=3.2,      # measured 30 Sep: 2.7 GB worst window (12 GB card) + 0.5 slack
+                      calib_mp=0.25, act_gb_per_mp=3.2)   # 0.25 -> 0.98 MP measured +2.2 GB (3.0 GB/MP)
+
     # ---- LoRA and the block map -------------------------------------------------------------------
     def block_map(self, dit=None):
         """Main blocks, the text-fusion stack and the input / output layers - every Linear of the model (the LoRA is

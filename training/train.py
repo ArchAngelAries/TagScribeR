@@ -759,10 +759,10 @@ class _FineTune:
 
     def save(self, path, epoch):
         n_ep = epoch + self.epochs_done
-        # Fizgig's metadata keys, so its tools (and its own continuation) read TagScribeR's checkpoints
-        meta = {"fizgig_finetune": f"{self.desc.key}-rotation", "fizgig_source_base": os.path.basename(self.src),
-                "fizgig_next_start_window": str(self.sched.window_at(epoch)), "fizgig_ft_n_windows":
-                str(self.sched.n_windows), "fizgig_ft_epochs_done": str(n_ep), "modelspec.architecture":
+        # TagScribeR's own metadata keys (continuation also reads the older fizgig_* names, pipeline.ft_continuation)
+        meta = {"tagscriber_finetune": f"{self.desc.key}-rotation", "tagscriber_source_base": os.path.basename(self.src),
+                "tagscriber_next_start_window": str(self.sched.window_at(epoch)), "tagscriber_ft_n_windows":
+                str(self.sched.n_windows), "tagscriber_ft_epochs_done": str(n_ep), "modelspec.architecture":
                 self.desc.modelspec_arch if getattr(self.desc, "modelspec_arch", "") else self.desc.key}
         logger.info(f"[finetune] saving the full checkpoint at epoch {n_ep} -> {os.path.basename(path)} "
                     f"(~{os.path.getsize(self.src) / 1e9:.0f} GB; training waits for it)")
@@ -798,8 +798,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         raise RuntimeError(f"unknown or untrainable family {family!r}")
     validate_output_name(output_name)
     if context_lora_path and finetune:
-        raise RuntimeError("A Context LoRA trains a LoRA on top of another one; a fine-tune trains the base model "
-                           "itself, so the two don't combine. Drop the Context LoRA.")
+        raise RuntimeError("A companion LoRA trains a LoRA on top of another one; a fine-tune trains the base model "
+                           "itself, so the two don't combine. Drop the companion LoRA.")
     driver = desc.load_driver()
     driver_options = dict(driver_options or {})
     compile_mode = driver_options.pop("compile_blocks", None)     # Compile Blocks is the loop's (training/compile.py)
@@ -844,7 +844,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                         network_type)
             network_type = "lora"
         if adaptive_lr or ema_decay or log_per_image_loss or per_image_lr or auto_recaption or warmup_look_outliers:
-            logger.info("[slider] adaptive LR, weight averaging and the per-image loss watch are off: they assume "
+            logger.info("[slider] adaptive LR, weight averaging and hard-image tracking are off: they assume "
                         "one target per image, and a slider step has two")
         adaptive_lr, ema_decay = False, 0.0
         log_per_image_loss = per_image_lr = auto_recaption = warmup_look_outliers = False
@@ -884,20 +884,20 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 logger.info(f"[finetune] frozen base: NF4 (asked {precision}, swap {blocks_to_swap}) - the fine-tune "
                             f"trunk is always 4-bit, and blocks outside the window stream only if the plan needs it")
             precision, blocks_to_swap = "nf4", 0
-        _off = [n for n, on in (("EMA", ema_decay), ("Adaptive LR", adaptive_lr), ("auto-recaption", auto_recaption),
+        _off = [n for n, on in (("EMA", ema_decay), ("Adaptive LR", adaptive_lr), ("recaptioning", auto_recaption),
                                 ("torch.compile", str(compile_mode or "off").lower() in ("on", "outside")))
                 if on]
         if _off:
             logger.info(f"[finetune] off for a fine-tune: {', '.join(_off)}")
         ema_decay, adaptive_lr, auto_recaption, compile_mode = 0.0, False, False, "off"
         if ft_fused_backward and gradient_accumulation > 1:
-            logger.info("[finetune] free-each-gradient steps every parameter as its gradient lands - accumulation off")
+            logger.info("[finetune] stepping each weight as its gradient arrives - accumulation off")
             gradient_accumulation = 1
         if lr_scheduler != "constant":
             logger.info(f"[finetune] LR scheduler {lr_scheduler} -> constant (the optimizer is rebuilt every window)")
             lr_scheduler = "constant"
         if ft_fused_backward and max_grad_norm:
-            logger.info("[finetune] free-each-gradient: gradient clipping is off (it needs every gradient at once)")
+            logger.info("[finetune] stepping each weight as its gradient arrives: gradient clipping is off (it needs every gradient at once)")
             max_grad_norm = 0.0
 
     # ---- data ------------------------------------------------------------------------------------
@@ -928,7 +928,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     steps_per_epoch = len(dataset)
     opt_steps_per_epoch = math.ceil(steps_per_epoch / gradient_accumulation)
     if dataset.batch_size > 1 and (log_per_image_loss or per_image_lr or auto_recaption or warmup_look_outliers):
-        logger.info("[loss-watch] off: problem-image detection, per-image LR, auto-recaption and the look warm-up "
+        logger.info("[loss-watch] off: hard-image tracking, per-image learning rate, recaptioning and the look warm-up "
                     "need batch size 1")
         log_per_image_loss = per_image_lr = auto_recaption = warmup_look_outliers = False
     logger.info(f"{desc.display_name} training: {dataset.num_items} items, {max_train_epochs} epochs, "

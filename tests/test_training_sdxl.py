@@ -218,11 +218,11 @@ def test_descriptions_validate_and_are_distinct():
 
 def test_presets_resolve_without_refusals():
     for d in VARIANTS:
-        assert len(d.presets) == 8 and "Slider" in d.presets[2][0] and "Fine-tune" in d.presets[3][0] and d.presets[3][1]["FAMILY_FT"] and "Strong (rank 32, alpha 16, 5e-5)" in d.presets[0][0]     # Fizgig's first
+        assert len(d.presets) == 8 and "Slider" in d.presets[2][0] and "Full fine-tune" in d.presets[3][0] and d.presets[3][1]["FAMILY_FT"] and "High capacity (rank 32, alpha 16, 5e-5)" in d.presets[0][0]    # Fizgig's first
         first = d.presets[0][1]
         assert (first["NETWORK_DIM"], first["NETWORK_ALPHA"], first["LEARNING_RATE"], first["ADAPTIVE_LR"],
                 first["OPTIMIZER_TYPE"]) == (32, 16, 5e-5, False, "adamw")
-        assert "Fast" in d.presets[5][0]                                                      # TagScribeR's kept
+        assert "fast" in d.presets[5][0]                                                     # TagScribeR's kept
         for name, values in d.presets:
             new, rep = presets.apply(values, P.defaults(), d)
             assert rep.refused == [] and rep.ignored == [], (name, rep.refused, rep.ignored)
@@ -233,7 +233,7 @@ def test_presets_resolve_without_refusals():
 
 def test_model_rows_default_to_the_checkpoint_and_options_reach_train_kwargs(tmp_path):
     registry.register(PONY)
-    vals, _ = presets.apply(dict(PONY.presets)["✨ Pony Diffusion V6 XL Fast (rank 16, adaptive LR)"], P.defaults(), PONY)
+    vals, _ = presets.apply(dict(PONY.presets)["◆ Community: fast (rank 16, adaptive LR)"], P.defaults(), PONY)
     vals.update(LORA_NAME="p", SDXL_MIN_SNR_GAMMA=5.0, SDXL_LOCON=True)
     models = {"pony_dit": "pony.safetensors", "pony_vae": "", "pony_text_encoder": "  "}
     kw, _ = pipeline.train_kwargs(PONY, vals, tmp_path / "run", models)

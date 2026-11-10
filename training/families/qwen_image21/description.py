@@ -70,11 +70,11 @@ QWEN_IMAGE_21 = FamilyDescription(
         ModelFile("qwen21_text_encoder", "Qwen3-VL-8B text encoder", True, _COMFY,
                   "text_encoders/qwen3vl_8b_bf16.safetensors", 17.53,
                   "Used for caching only, then unloaded before training steps.", role="text_encoder"),
-        ModelFile("qwen21_training_adapter", "Fizgig training adapter", False,
+        ModelFile("qwen21_training_adapter", "Qwen 2.1 training adapter", False,
               "ShootTheSound/Fizgig-Qwen-Image-2.1-Training-Adapter",
               "fizgig_qwen_image_2.1_training_adapter_v2.safetensors", 0.08,
               "Frozen during training, off in previews and saved LoRAs. Without it Qwen 2.1 LoRAs collapse or "
-              "wobble; with it likeness was 77 vs 56 in Fizgig's A/B.", role="training_adapter",
+              "wobble; with it likeness was 77 vs 56 in an upstream A/B test, not run by TagScribeR.", role="training_adapter",
               # FZ :62-67: a stored path at the v1 file name moves to v2 (ModelFile.migrate); another file is kept
               replaces=("fizgig_qwen_image_2.1_training_adapter.safetensors",)),
         ModelFile("qwen21_turbo_lora", "Turbo LoRA (previews)", False, _COMFY,
@@ -127,7 +127,7 @@ QWEN_IMAGE_21 = FamilyDescription(
     ema_default="0.98",               # same default as Krea 2 and MiniMax H3 (measured there, 9 Sep 2026)
     training_adapter_note=("Keeps Qwen 2.1 LoRA training stable: frozen at 1.0 for every training step, off for "
                            "previews and never in your saved file. Without it Qwen 2.1 LoRAs collapse or wobble "
-                           "(likeness 77 with it vs 56 without in Fizgig's A/B)."),
+                           "(likeness 77 with it vs 56 without in an upstream A/B test, not run by TagScribeR)."),
     implementation="https://github.com/QwenLM/Qwen-Image",
     precisions=("bf16", "int8", "nf4"),
     # Measured 27 Sep 2026 on a 5090, gradient checkpointing, VAE resident for previews, 1 epoch of 52 steps:
@@ -152,7 +152,7 @@ QWEN_IMAGE_21 = FamilyDescription(
     identity_blocks=tuple(f"block_{i}" for i in range(10, 15)),
     # measured 28 Sep 2026: 40-48 pairs learned a grade on held-out photos in 6-8 epochs at 0.5 MP
     edit_note=("About 40 pairs (20 at least; more if your photos vary a lot). Each photo 1 MP or larger, e.g. "
-               "1200x800; bigger is fine, Fizgig resizes them. An original and its edited version must have the "
+               "1200x800; bigger is fine, they are resized for you. An original and its edited version must have the "
                "same crop and shape."),
     helper_files=(("Qwen/Qwen-Image-2.1", ("processor/*",)),),   # tokenizer + image processor + chat template
 
@@ -208,27 +208,27 @@ QWEN_IMAGE_21 = FamilyDescription(
         # Fast: rank 8, Adaptive 2e-4..4e-4 - fastest to likeness (44 at epoch 3 vs 23-31 for every other run) and
         # the best-held skin detail at 0.5 MP. Automagic (lower likeness, softer late) and flat 1e-4 (too slow)
         # both lost to it.
-        ("✨ Qwen 2.1 Fast (rank 8, adaptive LR)", _preset(8, adaptive=("2e-4", "4e-4"))),
+        ("◆ Quick start (rank 8, adaptive LR)", _preset(8, adaptive=("2e-4", "4e-4"))),
         # Fast Identity Mode: Fast's recipe on the identity blocks only, at the 0.25 MP it was measured at (Sydney,
         # see identity_blocks): about 1.5x faster, very close to full-model likeness.
-        ("✨ Qwen 2.1 Fast Identity Mode (rank 8) - very close to full-model likeness, ~1.5x faster",
+        ("◆ Identity blocks only (rank 8, faster steps)",
          {**_preset(8, adaptive=("2e-4", "4e-4")), "DATASET_MEGAPIXELS": "0.25", "FAMILY_FAST_ID": True}),
         # Standard: rank 16 for bigger or mixed datasets. Fast's range at rank 16 overcooked from ~epoch 15 (skin
         # detail 6.4 -> 4.7 by epoch 30), so the range is halved; Peter has run this at rank 16.
-        ("✨ Qwen 2.1 Standard (rank 16, adaptive LR)", _preset(16, adaptive=("1e-4", "2e-4"))),
+        ("◆ Balanced (rank 16, adaptive LR)", _preset(16, adaptive=("1e-4", "2e-4"))),
         # Style: flat, because style loss descends steadily and Adaptive LR climbs toward its ceiling on steady
         # descent, where style overbakes. 1.5e-4 sits between flat 1e-4 (slow at rank 16) and the range that
         # overcooked rank 16. 30 epochs, every one saved: stop early or pick an epoch in LoRA Royale.
-        ("✨ Qwen 2.1 Style (rank 16, 1.5e-4)", _preset(16, lr=1.5e-4)),
+        ("◆ Style (rank 16, 1.5e-4)", _preset(16, lr=1.5e-4)),
         # Edit: Peter's proven recipe (29 Sep, 40-pair Sedona film grade, v6.6.0 demo) - Fast's rank 8 + Adaptive
         # 2e-4..4e-4, best at epoch 9. 12 epochs covers that with headroom; pick the epoch in LoRA Royale.
-        ("✨ Qwen 2.1 Edit (rank 8, adaptive LR)", _preset(8, adaptive=("2e-4", "4e-4"), epochs=12, edit=True)),
+        ("◆ Edit pairs (rank 8, adaptive LR)", _preset(8, adaptive=("2e-4", "4e-4"), epochs=12, edit=True)),
         # Edit Strong: rank 16 for trickier edits, at Standard's halved range (rank 16 at Fast's overcooked).
-        ("✨ Qwen 2.1 Edit Strong (rank 16, adaptive LR) - trickier edits",
+        ("◆ Edit pairs, harder edits (rank 16, adaptive LR)",
          _preset(16, adaptive=("1e-4", "2e-4"), epochs=12, edit=True)),
         # Slider (29 Sep): sliders run hot and short (rank 8 - Peter, 7 Oct - at 2e-4, a few hundred
         # steps). Measured on Qwen: a prompt smile slider was clear by 160 steps, a 40-pair warmth slider by 160.
-        ("✨ Qwen 2.1 Slider (rank 8, 2e-4)", _preset(8, lr=2e-4, epochs=30, slider=True)),
+        ("◆ Slider (rank 8, 2e-4)", _preset(8, lr=2e-4, epochs=30, slider=True)),
     ),
     workbench=("repair", "profiler", "extract", "royale"),     # FZ :267
 

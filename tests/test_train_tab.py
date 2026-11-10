@@ -19,14 +19,14 @@ def test_tab_builds_and_applies_first_preset(app):
     assert tab.desc.key == "krea2"                                       # listed first: the primary model
     v = tab.collect()
     assert v["NETWORK_DIM"] == 8 and v["ADAPTIVE_LR"] is True and v["FAMILY_EMA"] == "0.98 (recommended)"
-    assert v["DATASET_MEGAPIXELS"] == "0.25" and v["SAMPLE_STEPS"] == 28    # ✨ Krea 2 Ultra Fast on first visit
+    assert v["DATASET_MEGAPIXELS"] == "0.25" and v["SAMPLE_STEPS"] == 28    # ◆ Quick start on first visit
     tab.combo_family.setCurrentIndex(tab.combo_family.findData("qwen_image21"))
     assert tab.desc.key == "qwen_image21"
     v = tab.collect()
-    assert v["NETWORK_DIM"] == 8 and v["ADAPTIVE_LR"] is True          # ✨ Qwen 2.1 Fast on first visit
+    assert v["NETWORK_DIM"] == 8 and v["ADAPTIVE_LR"] is True          # ◆ Quick start on first visit
     assert v["ADAPTIVE_LR_MIN"] == "2e-4 - rank 4/8 only" and v["DATASET_MEGAPIXELS"] == "0.5"
     assert tab.widgets["FAMILY_EDIT_DIR"][0].parentWidget().isHidden()
-    tab._apply_preset("✨ Qwen 2.1 Style (rank 16, 1.5e-4)", quiet=True)
+    tab._apply_preset("◆ Style (rank 16, 1.5e-4)", quiet=True)
     v = tab.collect()
     assert v["NETWORK_DIM"] == 16 and v["ADAPTIVE_LR"] is False and v["LEARNING_RATE"] == 1.5e-4
     assert all(p.tip for p in __import__("training.params", fromlist=["PARAMS"]).PARAMS)

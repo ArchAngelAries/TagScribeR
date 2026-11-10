@@ -51,7 +51,7 @@ def _fake_run(tab, tmp_path, stage=1, state="running"):
 def test_edit_pictures_params_match_the_pipeline():
     assert (P.EDIT_PHOTO_ONLY, P.EDIT_WITH_EXTRAS) == (pipeline.EDIT_PHOTO_ONLY, pipeline.EDIT_WITH_EXTRAS)
     pic, xd = P.BY_KEY["FAMILY_EDIT_PICTURES"], P.BY_KEY["FAMILY_EDIT_EXTRAS_DIR"]
-    assert pic.kind == P.CHOICE and pic.default == P.EDIT_PHOTO_ONLY and pic.label == "What the edit uses"
+    assert pic.kind == P.CHOICE and pic.default == P.EDIT_PHOTO_ONLY and pic.label == "Edit inputs"
     assert pic.options == (P.EDIT_PHOTO_ONLY, P.EDIT_WITH_EXTRAS) and pic.strict
     assert xd.kind == P.DIR and xd.label == "Extra pictures folder" and xd.default == ""
     assert "FAMILY_EDIT_EXTRAS_DIR" in P.PATH_KEYS
@@ -103,7 +103,7 @@ def test_tick_label_comes_from_the_family_and_keeps_klein_s_text():
     assert P.preview_checkpoint_tick(SimpleNamespace()) == P.SAMPLE_CHECKPOINT_TICK
     assert P.preview_checkpoint_tick(SimpleNamespace(preview_checkpoint_tick="Use the other model")) == \
         "Use the other model"
-    assert P.SAMPLE_CHECKPOINT_TICK == "Use Distilled model for samples (4-step, matches ComfyUI)"
+    assert P.SAMPLE_CHECKPOINT_TICK == "Preview with the Distilled model (4 steps, as ComfyUI renders)"
 
 
 def test_tick_label_in_the_tab(tab):

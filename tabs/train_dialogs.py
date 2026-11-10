@@ -223,10 +223,10 @@ class ProblemImagesDialog(QDialog):
     def __init__(self, run_dir: str, caption_ext: str, image_folder: str, parent=None, on_saved=None):
         super().__init__(parent)
         self.run_dir, self.ext, self.folder, self.on_saved = run_dir, caption_ext, image_folder, on_saved
-        self.setWindowTitle("Problem Images")
+        self.setWindowTitle("Hard images")
         self.resize(1000, 640)
         lay = QVBoxLayout(self)
-        lay.addWidget(hint_label("Images the loss watch flags while training. Stuck and suspect images usually have "
+        lay.addWidget(hint_label("Images that are not learning, flagged while training. Stuck and suspect images usually have "
                                  "a wrong, missing or misleading caption. Edit it here and click Save fix: the "
                                  "caption file is updated and the run picks the new text up at the next epoch."))
         self.lbl_status = QLabel("Waiting for the first epoch report…")

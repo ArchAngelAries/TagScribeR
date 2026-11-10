@@ -60,8 +60,8 @@ def test_description_presets_and_registry(desc):
     assert desc.optimizers[:3] == ("automagic3", "adamw8bit", "adamw") and desc.optimizer_eps_floor_8bit
     assert (desc.preview_width, desc.preview_height) == (768, 768)
     names = [n for n, _ in desc.presets]
-    assert names == ["✨ MiniMax H3 Fast (LoRA 8, 50 epochs)", "✨ MiniMax H3 (rank 16, 60 epochs)",
-                     "✨ MiniMax H3 Style (LoRA 8)", "✨ MiniMax H3 Slider (rank 8, 2e-4)"]
+    assert names == ["◆ Quick start (rank 8, 50 epochs)", "◆ Balanced (rank 16, 60 epochs)",
+                     "◆ Style (rank 8)", "◆ Slider (rank 8, 2e-4)"]
     fast, base, style, slider = (v for _, v in desc.presets)
     assert slider["FAMILY_SLIDER"] is True and (slider["OPTIMIZER_TYPE"], slider["LEARNING_RATE"]) == ("adamw8bit", 2e-4)
     assert (fast["NETWORK_DIM"], fast["NETWORK_ALPHA"], fast["MAX_TRAIN_EPOCHS"], fast["LEARNING_RATE"]) == (8, 8, 50, 1e-6)

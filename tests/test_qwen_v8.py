@@ -64,11 +64,11 @@ def test_turbo_lora_recipe():
 def test_presets_slider_rank_8_and_guidance_everywhere():
     d = _desc()
     names = [n for n, _ in d.presets]
-    assert "✨ Qwen 2.1 Slider (rank 8, 2e-4)" in names and not any("rank 4" in n for n in names)
+    assert "◆ Slider (rank 8, 2e-4)" in names and not any("rank 4" in n for n in names)
     for n, p in d.presets:
         assert p["FAMILY_SLIDER_GUIDANCE"] == "2", n
-        assert p["FAMILY_SLIDER"] is (n == "✨ Qwen 2.1 Slider (rank 8, 2e-4)"), n
-    slider = dict(d.presets)["✨ Qwen 2.1 Slider (rank 8, 2e-4)"]
+        assert p["FAMILY_SLIDER"] is (n == "◆ Slider (rank 8, 2e-4)"), n
+    slider = dict(d.presets)["◆ Slider (rank 8, 2e-4)"]
     assert (slider["NETWORK_DIM"], slider["NETWORK_ALPHA"], slider["LEARNING_RATE"]) == (8, 8, 2e-4)
 
 

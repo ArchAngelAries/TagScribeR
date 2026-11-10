@@ -261,7 +261,7 @@ class FamilyDescription:
     train_preview_checkpoint: bool = False
     preview_checkpoint_sampling: Optional[SamplingSettings] = None
     # the Samples tab's tick for it: its label, whether it starts ticked, the Steps note (Fizgig 8.7.3 :424-430)
-    preview_checkpoint_tick: str = "Use Distilled model for samples (4-step, matches ComfyUI)"
+    preview_checkpoint_tick: str = "Preview with the Distilled model (4 steps, as ComfyUI renders)"
     preview_checkpoint_on: bool = True
     preview_checkpoint_steps_note: str = "Base samples only - Distilled is locked at 4 steps"
     # (tensor name, sum) that identifies the family's own released Base DiT: with any other Base (a fine-tune of it)

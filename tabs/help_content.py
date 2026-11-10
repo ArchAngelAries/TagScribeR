@@ -92,6 +92,28 @@ The Image Editor saves copies by default and asks before changing originals.</li
 <li><b>AI jobs save as they go.</b> If you abort or something crashes, finished images keep their captions.</li>
 </ul>
 """),
+    "credits": ("Credits and licences", "Basics", """
+<h2>Credits and licences</h2>
+<p>TagScribeR is free, open-source software (GPL-3.0) and an independent project. It is not affiliated with,
+endorsed by or a version of any other trainer or tool.</p>
+<h3>Training engine</h3>
+<p>Parts of TagScribeR's native training code are adapted from the open-source Fizgig trainer
+(<a href="https://github.com/shootthesound/Fizgig">https://github.com/shootthesound/Fizgig</a>, Apache License 2.0,
+Copyright Peter Neill), which in turn builds on work by kohya-ss (sd-scripts, musubi-tuner), Ostris (ai-toolkit),
+the diffusers team and others. TagScribeR follows that project for which models and training features are worth
+supporting; some speed and memory figures in this Help come from it and are marked "measured upstream". Every
+adapted file names its source in its header, and the full list of sources and licences is in
+<code>THIRD_PARTY_NOTICES.md</code> in the application folder.</p>
+<h3>Preset files</h3>
+<p>Preset files written by Fizgig use the same setting names and import as they are (Train tab, Import...).</p>
+<h3>Models</h3>
+<p>Model weights are never included. Each model has its own licence, shown or linked on its row under Model files.</p>
+<h3>Support TagScribeR</h3>
+<p>TagScribeR is free for everyone. If it saves you time, you can support its development on
+<a href="https://www.patreon.com/c/ArchAngelAries">Patreon</a> (https://www.patreon.com/c/ArchAngelAries) or
+<a href="https://ko-fi.com/archangelaries">Ko-fi</a> (https://ko-fi.com/archangelaries). The two small buttons at the
+bottom of the sidebar open the same pages in your browser; nothing is sent from the app.</p>
+"""),
     "gallery": ("Gallery overview", "Gallery", """
 <h2>Gallery</h2>
 <p>The Gallery is your dataset workspace: browse, filter, inspect and edit captions for thousands of images.</p>
@@ -394,7 +416,9 @@ starting caption for images without one (or replace existing captions). Results 
 Restart TagScribeR to apply.</li>
 <li><b>Thumbnail size</b> — Size slider, Ctrl + mouse wheel, Ctrl+= / Ctrl+- in any image grid. Larger cards load sharper
 thumbnails and slightly larger caption text.</li>
-<li><b>Themes</b> — light and dark themes in Settings → Appearance.</li>
+<li><b>Themes</b> — light and dark themes in Settings → Appearance → Theme. A theme applies at once, without a
+restart. <i>TagScribeR dark</i> and <i>TagScribeR light</i> are the new themes with larger, clearer controls;
+<i>dark_teal</i> is the classic look and stays the default, and the other classic themes stay available.</li>
 <li><b>Scrolling never changes a setting.</b> The mouse wheel over a dropdown, number box or slider scrolls the
 panel it sits in; click the control first (or Tab to it) to change it with the wheel.</li>
 <li>Every tool can be driven from the keyboard — see <i>Keyboard shortcuts</i>.</li>
@@ -402,15 +426,15 @@ panel it sits in; click the control first (or Tab to it) to change it with the w
 """),
     "train": ("Training a LoRA", "Train", """
 <h2>Training a LoRA (Train tab)</h2>
-<p>TagScribeR trains LoRAs natively, using the same training engine, presets and adaptive learning rate as the
-Fizgig trainer. It trains the dataset folder that's open in the workspace, so the captions you just fixed are the
+<p>TagScribeR trains LoRAs natively, with built-in presets and an adaptive learning rate (see <i>Credits and
+licences</i> for where the training code comes from). It trains the dataset folder that's open in the workspace, so the captions you just fixed are the
 ones it learns.</p>
 <ol>
 <li><b>Open and caption your dataset</b> (Gallery / Auto Caption). Every image needs a caption file, so filter
 <code>missing:caption</code> to find gaps. Put your trigger word in the captions (Auto Caption → Subject).</li>
 <li><b>Pick a family</b> (Krea 2, Qwen Image 2.1, MiniMax H3, FLUX.2 Klein, MOSS-Image, SDXL / Pony / Illustrious / NoobAI, Anima) and set its <b>Model files</b> once. <i>Get</i> opens the download page;
 the paths are remembered.</li>
-<li><b>Load a preset.</b> ✨ presets are measured recipes; the first one is applied on your first visit.</li>
+<li><b>Load a preset.</b> ◆ presets are the built-in recipes; the first one is applied on your first visit.</li>
 <li>The tab starts in a <b>simple view</b>: name, epochs, resolution and preview prompts, with the preset deciding
 the rest. Tick <b>Show all settings</b> for full control of every option.</li>
 <li>Set the <b>LoRA name</b> (and output folder), check the <b>preview prompts</b> (Samples section), then
@@ -441,17 +465,17 @@ LoRA learns what differs between the two ends, not what they share. Partners may
 <code>photo_anything.png</code> for <code>photo.png</code>.</li>
 <li><i>prompts</i>: no dataset. Fill in the base prompt (what the picture is) and what each end adds (for example
 "a photo of a woman", "smiling", "frowning"). The model first renders 16 practice pictures of the base prompt, then
-learns to push them toward one prompt at +1 and the other at -1. <i>Slider push strength</i> sets how far.</li>
+learns to push them toward one prompt at +1 and the other at -1. <i>Slider guidance</i> sets how far.</li>
 </ul>
-A slider is always a plain LoRA; Adaptive LR, EMA, the loss watch and gradient accumulation are off for it, and it
+A slider is always a plain LoRA; Adaptive LR, EMA, hard-image tracking and gradient accumulation are off for it, and it
 trains at batch size 1. Previews show the dial at -1, 0 and +1 side by side. Krea 2, Qwen, SDXL, Anima and MiniMax H3 have a
-Slider preset (Fizgig's recipes: tried on Qwen, Krea 2 and MiniMax H3, starting points on SDXL and Anima). Krea 2 adds <i>Slider Ultra mode</i>
-(composition blocks only, for sliders that hold up at higher strengths). The file records that it is a slider
+Slider preset (tried upstream on Qwen, Krea 2 and MiniMax H3, not by TagScribeR; starting points on SDXL and Anima). Krea 2 adds <i>Train composition blocks only</i>
+(for sliders that hold up at higher strengths). The file records that it is a slider
 (<code>ss_slider</code>).</li>
 <li><b>Fine-tune the whole model</b> (Show all settings; Krea 2, Qwen Image 2.1, FLUX.2 Klein, MOSS-Image, the SDXL
 family and Anima): the base model itself trains instead of a LoRA, and the result is a full model file. See <i>Full
 fine-tune</i>. A run is one kind of training: ticking Edit, Slider or Fine-tune unticks the other two.</li>
-<li>A <b>Context LoRA</b> (Show all settings) stays frozen and active while you train, so the new LoRA learns on top
+<li>A <b>Companion LoRA</b> (Show all settings) stays frozen and active while you train, so the new LoRA learns on top
 of it; it is never saved into the output. LoRA, LoKR and LoHa files load, in kohya, diffusers, OneTrainer or
 AI-Toolkit naming.</li>
 <li>Tokenizers are read from the local Hugging Face cache first, so once the model downloader has fetched them, a
@@ -471,25 +495,25 @@ checkpoint and stops; Resume continues from that checkpoint for the rotations th
 never started automatically when the app opens.</li>
 <li><b>Last run</b> reloads the settings of the most recent run.</li>
 </ul>
-<p>See also: <i>Training presets</i>, <i>Adaptive learning rate</i>, <i>Problem images</i>, <i>Training previews</i>,
-<i>Full fine-tune</i>, <i>MOSS-Image</i>, <i>Training memory &amp; speed</i>.</p>
+<p>See also: <i>Training presets</i>, <i>Adaptive learning rate</i>, <i>Hard images</i>, <i>Training previews</i>,
+<i>Full fine-tune</i>, <i>MOSS-Image</i>, <i>Training memory &amp; speed</i>, <i>Credits and licences</i>.</p>
 """),
     "train_presets": ("Training presets", "Train", """
 <h2>Training presets</h2>
 <ul>
-<li><b>✨ Built-in presets</b> come with each family. They are tested recipes (rank, learning rate or Adaptive LR range,
+<li><b>◆ Built-in presets</b> come with each family. They are ready-made recipes (rank, learning rate or Adaptive LR range,
 epochs, resolution) and can't be changed or deleted.</li>
 <li><b>Save…</b> stores the current settings as your own preset, in
 <code>user_data/training_presets/&lt;family&gt;/</code>. Presets never contain the model family, so loading one can't
 switch your model. Preview settings and Resume aren't part of presets either.</li>
-<li>A preset that sets a folder or file (output folder, originals folder, slider -1 end folder, Context LoRA, thumbnail)
+<li>A preset that sets a folder or file (output folder, originals folder, slider -1 end folder, Companion LoRA, thumbnail)
 is named in the console when you load it: check those paths, especially in a preset someone else made.</li>
 <li><b>Caption extension</b> (Dataset, Show all settings) must start with a dot, like <code>.txt</code> or
 <code>.caption</code>; an image extension is refused, since a caption written there would replace the picture.</li>
-<li><b>Import…</b> adds a preset file. Fizgig preset files work as they are (same setting names).</li>
+<li><b>Import…</b> adds a preset file. Preset files from other trainers that use the same setting names import as they are (see <i>Credits and licences</i>).</li>
 <li>When a preset holds a value this family doesn't offer (an optimizer, a learning-rate bound, a precision), that
 setting is kept as it was and the console says so. Settings this version doesn't know are ignored.</li>
-<li>Fizgig's <b>Slider</b> and <b>Fine-tune</b> presets work on the families that offer those kinds of training.
+<li>The <b>Slider</b> and <b>Fine-tune</b> presets work on the families that offer those kinds of training.
 On a family that does not (a Fine-tune preset on MiniMax H3, whose fine-tune is not ported yet) the preset is refused
 with a message and changes nothing: applied anyway it would train an ordinary LoRA.</li>
 </ul>
@@ -500,15 +524,15 @@ with a message and changes nothing: applied anyway it would train an ordinary Lo
 is a complete model file, as large as the one you started from, that you load <i>in place of</i> the base model. Use
 it when a LoRA is not enough (a large or varied dataset, a new base for further LoRAs). For one person, one style or
 one concept a LoRA is faster, far smaller and usually all you need.</p>
-<p><b>Status:</b> ported from Fizgig and tested here only on a tiny made-up model on the CPU. It has not been run
-on real weights by TagScribeR, on AMD or on NVIDIA; Fizgig documents its fine-tune as tested on NVIDIA cards. Treat
+<p><b>Status:</b> adapted from open-source training code and tested here only on a tiny made-up model on the CPU. It has not been run
+on real weights by TagScribeR, on AMD or on NVIDIA; the upstream project documents its fine-tune as tested on NVIDIA cards. Treat
 your first run as a trial and keep an eye on the console.</p>
 <h3>How to start one</h3>
 <ol>
 <li>Pick a family that offers it: Krea 2, Qwen Image 2.1, FLUX.2 Klein, MOSS-Image, SDXL / Pony / Illustrious /
 NoobAI or Anima. (MiniMax H3's fine-tune needs its own back end, which is not ported yet.)</li>
-<li>Tick <b>Show all settings</b>, then <b>Fine-tune the whole model</b> (Training Parameters), or load a ✨
-Fine-tune preset where the family has one (SDXL, Anima, MOSS-Image). Ticking it sets the learning rate to the
+<li>Tick <b>Show all settings</b>, then <b>Fine-tune the whole model</b> (Training Parameters), or load a ◆
+Full fine-tune preset where the family has one (SDXL, Anima, MOSS-Image). Ticking it sets the learning rate to the
 family's fine-tune rate (1e-5) and turns Adaptive LR off.</li>
 <li>Set <b>Rotations</b> (how long it trains) and check the preview prompts. Start.</li>
 </ol>
@@ -526,11 +550,11 @@ epochs</i>. Saves only happen at whole rotations, so no saved file has some part
 <li><b>System memory:</b> a full-precision master copy of the trained weights lives in RAM, or on disk in the run
 folder when RAM is short (the console says which).</li>
 <li><b>Not used:</b> rank, alpha, network type, Model Area, the timestep range, Adaptive LR, EMA, the LR scheduler,
-torch.compile, the Context LoRA, auto-recaption, Fast Identity Mode, Sample now / Save now and Resume from a state
+torch.compile, the Companion LoRA, auto-recaption, identity blocks only, Sample now / Save now and Resume from a state
 folder. The boxes that do not apply are hidden.</li>
 <li><b>Optimizer:</b> Adafactor (its state is about a tenth of AdamW's, which is what keeps a fine-tune on the
 card), whatever the Optimizer box says.</li>
-<li><b>Free each gradient as soon as it's used</b> (on by default) steps each weight the moment its gradient arrives,
+<li><b>Step each weight as its gradient arrives</b> (on by default) steps each weight the moment its gradient arrives,
 so only one gradient is held at a time. Gradient clipping and gradient accumulation are off with it.</li>
 <li><b>Window size</b> (Auto by default): choose a smaller cap if Auto runs too close to your card's limit.</li>
 <li><b>Regularisation images (optional):</b> a folder of ordinary, well-captioned real photos of the broader class
@@ -540,7 +564,7 @@ keep the model's general sense of that class from drifting. Use real photos, not
 <li><b>Pause</b> finishes the rotation in progress, saves a checkpoint and stops. <b>Resume</b> continues from that
 checkpoint for the rotations that are left.</li>
 <li>The checkpoint is written in the source file's own layout and names, so it is meant to load wherever the base
-model loads (ComfyUI included); that has not been tried here on a real model yet. Its metadata uses Fizgig's keys.</li>
+model loads (ComfyUI included); that has not been tried here on a real model yet. Its metadata keys start with <code>tagscriber_</code> (models saved with the older key names are still read).</li>
 <li><b>Krea 2 note:</b> the fp8-scaled RAW file many people train LoRAs on cannot be fine-tuned (it is refused
 before the run starts); a fine-tune needs the bf16 model file.</li>
 <li><b>Never under the same name as its source:</b> to train a finished fine-tune further, set its file as the
@@ -551,9 +575,9 @@ model file and give the new run another LoRA name. A run refuses to start from o
     "train_moss": ("MOSS-Image", "Train", """
 <h2>MOSS-Image</h2>
 <p>MOSS-Image (OpenMOSS) is a text-to-image model with strong text rendering, a Qwen3.5-9B text encoder and the
-FLUX.2 autoencoder. The family is ported from Fizgig (v8.7.3). <b>Status:</b> tested here only on tiny made-up
-models; it has not been run on real weights by TagScribeR. Fizgig has changed its MOSS-Image recipes since that
-version (a newer optimizer, a clean-end schedule that changes during the run, a different preview recipe); those
+FLUX.2 autoencoder. The family is adapted from open-source training code (upstream version 8.7.3). <b>Status:</b> tested here only on tiny made-up
+models; it has not been run on real weights by TagScribeR. The upstream project has changed its MOSS-Image recipes since that
+version (a newer optimizer, a low-noise schedule that changes during the run, a different preview recipe); those
 are on the list to follow.</p>
 <ul>
 <li><b>Train on Base, use the LoRA on SFT.</b> Base is the model to train on; SFT is the sharper model people
@@ -563,11 +587,11 @@ show the LoRA where you will use it.</li>
 you train on is then the model you will use. You can tick it again.</li>
 <li><b>Train attention only</b>: recommended when the model you train on is SFT or a fine-tune of it (training its
 feed-forward layers breaks anatomy). On Base leave it off.</li>
-<li><b>Clean-end share (% of steps)</b> (Timesteps): how much of the training happens on nearly clean images, where
-faces and fine detail are refined. 30 is Fizgig's default and an experimental figure; empty uses the model's own
+<li><b>Low-noise share (% of steps)</b> (Timesteps): how much of the training happens on nearly clean images, where
+faces and fine detail are refined. 30 is the default and an experimental figure; empty uses the model's own
 schedule (about 11%).</li>
 <li><b>Epochs:</b> the presets use 70. MOSS-Image learns slowly and steadily; small datasets were still improving
-late in Fizgig's runs. Adaptive LR is off in the presets (it walks down to its floor on this model's flat loss).</li>
+late in the upstream project's runs. Adaptive LR is off in the presets (it walks down to its floor on this model's flat loss).</li>
 <li><b>Captions</b> may be long (up to 4096 tokens) and are read through the model's chat template.</li>
 <li><b>No Edit LoRAs:</b> the released checkpoints are text-to-image only.</li>
 <li><b>Full fine-tune:</b> offered (see <i>Full fine-tune</i>); with Train attention only it trains attention alone
@@ -594,10 +618,10 @@ chart marks its decisions (↑ ↓ !).</li>
 <p>Optimizers that set their own rate (Automagic v3) switch Adaptive LR off. Lion needs about a tenth of an AdamW
 rate.</p>
 """),
-    "train_watch": ("Problem images (loss watch)", "Train", """
-<h2>Problem images</h2>
-<p><b>Detect problem images</b> follows each image's loss through the run. The loss is corrected for how noisy each
-step was, so images are compared fairly. Open <b>Problem Images</b> during a run to see the verdicts:</p>
+    "train_watch": ("Hard images (per-image loss)", "Train", """
+<h2>Hard images</h2>
+<p><b>Track hard images</b> follows each image's loss through the run. The loss is corrected for how noisy each
+step was, so images are compared fairly. Open <b>Hard images</b> during a run to see the verdicts:</p>
 <ul>
 <li><b>stuck</b>: consistently harder than the rest and not improving. Usually a wrong or misleading caption, or an
 image that doesn't fit the set.</li>
@@ -605,9 +629,9 @@ image that doesn't fit the set.</li>
 <b>easy</b> / <b>mid</b> / <b>learning</b>: fine.</li>
 <li>Edit a caption there and click <b>Save fix</b>. The caption file is saved (with a backup), and the run re-encodes
 it at the next epoch.</li>
-<li><b>Per-image adaptive LR</b> trains stuck images more gently (×0.5 down to ×0.1) and easy ones slightly harder
+<li><b>Per-image learning rate</b> trains stuck images more gently (×0.5 down to ×0.1) and easy ones slightly harder
 (×1.1).</li>
-<li><b>Auto-recaption stuck images</b> re-captions them between epochs with the captioner you choose (a local vision
+<li><b>Recaption images that stay hard</b> re-captions them between epochs with the captioner you choose (a local vision
 model or the WD tagger). After two failed attempts an image is set aside.</li>
 <li>Set-aside images are recorded per model family in <code>tagscriber_excluded.json</code> in the dataset folder.
 A later run trains them normally; if one gets stuck again it is set aside at once, without new recaptions. Editing
@@ -638,7 +662,7 @@ family default.</li>
 """),
     "train_live": ("Watching and steering a run", "Train", """
 <h2>Watching and steering a run</h2>
-<p>These came with Fizgig v8 and are unit-tested on tiny test models only. They have <b>not yet been run on real
+<p>These came with upstream version 8 of the training code and are unit-tested on tiny test models only. They have <b>not yet been run on real
 hardware</b>: if one misbehaves on a real run, please tell us.</p>
 <h3>The loss graph</h3>
 <ul>
@@ -667,7 +691,7 @@ acts.</li>
 <h3>Prompt sliders: change the prompts while it trains</h3>
 <ul>
 <li>While a <b>prompt-pair slider</b> (Slider LoRA from prompts) trains, <b>Slider prompts...</b> (Ctrl+Shift+L)
-opens its base prompt, what each end adds and the push strength. Apply hands them to the run, which takes them at the
+opens its base prompt, what each end adds and the slider guidance. Apply hands them to the run, which takes them at the
 end of the epoch. A new base prompt makes the model render its practice pictures again (a short pause).</li>
 <li>The window shows what the trainer last applied: from which epoch, and whether the practice pictures were rendered
 again. The saved LoRA records the history of its prompts.</li>
@@ -681,17 +705,17 @@ so a picture from before a Preview override or a slider prompt change still show
 </ul>
 <h3>Klein: the Distilled tick and Steps / CFG</h3>
 <ul>
-<li>With Klein's <b>Use Distilled model for samples</b> ticked and the Distilled file set under Model files, the
+<li>With Klein's <b>Preview with the Distilled model</b> ticked and the Distilled file set under Model files, the
 <b>Steps</b> and <b>CFG</b> boxes move to the Distilled's own recipe (4 steps, CFG 1); unticked, they go back to the
 training model's. A value you typed yourself is never replaced.</li>
 <li>A Steps or CFG you typed is kept, unless it equals one of the two defaults (the plain model's or the
-checkpoint's), which the tab and the trainer treat as untouched, as Fizgig does. CFG above 1 brings the negative
+checkpoint's), which the tab and the trainer treat as untouched. CFG above 1 brings the negative
 prompt.</li>
 </ul>
 <h3>Edit LoRAs with extra pictures</h3>
 <ul>
 <li>For families whose edit takes several pictures (<b>Klein</b>: up to 4, <b>Qwen Image 2.1</b>: up to 10), the Edit
-card (Show all settings, Edit LoRA on) asks <b>What the edit uses</b>. <b>The photo only</b> is an edit that changes how
+card (Show all settings, Edit LoRA on) asks <b>Edit inputs</b>. <b>The photo only</b> is an edit that changes how
 a photo looks (a grade, a relight, a retouch). <b>The photo + extra pictures</b> brings something from other pictures
 into it (a person, an object, a place).</li>
 <li>Your <b>edited photos and their captions</b> are the dataset folder: <code>photo.png</code>,
@@ -757,18 +781,18 @@ them in the Image Editor first.</li>
 <ul>
 <li><b>Pick a RAW checkpoint</b> as the DiT, not the Turbo file. Either kind works: the bf16 file (about 26 GB) or
 an <b>fp8 / fp8-scaled RAW</b> file (about 13 GB). An fp8 file stays fp8 in memory.</li>
-<li><b>Base precision: Auto</b> follows Fizgig's order: INT8 if your GPU supports it and it fits, then 4-bit (needs
+<li><b>Base precision: Auto</b> tries INT8 first if your GPU supports it and it fits, then 4-bit (needs
 bitsandbytes), then INT8 with block swap. On a machine that runs neither INT8 nor 4-bit, Auto uses fp8. INT8 and
 4-bit are made from whichever file you picked. Choose <b>fp8</b> yourself to train on the fp8 weights exactly as they
-ship (TagScribeR keeps this choice; Fizgig dropped it).</li>
+ship.</li>
 <li>The <b>Turbo LoRA</b> is optional and only for previews: the RAW model plus the LoRA at strength 0.7 renders in 10
-steps at CFG 1 without a second model (Fizgig's setup; the Samples Turbo strength box changes it). Leave it empty to
-preview the RAW model at 28 steps and CFG 4.5 (Fizgig's RAW recipe).</li>
-<li>Captions are encoded one at a time, as Fizgig does, so each caption's cache never depends on its neighbours.
+steps at CFG 1 without a second model (the built-in setup; the Samples Turbo strength box changes it). Leave it empty to
+preview the RAW model at 28 steps and CFG 4.5 (the built-in RAW recipe).</li>
+<li>Captions are encoded one at a time, so each caption's cache never depends on its neighbours.
 Krea 2 text caches made by older versions are re-encoded once on the next run (the image caches are kept).</li>
 <li>The text encoder file can be the fp8_scaled or the bf16 Qwen3-VL-4B. Each cached caption is about 30 MB, so
 leave room on the cache drive.</li>
-<li>Measured by Fizgig at 0.25 MP: INT8 about 16 GB, 4-bit about 11 GB, fp8 about 19 GB, bf16 about 26 GB (each
+<li>Measured upstream on NVIDIA cards, not by TagScribeR, at 0.25 MP: INT8 about 16 GB, 4-bit about 11 GB, fp8 about 19 GB, bf16 about 26 GB (each
 swapped block saves about 0.4 GB, 0.8 GB on bf16). At 1 MP: INT8 about 19 GB, 4-bit about 15 GB. So on a 20 GB card
 Auto picks 4-bit for 1 MP training and INT8 for 0.25 MP; on a 16 GB card at 1 MP it picks INT8 with block swap. Each extra image in the batch adds about 2.4 GB.</li>
 <li>The <b>fp8-scaled text encoder</b> also stays fp8 in memory, which saves VRAM while captions are cached.</li>
@@ -782,16 +806,16 @@ Tools; without them the run trains normally and says so.</li>
 <h3>Qwen Image 2.1</h3>
 <ul>
 <li>Keep the <b>training adapter</b> on: it is frozen during training, off in previews and never in your saved
-file. Without it Qwen 2.1 LoRAs tend to collapse or wobble. It is now <b>version 2</b> (the one Fizgig uses): put the
+file. Without it Qwen 2.1 LoRAs tend to collapse or wobble. It is now <b>version 2</b> (the current file): put the
 v2 file next to the v1 file and TagScribeR switches to it on its own. A LoRA trained on v2 is not directly
 comparable with one trained on v1.</li>
 <li><b>Previews</b> use the Comfy-Org <b>Turbo LoRA</b> by default (0.91 GB, set it under Model files): 8 steps, CFG 1.
 Without it (Samples: Turbo strength 0) previews render on the plain model at 25 steps and CFG 3, with a general
 negative prompt.</li>
-<li><b>Fast Identity Mode</b> (the "Fast Identity Mode" preset, or the checkbox under Training Parameters) trains only
-blocks 10-14, where Fizgig measured a character's identity to sit. About 1.5x faster per step, with likeness very close
+<li><b>Train identity blocks only</b> (the "Identity blocks only" preset, or the checkbox under Training Parameters) trains only
+blocks 10-14, where a character's identity was measured upstream (not by TagScribeR) to sit. About 1.5x faster per step, with likeness very close
 to a full-model LoRA. Use it for characters and faces, not styles. It is not used for Edit LoRAs.</li>
-<li><b>Compile blocks</b> works on Qwen too: Fizgig measured 1.43x per step on INT8 and 1.15x on bf16 with no extra
+<li><b>Compile blocks</b> works on Qwen too: an upstream figure is 1.43x per step on INT8 and 1.15x on bf16 with no extra
 memory, on NVIDIA. Auto compiles runs of 300+ steps on INT8 and 800+ on bf16, and leaves it off on AMD and with block
 swap. This has not been run on real hardware in TagScribeR yet.</li>
 </ul>
@@ -805,66 +829,66 @@ training adapter. <i>Get</i> opens each download page.</li>
 VRAM; with less, the text encoder streams from system RAM and is slower.</li>
 <li><b>Older NVIDIA cards</b> (before the RTX 30 series, e.g. V100 or T4): long captions are encoded in chunks (same
 result, lower peak) and very long training items use fp16 attention instead of bf16, both automatically. Nothing
-changes on RTX 30 and newer, AMD or CPU. Ported from Fizgig and unit-tested here, not yet run on such a card: please
+changes on RTX 30 and newer, AMD or CPU. Adapted from open-source training code and unit-tested here, not yet run on such a card: please
 report results.</li>
 <li><b>Training base</b>: the standard First/last frame (fl2va) model, or <i>Reference (ref2va)</i> if the LoRA will
 be used in ComfyUI's Reference-to-Video workflow (set the optional reference DiT file).</li>
 <li><b>Training adapter</b>: <i>Circlestone</i> (the default, best for photos; one file for both bases),
 <i>Ostris</i> (learns a video look faster; TagScribeR picks its fl2va or ref2va file to match the base), or
 <i>Off</i>. It is on for every training step, off for previews and never saved into your LoRA.</li>
-<li><b>Training structure</b>: <i>Likeness and Style</i> puts 60% of the steps on nearly clean images (the tuned
+<li><b>Noise emphasis</b>: <i>Likeness and Style</i> puts 60% of the steps on nearly clean images (the tuned
 default); <i>Model default</i> is the reference trainer's 8%, weighted to movement; <i>Custom</i> uses your own
-<i>Clean-end share</i>.</li>
-<li><b>Training mode</b>: <i>Default</i> trains blocks 20 to 49 (best likeness, quickest steps); <i>More Blocks</i>
-6 to 49; <i>Off</i> trains the blocks you type in <i>Blocks to train</i> (numbers and ranges, or Fizgig's
+<i>Low-noise share</i>.</li>
+<li><b>Blocks preset</b>: <i>Default</i> trains blocks 20 to 49 (best likeness, quickest steps); <i>More Blocks</i>
+6 to 49; <i>Off</i> trains the blocks you type in <i>Blocks to train</i> (numbers and ranges, or the
 <code>h3blk_N</code> ids).</li>
-<li>Under <i>Show all settings</i>: <b>Medium to High Noise LR</b> (the learning rate of the noisy-half steps; leave
-at 100), <b>Adapter-relative LR</b> (the learning rate becomes a ceiling the run climbs toward as the LoRA grows; set
+<li>Under <i>Show all settings</i>: <b>High-noise learning rate</b> (the learning rate of the noisy-half steps; leave
+at 100), <b>LoRA-size-relative learning rate</b> (the learning rate becomes a ceiling the run climbs toward as the LoRA grows; set
 the rate where you want to end up) and <b>Train the text token refiner</b> (recommended off; it trains only in mode
 Off with every block). The first two do nothing with Automagic v3, which sets its own rate.</li>
-<li>The presets are Fizgig's: Automagic v3 (it sets its own learning rate, so Adaptive LR is off), caption dropout
+<li>The presets use Automagic v3 (it sets its own learning rate, so Adaptive LR is off), caption dropout
 0.05 and EMA 0.98. EMA also offers <b>Short run</b>, which averages about the last quarter of a short run. Other
-optimizers get Fizgig's H3 weight decay of 1e-4. The LoRA trains in bf16, as in Fizgig.</li>
+optimizers get an H3 weight decay of 1e-4. The LoRA trains in bf16.</li>
 <li>Previews run at 20 steps on the training model, 768 x 768. Set the optional <b>Turbo LoRA</b> under Model files
 and they render in 6 steps with it at 75% (Samples: <i>Turbo steps</i> and <i>Turbo strength</i>; 0% turns it off).
 It is on only while previews render and is never saved into your LoRA. Its time-modulation rows, and those of an older
-H3 LoRA used as a Context LoRA, are applied at run time, as Fizgig does.</li>
+H3 LoRA used as a Companion LoRA, are applied at run time.</li>
 <li>Not available yet: HQQ 4-bit, the 66 GB bf16 DiT, clips, sound and distillation. Sliders from still pairs or
-prompts work (the Slider preset is Fizgig's).</li>
+prompts work (the Slider preset is the upstream recipe).</li>
 </ul>
 <h3>FLUX.2 Klein Base 9B</h3>
 <ul>
-<li><b>Files:</b> the Base 9B checkpoint (the fp8 file, as Fizgig uses, or the bf16 one), the FLUX.2 <code>ae.safetensors</code>
+<li><b>Files:</b> the Base 9B checkpoint (the fp8 file or the bf16 one), the FLUX.2 <code>ae.safetensors</code>
 autoencoder, and the Qwen3-8B text encoder. <i>Get</i> opens each download page; the Klein and autoencoder repos are
 gated, so accept their terms on Hugging Face first.</li>
 <li><b>Model area</b> chooses which blocks the LoRA trains: <i>Full Model</i>, <i>Identity</i> (a subject's
 likeness), <i>Style</i> and <i>Style+Composition</i>, <i>Details</i>, or <i>Custom</i> (list the blocks yourself, as
-<code>double_0</code>-<code>double_7</code> and <code>single_0</code>-<code>single_23</code>, Fizgig's names; the older
+<code>double_0</code>-<code>double_7</code> and <code>single_0</code>-<code>single_23</code>; the older
 <code>double_blocks.0</code> spelling still works). The built-in presets set it for you. The blocks a LoRA trained are
 written into its file (<code>ss_train_blocks</code>).</li>
-<li><b>Network type</b> can be LoKR as well as LoRA, and <b>EMA</b> is available (Off by default, as in Fizgig). The
-Optimizer list offers every optimizer TagScribeR has, as Fizgig does for Klein.</li>
+<li><b>Network type</b> can be LoKR as well as LoRA, and <b>EMA</b> is available (Off by default). The
+Optimizer list offers every optimizer TagScribeR has.</li>
 <li><b>Timestep sampling</b> defaults to <code>flux2_shift</code>, which adapts to the image size. The other modes
 are for experiments.</li>
 <li><b>Previews</b>: set the optional <i>Klein 9B Distilled DiT</i> under Model files and previews render on it in 4
-steps, as ComfyUI renders your LoRA (Samples: <i>Use Distilled model for samples</i>, on by default). The training
+steps, as ComfyUI renders your LoRA (Samples: <i>Preview with the Distilled model</i>, on by default). The training
 model steps aside while they render and comes back exactly as it was. Without the file, or with the box unticked,
 previews render the Base model at 40 steps and CFG 4.5. <i>Keep the sample model in RAM</i> saves reloading it each
 epoch on 24 GB+ cards; <i>INT8 sample model</i> makes it smaller and faster on NVIDIA. Not run on real hardware in
 TagScribeR yet.</li>
 <li><b>Attention mechanism</b> (under Show all settings): <code>sdpa</code> runs on any GPU and is the default.
-<code>flash3</code> is listed because Fizgig lists it, but Fizgig has no working flash3 path, so choosing it stops the
+<code>flash3</code> is listed because the upstream project lists it, but there is no working flash3 path here, so choosing it stops the
 first training step with an error. Use sdpa.</li>
-<li><b>Base precision: Auto</b> follows Fizgig: INT8 when it fits (about 12.6 GB at 0.25 MP, 17.1 GB at 1 MP), else
+<li><b>Base precision: Auto</b> picks INT8 when it fits (about 12.6 GB at 0.25 MP, 17.1 GB at 1 MP), else
 4-bit (7.9 / 9.9 GB). Auto never block-swaps Klein. When the run is not compiled and your Base file is fp8, Auto
-trains the fp8 file as it is instead of INT8: uncompiled that is faster (Fizgig measured 0.77 vs 1.14 s/step) and
-smaller (11.1 GB). <b>fp8</b> is that same choice by hand (Fizgig calls it "As the file").</li>
-<li><b>Compile blocks</b> works on Klein too (Fizgig measured 2.1x per step on INT8 with less memory, 1.4x on 4-bit,
+trains the fp8 file as it is instead of INT8: uncompiled that is faster (0.77 vs 1.14 s/step, measured upstream on NVIDIA cards, not by TagScribeR) and
+smaller (11.1 GB). <b>fp8</b> is that same choice by hand (a preset file may call it "As the file").</li>
+<li><b>Compile blocks</b> works on Klein too (an upstream figure is 2.1x per step on INT8 with less memory, 1.4x on 4-bit,
 on NVIDIA). Auto compiles INT8 runs of 200+ steps and 4-bit runs of 400+ when the compiled run fits your free VRAM,
 never the fp8 file, and leaves it off on AMD and with block swap. Not run on real hardware in TagScribeR yet.</li>
 <li><b>Edit LoRAs</b> work on Klein too: the "before" images reach the model next to the image being made (Klein's
 text encoder never sees them). About 40 pairs is a good start, 20 at least.</li>
-<li>A <b>Context LoRA</b> made for Klein by other trainers loads too, including diffusers-format files whose
+<li>A <b>Companion LoRA</b> made for Klein by other trainers loads too, including diffusers-format files whose
 attention is split into q / k / v (they are fused into Klein's layers).</li>
 </ul>
 <h3>SDXL, Pony, Illustrious, NoobAI</h3>
@@ -875,19 +899,19 @@ optional: leave them empty to use the ones inside the checkpoint, or point the V
 Training a v-pred checkpoint as eps (or the reverse) gives noise.</li>
 <li>Captions are cut at <b>225 tokens</b>. Tag captions work well; consider <i>Shuffled tag variants</i> with
 <i>Keep first N tags</i> for your trigger word (Caption augmentation, off by default).</li>
-<li>Batch size above 1 works for these models. The loss watch needs batch size 1.</li>
+<li>Batch size above 1 works for these models. Hard-image tracking needs batch size 1.</li>
 <li>Three optional extras, all off by default: <b>Min-SNR gamma</b>, <b>Noise offset</b>, and <b>Also train
 convolutions (LoCon)</b>.</li>
 <li>The first run downloads the small CLIP tokenizer files. To stay offline, put them in a
 <code>clip_tokenizer</code> folder next to the checkpoint.</li>
-<li><b>Presets:</b> <i>Strong</i> (rank 32, alpha 16) and <i>Standard</i> (rank 16, alpha 8) are Fizgig's measured
-recipe: a flat 5e-5 learning rate, fused AdamW, Adaptive LR off (it reacts to SDXL's noisy per-epoch loss). Fizgig
-measured them on a photographic checkpoint, so on Pony, Illustrious and NoobAI they are a good start rather than a
-measurement. <i>Fast</i>, <i>Cosine</i> and <i>Style</i> are community starting points.</li>
-<li><b>Base precision:</b> bf16, INT8 or 4-bit. Fizgig measured about 10.3 GB peak on bf16, 8.2 GB on INT8 and 7.4 GB
+<li><b>Presets:</b> <i>High capacity</i> (rank 32, alpha 16) and <i>Balanced</i> (rank 16, alpha 8) are a recipe
+measured upstream, not by TagScribeR: a flat 5e-5 learning rate, fused AdamW, Adaptive LR off (it reacts to SDXL's noisy per-epoch loss). They were
+measured on a photographic checkpoint, so on Pony, Illustrious and NoobAI they are a good start rather than a
+measurement. The three <i>Community</i> presets (fast, cosine, style) are community starting points.</li>
+<li><b>Base precision:</b> bf16, INT8 or 4-bit. About 10.3 GB peak (upstream figure, not measured by TagScribeR) on bf16, 8.2 GB on INT8 and 7.4 GB
 on 4-bit (including the 1024 px preview), so SDXL trains on 8 GB cards with 4-bit.</li>
 <li><b>LoKR</b> works too; its file uses the same layer names ComfyUI reads for SDXL.</li>
-<li>SDXL 1.0 previews use <b>DPM++ 2M SDE Karras</b> (in ComfyUI: dpmpp_2m_sde / karras), as Fizgig does; the other
+<li>SDXL 1.0 previews use <b>DPM++ 2M SDE Karras</b> (in ComfyUI: dpmpp_2m_sde / karras); the other
 variants keep their own sampler.</li>
 </ul>
 <h3>Anima</h3>
@@ -896,26 +920,28 @@ variants keep their own sampler.</li>
 <li>Anima is tag-trained: lowercase tags with spaces, artists as <code>@name</code>. The preview negative prompt is
 tag-style for the same reason.</li>
 <li>The model's author recommends a light touch. <b>Presets:</b> <i>Character</i> (rank 16, 1e-4, 50 epochs),
-<i>Style</i> (rank 16, 5e-5) and <i>Official</i> (the model card's rank 32 at 2e-5) are Fizgig's; <i>Fast</i>,
-<i>Standard</i> and <i>Style (gentle LR)</i> are TagScribeR's earlier ones. All are community starting points, not
+<i>Style</i> (rank 16, 5e-5) and <i>Model card recipe</i> (the model card's rank 32 at 2e-5) come from the upstream project; the three
+<i>Community</i> presets (fast, standard, style) are TagScribeR's earlier ones. All are community starting points, not
 measured recipes.</li>
-<li>The <b>Qwen3 text encoder runs in full precision</b> (float32) while captions are cached, as Fizgig does: in bf16
+<li>The <b>Qwen3 text encoder runs in full precision</b> (float32) while captions are cached: in bf16
 its output drifts noticeably. It is small, so this costs little. Captions cached by an older version are re-cached
 once.</li>
 <li>The T5 tokenizer comes from the Anima repo (one small file, downloaded once). To stay offline, put
 <code>tokenizer.json</code> in a <code>t5_tokenizer</code> folder next to the text-encoder file.</li>
-<li><b>Base precision:</b> bf16, INT8 or 4-bit. Fizgig measured about 8.9 GB peak on bf16, 7.3 GB on INT8 and 6.6 GB
+<li><b>Base precision:</b> bf16, INT8 or 4-bit. Upstream figures (not measured by TagScribeR): about 8.9 GB peak on bf16, 7.3 GB on INT8 and 6.6 GB
 on 4-bit.</li>
 <li><b>LoKR</b> works too. LoRAs made with AI-Toolkit load as frozen adapters.</li>
 <li><b>Previews:</b> with the optional <b>Anima Turbo LoRA</b> file set, previews render on it by default: strength 1,
-10 steps, CFG 1 (Fizgig's default since October). Without it, or with Samples Turbo strength 0, they render on the
+10 steps, CFG 1 (the default since October). Without it, or with Samples Turbo strength 0, they render on the
 plain model at 20 steps and CFG 4.5 with the model card's negative prompt.</li>
 </ul>
 """),
     "settings": ("Settings", "Settings", """
 <h2>Settings</h2>
 <ul>
-<li><b>Appearance</b> — theme and interface scale.</li>
+<li><b>Appearance</b> — theme and interface scale. Settings → Appearance → Theme changes the look at once, without a
+restart. <i>TagScribeR dark</i> and <i>TagScribeR light</i> are the new themes with larger, clearer controls;
+<i>dark_teal</i> is the classic look and stays the default, and the other classic themes stay available.</li>
 <li><b>AI defaults</b> — unload an idle model after N minutes; run the tagger on GPU or CPU.</li>
 <li><b>Model folders</b> — extra folders to scan for vision models (subfolders included). Stability Matrix is detected automatically.</li>
 <li><b>Quick tags</b> — manage the Gallery's quick-tag list.</li>

@@ -40,7 +40,7 @@ class Watch:
         if not resume:
             _cleanup(output_dir)
         if auto_recaption and not self.captioner.get("model"):
-            logger.warning("[auto-recaption] needs a captioner (Train tab > Loss watch > Captioner) - off")
+            logger.warning("[auto-recaption] needs a captioner (Train tab > Hard images > Captioner) - off")
             auto_recaption = False
         if not (log or per_image_lr or auto_recaption or warmup_look or env_on()):
             self.auto_recaption = False
@@ -58,7 +58,7 @@ class Watch:
                                        family=self.driver.description.key)
         keys = set(dataset.items())
         self.watch.preflight(keys)
-        logger.info(f"[loss-watch] per-image loss watch ON (per_image_lr={per_image_lr})")
+        logger.info(f"[loss-watch] hard-image tracking ON (per_image_lr={per_image_lr})")
         if warmup_look:
             self._warmup(keys)
         if resume and start_epoch > 0:
@@ -75,7 +75,7 @@ class Watch:
                 path = p
                 break
         if path is None:
-            logger.warning("[look-warmup] no look-score file (tagscriber_look_scores.json / fizgig_look_scores.json) "
+            logger.warning("[look-warmup] no look-score file (tagscriber_look_scores.json) "
                            "in the dataset folder - warm-up off this run")
             return
         try:
@@ -202,7 +202,7 @@ class Watch:
         _ack(self.output_dir, todo, epoch)
         _remove(processing)
         logger.info(f"[caption-fix] {len(todo)} caption(s) re-encoded - next epoch trains on the fixed text. "
-                    f"Loss-watch history reset for: " + ", ".join(os.path.basename(k) for k, _, _, _ in todo))
+                    f"Hard-image history reset for: " + ", ".join(os.path.basename(k) for k, _, _, _ in todo))
 
     def _reencode(self, todo, device):
         """Re-encode the fixed captions into the cache (the loader reads these files every step)."""

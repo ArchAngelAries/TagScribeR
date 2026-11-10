@@ -64,11 +64,11 @@ def test_description_is_valid_and_registered(desc):
 
 def test_seven_presets_in_fizgig_order_with_exact_values(desc):
     names = [n for n, _ in desc.presets]
-    assert names == ["✨ Old Reliable (rank 16, full model, single subject)",
-                     "✨ Old Reliable - Flavour 8 (rank 8, full model, single subject)",
-                     "✨ Identity (rank 8, single subject)", "✨ Identity (rank 8, harder dataset)",
-                     "✨ Multi-Character (rank 16, multi character or concept)", "✨ Style (late timesteps)",
-                     "✨ Style+Composition (all timesteps)"]
+    assert names == ["◆ Single subject (rank 16, full model)",
+                     "◆ Single subject, lighter (rank 8, full model)",
+                     "◆ Identity blocks (rank 8, single subject)", "◆ Identity blocks (rank 8, harder dataset)",
+                     "◆ Several subjects or concepts (rank 16)", "◆ Style (late timesteps)",
+                     "◆ Style and composition (all timesteps)"]
     # (rank, lr, epochs, adaptive min, adaptive max, area, min ts, max ts) - Fizgig 7.0.1 families/klein.py:192-202
     want = [(16, 1e-4, 55, "1e-4", "4e-4", "Full Model", "", ""), (8, 1e-4, 55, "1e-4", "4e-4", "Full Model", "", ""),
             (8, 4e-4, 15, "2e-4", "4e-4", "Identity", "", ""), (8, 4e-4, 20, "2e-4", "4e-4", "Identity", "", ""),
@@ -94,12 +94,12 @@ def test_every_preset_key_resolves_without_refusals(desc):
 
 def test_first_preset_and_style_timestep_conversion(desc):
     tp = presets.TrainingPresets(desc)
-    assert tp.default_name == "✨ Old Reliable (rank 16, full model, single subject)"
+    assert tp.default_name == "◆ Single subject (rank 16, full model)"
     new, _ = presets.apply(tp.load(tp.default_name), P.defaults(), desc)
     assert (new["NETWORK_DIM"], new["NETWORK_ALPHA"], new["MAX_TRAIN_EPOCHS"], new["LEARNING_RATE"]) == (16, 16, 55, 1e-4)
     assert new["ADAPTIVE_LR"] is True and new["ADAPTIVE_LR_MIN"] == "1e-4" and new["TARGET_LAYERS"] == "Full Model"
     assert (new["MIN_TIMESTEP"], new["MAX_TIMESTEP"]) == (0.0, 1.0)            # blank boxes = full range
-    style, _ = presets.apply(dict(desc.presets)["✨ Style (late timesteps)"], P.defaults(), desc)
+    style, _ = presets.apply(dict(desc.presets)["◆ Style (late timesteps)"], P.defaults(), desc)
     assert (style["MIN_TIMESTEP"], style["MAX_TIMESTEP"]) == (0.0, 0.4)        # 0-400 of 1000
     assert style["TARGET_LAYERS"] == "Style" and P.first_token(style["ADAPTIVE_LR_MIN"]) == "1e-5"
 
@@ -447,7 +447,7 @@ def test_loader_roundtrip_and_wrong_keys(tmp_path):
 # ---- the run builder ------------------------------------------------------------------------------------------
 def test_train_kwargs_map_timesteps_area_and_preview(desc, tmp_path):
     tp = presets.TrainingPresets(desc)
-    vals, _ = presets.apply(tp.load("✨ Style (late timesteps)"), P.defaults(), desc)
+    vals, _ = presets.apply(tp.load("◆ Style (late timesteps)"), P.defaults(), desc)
     vals.update(LORA_NAME="k9", SAMPLE_STEPS=0)
     models = {"klein_dit": "dit.safetensors", "klein_vae": "ae.safetensors", "klein_text_encoder": "te.safetensors"}
     kw, prompts = pipeline.train_kwargs(desc, vals, tmp_path / "run", models)

@@ -156,8 +156,8 @@ MINIMAX_H3 = FamilyDescription(
             load_unmerged=True,
             pref_key="minimax_turbo_lora",
             caveats=("Its AdaLN rows are 2688 wide (the full model's silu(t_emb) space): on the pruned base they are "
-                     "injected at run time from the bundled grid (training/families/minimax_h3/turbo.py), as Fizgig "
-                     "and larryvrh's ComfyUI node do.",),
+                     "injected at run time from the bundled grid (training/families/minimax_h3/turbo.py), as "
+                     "larryvrh's ComfyUI node does.",),
             source="https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora",
         ),
     ),
@@ -171,13 +171,13 @@ MINIMAX_H3 = FamilyDescription(
     slider_training=True,                                    # stills: photo pairs or prompts (Fizgig 7.0.1)
     presets=(
         # Fizgig 7.0.1's, in its order (the first is the default)
-        ("✨ MiniMax H3 Fast (LoRA 8, 50 epochs)", _preset(8, 50)),
-        ("✨ MiniMax H3 (rank 16, 60 epochs)", _preset(16, 60)),
-        ("✨ MiniMax H3 Style (LoRA 8)", _preset(8, 50, clip_still=False)),
+        ("◆ Quick start (rank 8, 50 epochs)", _preset(8, 50)),
+        ("◆ Balanced (rank 16, 60 epochs)", _preset(16, 60)),
+        ("◆ Style (rank 8)", _preset(8, 50, clip_still=False)),
         # Slider (Fizgig, 3 Oct): rank 8 at 2e-4 for ~160 steps; a prompt smile slider at push 2 was clear by epoch 5
         # of 10 (16 practice pictures an epoch)
-        ("✨ MiniMax H3 Slider (rank 8, 2e-4)", _preset(8, 16, clip_still=False, slider=True, lr=2e-4,
-                                                         optimizer="adamw8bit")),
+        ("◆ Slider (rank 8, 2e-4)", _preset(8, 16, clip_still=False, slider=True, lr=2e-4,
+                                             optimizer="adamw8bit")),
     ),
     family_options=("H3_TRAIN_BASE", "H3_STRUCTURE", "H3_LOWNOISE_PCT", "H3_HIGHNOISE_LR_PCT", "H3_LIKENESS_MODE",
                     "H3_BLOCKS", "H3_ADAPTER", "H3_ADAPTER_RAMP", "H3_TRAIN_REFINER"),

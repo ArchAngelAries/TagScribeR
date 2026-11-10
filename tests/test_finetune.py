@@ -120,7 +120,7 @@ def test_preflight_and_train_kwargs(setup):
     checks = pipeline.preflight(desc, vals, data, models)
     assert not [c for c in checks if c.level == "error"], checks
     notes = " ".join(c.message for c in checks)
-    assert "Context LoRA is not used" in notes and "Adaptive LR is off" in notes and "full checkpoint" in notes
+    assert "Companion LoRA is not used" in notes and "Adaptive LR is off" in notes and "full checkpoint" in notes
     kw, _ = pipeline.train_kwargs(desc, vals, tmp / "run", models, image_folder=data)
     assert kw["finetune"] and kw["ft_rotations"] == 2 and kw["ft_max_parts"] == 1 and kw["ft_fused_backward"]
     assert kw["resume_state_dir"] is None and "adaptive_lr" not in kw and "context_lora_path" not in kw
@@ -180,8 +180,10 @@ def test_fine_tune_rotates_saves_whole_models_and_continues(setup, caplog):
     # every block's attn and mlp weights trained (one rotation = both windows); nothing else moved: biases, the
     # convolutions and the embedders are the source's own tensors
     assert sorted(trained) == sorted(f"blocks.{b}.{part}.weight" for b in (0, 1) for part in ("attn", "mlp"))
-    assert md["fizgig_finetune"] == "_tinyft-rotation" and md["fizgig_ft_epochs_done"] == "2"
-    assert md["fizgig_ft_n_windows"] == "2" and md["fizgig_source_base"] == "dit.safetensors"
+    assert md["tagscriber_finetune"] == "_tinyft-rotation" and md["tagscriber_ft_epochs_done"] == "2"
+    assert md["tagscriber_ft_n_windows"] == "2" and md["tagscriber_source_base"] == "dit.safetensors"
+    assert md["tagscriber_next_start_window"] is not None
+    assert not any(k.startswith("fizgig_") for k in md)                  # the old names are read, no longer written
 
     # Resume: one rotation left, from the checkpoint (Fizgig's ft_rotations_left)
     left, done, cont = pipeline.ft_rotations_left(str(ckpt), vals["FAMILY_FT_ROTATIONS"],
@@ -194,7 +196,7 @@ def test_fine_tune_rotates_saves_whole_models_and_continues(setup, caplog):
         _run_stages(run2)
     assert "Fine-tune complete" in caplog.text and "epoch 3: window" in caplog.text
     final, md = _read(rd / "tiny_ft.safetensors")
-    assert md["fizgig_ft_epochs_done"] == "4"
+    assert md["tagscriber_ft_epochs_done"] == "4"
     assert set(final) == set(src)
     assert all(not torch.equal(final[k], mid[k]) for k in trained)        # the second rotation trained on
     assert all(torch.equal(final[k], src[k]) for k in src if k not in trained)
@@ -287,3 +289,29 @@ def test_train_tab_blocks_a_fine_tune_preset_only_where_it_cannot_run(app, monke
     before = tab.collect()
     new, rep = train_mod.presets.apply({"FAMILY_FT": True, "LEARNING_RATE": 3e-5}, before, tab.desc)
     assert rep.blocked and new == before
+
+
+def _header_only(path, metadata):
+    """A file with a safetensors header (metadata only, no tensors): all ft_continuation reads."""
+    import struct
+    header = json.dumps({"__metadata__": metadata}).encode()
+    Path(path).write_bytes(struct.pack("<Q", len(header)) + header)
+
+
+def test_a_fine_tune_checkpoint_continues_from_either_metadata_prefix(tmp_path):
+    new = tmp_path / "new_ft.safetensors"
+    _header_only(new, {"tagscriber_next_start_window": "1", "tagscriber_ft_n_windows": "3",
+                       "tagscriber_ft_epochs_done": "4"})
+    assert pipeline.ft_continuation(str(new)) == (1, 4, 3)
+    # a checkpoint written by an earlier build or another trainer still continues
+    old = tmp_path / "old_ft.safetensors"
+    _header_only(old, {"fizgig_next_start_window": "2", "fizgig_ft_n_windows": "5", "fizgig_ft_epochs_done": "7"})
+    assert pipeline.ft_continuation(str(old)) == (2, 7, 5)
+    # both present: TagScribeR's own key wins, a missing one falls back to the old name
+    both = tmp_path / "both_ft.safetensors"
+    _header_only(both, {"tagscriber_ft_n_windows": "3", "fizgig_ft_n_windows": "9", "fizgig_ft_epochs_done": "6"})
+    assert pipeline.ft_continuation(str(both)) == (0, 6, 3)
+    # the epoch in a -NNNNNN file name still wins over the metadata
+    named = tmp_path / "run-000010.safetensors"
+    _header_only(named, {"fizgig_ft_epochs_done": "6"})
+    assert pipeline.ft_continuation(str(named))[1] == 10

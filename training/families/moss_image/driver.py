@@ -90,7 +90,7 @@ class MOSSImageDriver(FamilyDriver):
                 if raw:
                     pct = float(raw)
                     if not 0.0 < pct < 100.0:
-                        raise ValueError(f"The clean-end share must be strictly between 0 and 100 % (got {pct:g})")
+                        raise ValueError(f"The low-noise share must be strictly between 0 and 100 % (got {pct:g})")
                     raw = f"{pct:g}"
                 opts["lownoise_pct"] = raw
             else:

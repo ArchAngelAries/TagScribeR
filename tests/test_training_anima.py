@@ -79,11 +79,11 @@ def test_preset_keys_resolve_without_refusals(desc):
         assert rep.refused == [], (name, rep.refused)
     tp = presets.TrainingPresets(desc)
     new, rep = presets.apply(tp.load(tp.default_name), P.defaults(), desc)
-    assert tp.default_name == "✨ Anima Character (rank 16, 1e-4)"                      # Fizgig 7.0.1's first
-    assert "✨ Anima Fast (rank 8, adaptive LR)" in tp.names()                            # TagScribeR's kept
+    assert tp.default_name == "◆ Character (rank 16, 1e-4)"                             # Fizgig 7.0.1's first
+    assert "◆ Community: fast (rank 8, adaptive LR)" in tp.names()                          # TagScribeR's kept
     assert (new["NETWORK_DIM"], new["NETWORK_ALPHA"], new["ADAPTIVE_LR"]) == (16, 16, False)
     assert new["CAPTION_SHUFFLE_VARIANTS"] == 0                        # shuffling stays off
-    std = dict(desc.presets)["✨ Anima Standard (rank 32, LR 2e-5)"]
+    std = dict(desc.presets)["◆ Community: standard (rank 32, 2e-5)"]
     assert (std["NETWORK_DIM"], std["LEARNING_RATE"], std["ADAPTIVE_LR"]) == (32, 2e-5, False)
 
 

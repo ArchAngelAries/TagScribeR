@@ -35,7 +35,7 @@ class CatalogModel:
 # with the API provider instead.
 CATALOG: tuple[CatalogModel, ...] = (
     CatalogModel("Qwen/Qwen3-VL-8B-Instruct", "Qwen3-VL 8B Instruct", 17.5,
-                 "Detailed captions, no thinking overhead. Same family as Fizgig's text encoder. "
+                 "Detailed captions, no thinking overhead. Same family as Krea 2's text encoder. "
                  "Comfortable on 20-24 GB.", "qwen3_vl"),
     CatalogModel("Qwen/Qwen3-VL-4B-Instruct", "Qwen3-VL 4B Instruct", 8.9,
                  "Mature, fast and AMD-friendly (standard attention). Good default for 12-16 GB.", "qwen3_vl"),

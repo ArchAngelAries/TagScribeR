@@ -13,6 +13,14 @@ It runs natively on **AMD Radeon (ROCm, Windows and Linux)** and **NVIDIA (CUDA)
 > possible, but the author has no NVIDIA hardware to run them on. If something is wrong on your setup, please
 > [open an issue](#-contributing-and-feedback).
 
+<p>
+  <a href="#-installation">Install</a> ·
+  <a href="#-quick-start">Quick start</a> ·
+  <a href="#-training-a-lora">Training</a> ·
+  <a href="https://www.patreon.com/c/ArchAngelAries">Patreon</a> ·
+  <a href="https://ko-fi.com/archangelaries">Ko-fi</a>
+</p>
+
 ---
 
 ## Contents
@@ -61,8 +69,9 @@ is a dataset studio with training built in.
 
 **Training (new)**
 
-- **Native LoRA training** inside the app, ported from the [Fizgig](https://github.com/shootthesound/Fizgig) trainer:
-  its presets, adaptive learning rate, per-image loss watch, EMA, pause and resume, previews and memory planning.
+- **Native LoRA training** inside the app: built-in presets, an adaptive learning rate, per-image hard-image
+  tracking, EMA, pause and resume, previews and memory planning. (Where the engine comes from:
+  [Credits and licence](#-credits-and-licence).)
 - **Eleven model families** across seven architectures. See [Model families](#model-families).
 - **Slider LoRAs** (a dial between two looks, from image pairs or prompts), **Edit LoRAs** from before/after pairs
   (with extra reference pictures on Klein and Qwen Image 2.1) and a **full fine-tune** of the base model for most
@@ -74,7 +83,7 @@ is a dataset studio with training built in.
   inaccurate. TagScribeR computes that one layer itself. Measured on an RX 7900 XT against a CPU reference, the encode
   error fell from about 0.04-0.06 to 0.005.
 
-**Training, wave 2 (Fizgig v8)** - unit-tested on tiny test models only, not yet run on real hardware
+**Training, wave 2** - unit-tested on tiny test models only, not yet run on real hardware
 
 - **A loss graph of every step**, smoothed, with the epoch averages, the learning rate and the epoch starts.
 - **Sample now and Save now** (Ctrl+Shift+S / Ctrl+Shift+D) while a run trains, a **Checkpoints** list, and the
@@ -143,7 +152,7 @@ A privacy audit (GPS, device serials, AI prompts and workflows), lossless cleanu
 
 ### Native LoRA training
 
-Train on the open dataset with the [Fizgig](https://github.com/shootthesound/Fizgig) trainer's engine, ported into TagScribeR. See [Training a LoRA](#-training-a-lora).
+Train on the open dataset with TagScribeR's native training engine. See [Training a LoRA](#-training-a-lora).
 
 ![Train tab](docs/screenshots/09_train_setup.png)
 
@@ -197,7 +206,7 @@ install.bat --experimental     :: use AMD's newest, unpinned ROCm nightlies
 
 No separate ROCm or HIP SDK install is needed. The app sets the ROCm environment itself when it starts.
 
-bitsandbytes is installed by default. On Windows with an AMD card it is a community ROCm build ([0xDELUXA/bitsandbytes_win_rocm](https://github.com/0xDELUXA/bitsandbytes_win_rocm)), the same pinned wheel the Fizgig trainer uses. It is built by neither AMD nor TagScribeR. The installer downloads the wheel and checks it against a pinned SHA-256 before installing; a mismatch stops the install.
+bitsandbytes is installed by default. On Windows with an AMD card it is a community ROCm build ([0xDELUXA/bitsandbytes_win_rocm](https://github.com/0xDELUXA/bitsandbytes_win_rocm)). It is built by neither AMD nor TagScribeR. The installer downloads the wheel and checks it against a pinned SHA-256 before installing; a mismatch stops the install.
 
 ### NVIDIA (CUDA)
 
@@ -255,10 +264,10 @@ Captions are stored the way trainers expect: `image.png` and `image.txt` side by
 
 ## 🎓 Training a LoRA
 
-The Train tab trains the dataset folder you have open. It uses a port of Fizgig's training engine, so it has Fizgig's presets, adaptive learning rate and loss watch.
+The Train tab trains the dataset folder you have open, with built-in presets, an adaptive learning rate and per-image hard-image tracking.
 
 1. Pick a **family** and set its **model files** once (each row has a *Get* button that opens the download page).
-2. Load a **preset**. The ✨ presets are Fizgig's measured recipes. You can save your own, and Fizgig preset files import as they are.
+2. Load a **preset**. The ◆ presets are built in; the ones marked *Community* are starting points, not measured recipes. You can save your own and import preset files.
 3. Set the **LoRA name**, check the preview prompts, and press **Start Training**.
 
 The tab opens in a simple view with only the essentials. Tick **Show all settings** to control every option.
@@ -270,13 +279,13 @@ What you get while it runs:
 - **Adaptive learning rate.** You give a minimum and maximum; it probes up while the loss improves, backs off on a plateau, and rolls back if training turns unstable.
 - **Sample previews** after each epoch, rendered with the LoRA so far. Every saved epoch is a usable LoRA.
 - **Memory bar.** Live VRAM and RAM use at the bottom of the window, on every tab, with a marker for the peak.
-- **Problem Images.** A loss watch flags images that never learn. Fix the caption in the window and the run picks it up at the next epoch. It can also re-caption stuck images for you.
+- **Hard images.** Per-image loss tracking flags images that never learn. Fix the caption in the window and the run picks it up at the next epoch. It can also re-caption images that stay hard for you.
 - **Pause and resume** at any epoch, a **run queue**, and resumable state for training more epochs later.
 - **Automatic memory planning.** It picks a base precision (bf16, 8-bit or 4-bit) and block swapping from your free VRAM.
 
 ![Sample previews](docs/screenshots/11_train_samples.png)
 
-![Problem Images](docs/screenshots/12_problem_images.png)
+![Hard images](docs/screenshots/12_problem_images.png)
 
 Training runs as separate processes, so the app stays responsive and a crash can't take it down. Each run lives in its own folder: `<output folder>\<LoRA name>\` with checkpoints, `sample\`, `loss_log\` and `run.log`.
 
@@ -284,25 +293,27 @@ Training runs as separate processes, so the app stays responsive and a crash can
 
 | Family | Recipe |
 |---|---|
-| Krea 2 | Fizgig's presets and measured settings |
-| Qwen Image 2.1 (including edit LoRAs from before/after pairs) | Fizgig's presets and measured settings |
-| MiniMax H3 (still images only) | Fizgig's presets |
-| FLUX.2 Klein Base 9B | Fizgig's presets, with Model Area block targeting |
-| MOSS-Image | Fizgig's presets (as of Fizgig 8.7.3) |
-| SDXL 1.0, Pony Diffusion V6 XL, Illustrious-XL, NoobAI-XL (eps and v-pred) | Fizgig's presets first, then community starting points |
-| Anima | Fizgig's presets first, then community starting points |
+| Krea 2 | Recipes and memory figures measured upstream |
+| Qwen Image 2.1 (including edit LoRAs from before/after pairs) | Recipes and memory figures measured upstream |
+| MiniMax H3 (still images only) | Upstream recipes |
+| FLUX.2 Klein Base 9B | Upstream recipes, with model-area block targeting |
+| MOSS-Image | Upstream recipes (an earlier version of them) |
+| SDXL 1.0, Pony Diffusion V6 XL, Illustrious-XL, NoobAI-XL (eps and v-pred) | Upstream recipes first, then community starting points |
+| Anima | Upstream recipes first, then community starting points |
+
+"Upstream" is the open-source trainer parts of the engine are adapted from (see
+[Credits and licence](#-credits-and-licence)); "measured upstream" means measured there, on NVIDIA cards, not by
+TagScribeR.
 
 **What has actually been run.** Krea 2 has been trained end to end on real weights on the author's RX 7900 XT: an
 fp8-scaled RAW checkpoint on the INT8 base, 60 images at 0.25 MP, with checkpoints, resume states and both preview
-engines. On that card its step speed matched Fizgig's (about 4.9 s per step in the first minutes of the same run in
-each trainer). **Every other family is experimental:** the code is ported and unit-tested on small random models, but
+engines. On that card its step speed matched the upstream trainer's (about 4.9 s per step in the first minutes of
+the same run in each). **Every other family is experimental:** the code is ported and unit-tested on small random models, but
 nobody has trained it on real weights yet. Reports are very welcome.
 
-The SDXL family and Anima were written here before Fizgig had them. Fizgig's own presets for both are listed first;
-the presets marked as community starting points are not measured recipes. Fizgig keeps moving (its presets now
-train on a newer optimizer, Muon, and it has added more model families); TagScribeR follows it in stages, and the
-notes under `docs/dev/` say which Fizgig version each part was ported from. Model weights are not included and have
-their own licences.
+The SDXL family and Anima are TagScribeR's own code. For both, the upstream recipes are listed first; the presets
+marked *Community* are starting points, not measured recipes. The developer notes under `docs/dev/` say which
+upstream version each adapted part comes from. Model weights are not included and have their own licences.
 
 ### How much VRAM
 
@@ -355,13 +366,13 @@ Developer notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Run the tests wit
 
 Planned, roughly in this order. Nothing here is promised by a date.
 
-**Finishing the Fizgig port**
+**Training**
 
-- Catching up with Fizgig 9: the Muon optimizer and its presets, MOSS-Image's newer recipes, training maps, masked
-  training, and the newer model families (Z-Image Turbo and Base, Flux 3 Image Klein, Fibo 2.0).
+- The Muon optimizer and presets built on it, MOSS-Image's newer recipes, training maps, masked training, and more
+  model families (Z-Image Turbo and Base, Flux 3 Image Klein, Fibo 2.0).
 - The remaining Krea 2 features (the NVIDIA fp8 fast path, Turbo-checkpoint previews, reference modules).
 - The remaining MiniMax H3 features (video clips, audio and voice, its full fine-tune, 4-bit HQQ).
-- Fizgig's workbench tools: face-aware tools and face likeness compare first, then LoRA comparison and repair.
+- Workbench tools: face-aware tools and face likeness compare first, then LoRA comparison and repair.
 
 **Image editor**
 
@@ -395,6 +406,9 @@ Issues and pull requests are welcome, from bug reports to whole features.
   run's `run.log`.
 - **Have an NVIDIA card or Linux?** A report that something works is as useful as a report that it doesn't.
 - **Want a feature, or think one is unnecessary?** Say so in an issue. The roadmap follows what people use.
+- **Want to support development?** TagScribeR is free for everyone. If it saves you time, there is
+  [Patreon](https://www.patreon.com/c/ArchAngelAries) and [Ko-fi](https://ko-fi.com/archangelaries). The app has two
+  small buttons for the same pages at the bottom of its sidebar; they open your browser and send nothing.
 - **Sending a pull request?** Run the tests first (`venv\Scripts\python -m pytest`), and keep the notices in
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) accurate if you bring in code from another project.
 
@@ -404,8 +418,11 @@ Before sharing logs or screenshots, check them for folder names or anything else
 
 ## 🤝 Credits and licence
 
-- **Training engine:** ported from [Fizgig](https://github.com/shootthesound/Fizgig) (Apache-2.0, © 2026 Peter Neill), whose ROCm stack the environment also follows. TagScribeR's training would not exist without it. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-- **Code that Fizgig and TagScribeR build on:** [musubi-tuner](https://github.com/kohya-ss/musubi-tuner) and [sd-scripts](https://github.com/kohya-ss/sd-scripts) (kohya-ss), [ai-toolkit](https://github.com/ostris/ai-toolkit) (Ostris), [Diffusers](https://github.com/huggingface/diffusers) (Hugging Face), [FLUX](https://github.com/black-forest-labs/flux) (Black Forest Labs) and [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
+TagScribeR is an independent project. It is not affiliated with, endorsed by or a version of any other trainer or
+tool. It learns from good open-source work and says where each piece comes from:
+
+- **Training engine:** parts of the native training code are adapted from [Fizgig](https://github.com/shootthesound/Fizgig) (Apache-2.0, © 2026 Peter Neill), and TagScribeR follows that project for which models and training features are worth supporting. Its ROCm environment follows the same stack. TagScribeR's training would not exist without it. Preset files written by Fizgig use the same setting names and import as they are. Every adapted file names its source; the full list is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **Code that both build on:** [musubi-tuner](https://github.com/kohya-ss/musubi-tuner) and [sd-scripts](https://github.com/kohya-ss/sd-scripts) (kohya-ss), [ai-toolkit](https://github.com/ostris/ai-toolkit) (Ostris), [Diffusers](https://github.com/huggingface/diffusers) (Hugging Face), [FLUX](https://github.com/black-forest-labs/flux) (Black Forest Labs) and [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 - **GUI:** [PySide6](https://pypi.org/project/PySide6/), [qt-material](https://pypi.org/project/qt-material/), [QtAwesome](https://github.com/spyder-ide/qtawesome).
 - **AI backend:** [Hugging Face Transformers](https://huggingface.co/docs/transformers/index), [ONNX Runtime](https://onnxruntime.ai/), [WD Taggers](https://huggingface.co/SmilingWolf).
 - **AMD support:** [ROCm for Windows](https://github.com/ROCm/TheRock).
@@ -414,6 +431,6 @@ Before sharing logs or screenshots, check them for folder names or anything else
 
 Created by **ArchAngelAries**.
 
-**Acknowledgement.** The rebuild in this release (the shared workspace, the captioning and dataset tools, the port of
-Fizgig's training engine, the tests and this documentation) was written with Anthropic's **Claude Opus 5.5** working
+**Acknowledgement.** The rebuild in this release (the shared workspace, the captioning and dataset tools, the native
+training engine, the tests and this documentation) was written with Anthropic's **Claude Opus 5.5** working
 alongside the author. Earlier versions were assisted by Google's Gemini and Anthropic's Claude.

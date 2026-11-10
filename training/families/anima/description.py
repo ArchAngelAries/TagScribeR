@@ -225,26 +225,26 @@ ANIMA = FamilyDescription(
         # Fizgig 7.0.1's (community values, not measured in Fizgig either): characters at rank 16 and 1e-4 for 50 epochs
         # (the guides aim for ~1,000-1,500 steps on 20-30 images), styles at 5e-5, the card's rank 32 at 2e-5. The
         # first is a first visit's preset
-        ("✨ Anima Character (rank 16, 1e-4)", _fizgig_preset(16, 1e-4, epochs=50)),
-        ("✨ Anima Style (rank 16, 5e-5)", _fizgig_preset(16, 5e-5)),
-        ("✨ Anima Official (rank 32, 2e-5)", _fizgig_preset(32, 2e-5)),
+        ("◆ Character (rank 16, 1e-4)", _fizgig_preset(16, 1e-4, epochs=50)),
+        ("◆ Style (rank 16, 5e-5)", _fizgig_preset(16, 5e-5)),
+        ("◆ Model card recipe (rank 32, 2e-5)", _fizgig_preset(32, 2e-5)),
         # Slider: Qwen's slider recipe (rank 8 since Fizgig 7.3.0, 2e-4, 30 epochs; FZ 8.7.1 families/anima.py:159-160);
         # "not yet measured on Anima" (Fizgig)
-        ("✨ Anima Slider (rank 8, 2e-4)", _fizgig_preset(8, 2e-4, slider=True)),
+        ("◆ Slider (rank 8, 2e-4)", _fizgig_preset(8, 2e-4, slider=True)),
         # full fine-tune at the shared fine-tune rate (Fizgig), and at OneTrainer's ("#anima Finetune.json": 1e-6,
         # Adafactor, the transformer blocks, text encoder frozen - the same scope as here) (FZ 8.7.3
         # families/anima.py:161-166). "Not yet measured on Anima" (Fizgig)
-        ("✨ Anima Fine-tune (1e-5)", _ft_preset(1e-5)),
-        ("✨ Anima Fine-tune Official (1e-6)", _ft_preset(1e-6)),
+        ("◆ Full fine-tune (1e-5)", _ft_preset(1e-5)),
+        ("◆ Full fine-tune, conservative (1e-6)", _ft_preset(1e-6)),
         # TagScribeR's earlier presets: community starting points. The model author's own guidance: "a light touch" - rank 32
         # starts at LR 2e-5 (model card); sd-scripts' documented example is rank 8, LR 1e-4 at alpha 1 (a 1/8 scale -
         # these presets use alpha = rank, scale 1, so they start lower).
         # THE DEFAULT: rank 8, adaptive LR between 1e-5 and 2e-4 (starts at ~4.5e-5), 24 epochs, 0.5 MP.
-        ("✨ Anima Fast (rank 8, adaptive LR)", _preset(8, 24, True, "1e-5", "2e-4", 4.5e-5, "0.5")),
+        ("◆ Community: fast (rank 8, adaptive LR)", _preset(8, 24, True, "1e-5", "2e-4", 4.5e-5, "0.5")),
         # Standard: rank 32 at the model card's 2e-5, fixed, 1 MP.
-        ("✨ Anima Standard (rank 32, LR 2e-5)", _preset(32, 40, False, "1e-5", "1e-4", 2e-5, "1.0")),
+        ("◆ Community: standard (rank 32, 2e-5)", _preset(32, 40, False, "1e-5", "1e-4", 2e-5, "1.0")),
         # Style: rank 16, adaptive 1e-5..1e-4 (starts ~3.2e-5), every epoch saved to scrub for the sweet spot.
-        ("✨ Anima Style (rank 16, gentle LR)", _preset(16, 40, True, "1e-5", "1e-4", 3.2e-5, "1.0")),
+        ("◆ Community: style (rank 16, gentle LR)", _preset(16, 40, True, "1e-5", "1e-4", 3.2e-5, "1.0")),
     ),
 
     # tokenizer files only (no model weights): fetched with the helper models so first use works offline

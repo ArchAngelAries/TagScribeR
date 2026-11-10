@@ -103,9 +103,9 @@ def test_model_files_follow_fizgig(desc):
 
 def test_five_presets_verbatim(desc):
     names = [n for n, _ in desc.presets]
-    assert names == ["✨ MOSS-Image Standard (rank 32, 1e-4)", "✨ MOSS-Image Fast (rank 16, 0.25 MP)",
-                     "✨ MOSS-Image Style (rank 16, 5e-5)", "✨ MOSS-Image Slider (rank 8, 2e-4)",
-                     "✨ MOSS-Image Fine-tune (1e-5)"]
+    assert names == ["◆ Balanced (rank 32, 1e-4)", "◆ Quick start (rank 16, 0.25 MP)",
+                     "◆ Style (rank 16, 5e-5)", "◆ Slider (rank 8, 2e-4)",
+                     "◆ Full fine-tune (1e-5)"]
     # (rank, lr, epochs, MP, EMA, slider, ft) - Fizgig 8.7.3 families/moss_image.py:234-245
     want = [(32, 1e-4, 70, "1.0", "0.98 (recommended)", False, False), (16, 1e-4, 70, "0.25", "0.98 (recommended)", False, False),
             (16, 5e-5, 50, "1.0", "Off", False, False), (8, 2e-4, 20, "1.0", "0.98 (recommended)", True, False),
@@ -134,8 +134,8 @@ def test_presets_apply_the_fine_tune_one_included(desc):
         assert rep.blocked == [] and rep.refused == [] and rep.ignored == [], (name, rep.refused, rep.ignored)
         assert new["DATASET_MEGAPIXELS"] == values["DATASET_MEGAPIXELS"] and new["OPTIMIZER_TYPE"] == "adamw"
     tp = presets.TrainingPresets(desc)
-    assert tp.default_name == "✨ MOSS-Image Standard (rank 32, 1e-4)"
-    ft, rep = presets.apply(dict(desc.presets)["✨ MOSS-Image Fine-tune (1e-5)"], P.defaults(), desc)
+    assert tp.default_name == "◆ Balanced (rank 32, 1e-4)"
+    ft, rep = presets.apply(dict(desc.presets)["◆ Full fine-tune (1e-5)"], P.defaults(), desc)
     assert desc.finetune and ft["FAMILY_FT"] is True and ft["FAMILY_FT_ROTATIONS"] == 10 and ft["LEARNING_RATE"] == 1e-5
 
 

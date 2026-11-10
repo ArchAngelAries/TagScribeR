@@ -58,6 +58,13 @@ Next, in order (sizes and upstream lines are in the audits):
    training maps and the viewer. The rest of stage 5 (DOP, Multi Concept, LoRA Isolation) after masked training if
    the owner agrees (question below).
 
+**Naming and credit (the owner, 2026-11-10):** TagScribeR is its own program, not affiliated with Fizgig. Names a
+user sees are TagScribeR's own (Fizgig-coined feature and preset names renamed; field-standard terms kept); hidden
+setting keys and stored option values stay, so Fizgig preset files import; Fizgig is credited in one place (Help
+Center Credits topic, README credits, `THIRD_PARTY_NOTICES.md`, the adapted files' headers) and upstream figures read
+"measured upstream, not by TagScribeR". Rules and rename tables: `NAMING.md`. Every port from here on names its
+features TagScribeR's way before it ships. Left for later: a display-text layer over stored option values.
+
 Questions waiting for the owner (each audit ends with the full list and a recommendation):
 
 - Muon as the default optimizer of the Fizgig-named presets, keeping one AdamW 8-bit preset per family.

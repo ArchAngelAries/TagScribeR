@@ -43,14 +43,14 @@ KLEIN_9B = FamilyDescription(
     model_files=(
         ModelFile("klein_dit", "Klein Base 9B DiT", True, "black-forest-labs/FLUX.2-klein-base-9b-fp8",
                   "flux-2-klein-base-9b-fp8.safetensors", 9.5,
-                  "The undistilled Base model - what training runs on. Fizgig trains on the fp8 file (~9.5 GB, "
-                  "fetch_models.py); the bf16 file (~17 GB) works too. Gated repos: accept Black Forest Labs' "
+                  "The undistilled Base model - what training runs on. The default is the fp8 file (~9.5 GB); "
+                  "the bf16 file (~17 GB) works too. Gated repos: accept Black Forest Labs' "
                   "licence on Hugging Face first. Not the Distilled model.",
                   role="dit"),
         ModelFile("klein_distilled_dit", "Klein 9B Distilled DiT (previews)", False,
                   "black-forest-labs/FLUX.2-klein-9b-fp8", "flux-2-klein-9b-fp8.safetensors", 9.0,
                   "Optional: the 4-step Distilled model, for fast training previews that match ComfyUI (Samples: "
-                  "'Use Distilled model for samples', on by default). Never trained. Gated repo: accept Black Forest "
+                  "'Preview with the Distilled model', on by default). Never trained. Gated repo: accept Black Forest "
                   "Labs' licence first. Without it, previews render the Base model at 40 steps.",
                   role="preview_dit"),                       # Fizgig 7.0.1 families/klein.py distilled_dit
         ModelFile("klein_vae", "FLUX.2 AE (ae.safetensors)", True, "black-forest-labs/FLUX.2-dev", "ae.safetensors",
@@ -167,15 +167,15 @@ KLEIN_9B = FamilyDescription(
     slider_training=True,
     presets=(
         # Fizgig BUILT_IN_PRESETS order and names, verbatim. The first is the first-visit default.
-        ("✨ Old Reliable (rank 16, full model, single subject)", _preset(16, 1e-4, 55, "1e-4", "4e-4", "Full Model")),
-        ("✨ Old Reliable - Flavour 8 (rank 8, full model, single subject)",
+        ("◆ Single subject (rank 16, full model)", _preset(16, 1e-4, 55, "1e-4", "4e-4", "Full Model")),
+        ("◆ Single subject, lighter (rank 8, full model)",
          _preset(8, 1e-4, 55, "1e-4", "4e-4", "Full Model")),
-        ("✨ Identity (rank 8, single subject)", _preset(8, 4e-4, 15, "2e-4", "4e-4", "Identity")),   # Fizgig 6.8.2
-        ("✨ Identity (rank 8, harder dataset)", _preset(8, 4e-4, 20, "2e-4", "4e-4", "Identity")),
-        ("✨ Multi-Character (rank 16, multi character or concept)",
+        ("◆ Identity blocks (rank 8, single subject)", _preset(8, 4e-4, 15, "2e-4", "4e-4", "Identity")),   # Fizgig 6.8.2
+        ("◆ Identity blocks (rank 8, harder dataset)", _preset(8, 4e-4, 20, "2e-4", "4e-4", "Identity")),
+        ("◆ Several subjects or concepts (rank 16)",
          _preset(16, 2e-4, 50, "1e-4", "4e-4", "Identity")),
-        ("✨ Style (late timesteps)", _preset(4, 4e-4, 15, "1e-5", "4e-4", "Style", "0", "400")),
-        ("✨ Style+Composition (all timesteps)", _preset(4, 4e-4, 15, "1e-5", "4e-4", "Style+Composition")),
+        ("◆ Style (late timesteps)", _preset(4, 4e-4, 15, "1e-5", "4e-4", "Style", "0", "400")),
+        ("◆ Style and composition (all timesteps)", _preset(4, 4e-4, 15, "1e-5", "4e-4", "Style+Composition")),
     ),
 
     # Fizgig fetch_models.py: ("hf-config:Qwen/Qwen3-8B", "Qwen3 tokenizer - Klein offline")

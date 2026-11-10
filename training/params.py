@@ -54,14 +54,14 @@ FT_REG_MULT = ("0.05", "0.1", "0.2", "0.3", "0.5", "0.75", "1.0")
 
 # the Samples tick for a family's preview checkpoint: its description's preview_checkpoint_tick (Fizgig 8.x), else
 # Klein's wording, which is what TagScribeR has always shown
-SAMPLE_CHECKPOINT_TICK = "Use Distilled model for samples (4-step, matches ComfyUI)"
+SAMPLE_CHECKPOINT_TICK = "Preview with the Distilled model (4 steps, as ComfyUI renders)"
 
 
 def preview_checkpoint_tick(desc) -> str:
     return str(getattr(desc, "preview_checkpoint_tick", "") or SAMPLE_CHECKPOINT_TICK)
 
 
-GROUPS = ("Output", "Training Parameters", "Fine-tune", "Loss watch", "Optimizer", "Memory & Precision", "Timesteps",
+GROUPS = ("Output", "Training Parameters", "Fine-tune", "Hard images", "Optimizer", "Memory & Precision", "Timesteps",
           "Dataset", "Caption augmentation (extension)", "Metadata", "Samples")
 
 
@@ -97,7 +97,7 @@ PARAMS: tuple[Param, ...] = (
       "How big each training step is. Ignored while Adaptive LR is on (the run starts at the geometric middle of "
       "Min and Max). With Automagic v3 this is only its starting rate.", minimum=0.0),
     P("ADAPTIVE_LR", "Adaptive LR", BOOL, False, "Training Parameters",
-      "Fizgig's adaptive learning rate. Each epoch it compares the loss and how fast the LoRA's weights grow: it "
+      "The adaptive learning rate. Each epoch it compares the loss and how fast the LoRA's weights grow: it "
       "probes up x1.25 after two improving epochs, halves on a plateau, and on instability (weights growing >30% "
       "in an epoch, or more than half the steps clipped) halves AND blends the weights 70/30 back to the previous "
       "epoch. The run starts at sqrt(Min x Max); the LR box and the scheduler are ignored."),
@@ -113,7 +113,7 @@ PARAMS: tuple[Param, ...] = (
       "LoRA rank: capacity. 4-8 for one subject, 16 for larger or mixed datasets, 32 for big style sets. Higher "
       "ranks learn faster but overcook sooner and make bigger files.", minimum=1, maximum=1024),
     P("NETWORK_ALPHA", "Network alpha", FLOAT, 4, "Training Parameters",
-      "Scales the LoRA's effect: scale = alpha / rank. Fizgig's presets use alpha = rank (scale 1).", minimum=0),
+      "Scales the LoRA's effect: scale = alpha / rank. The built-in presets use alpha = rank (scale 1).", minimum=0),
     P("LOKR_FACTOR", "LoKR factor", INT, 8, "Training Parameters",
       "LoKR only: the small Kronecker factor is about factor x factor. Larger = smaller file, less capacity.",
       minimum=1, maximum=64, family_only="lokr"),
@@ -133,12 +133,12 @@ PARAMS: tuple[Param, ...] = (
       "step the epoch ended on - smoother, usually better. Training itself runs on the raw weights. MiniMax H3 also "
       "offers Short run: the average covers about the last quarter of the run, for runs too short for 0.98 to "
       "settle.", options=EMA_OPTIONS, family_only="ema"),
-    P("CONTEXT_LORA_PATH", "Context LoRA", PATH, "", "Training Parameters",
+    P("CONTEXT_LORA_PATH", "Companion LoRA (frozen)", PATH, "", "Training Parameters",
       "Optional: an existing LoRA kept frozen and active while you train, so the new LoRA learns to work on top "
       "of it (e.g. a face on a style). It is never saved into the output. LoRA, LoKR and LoHa files from most "
       "trainers load (kohya, diffusers, OneTrainer, AI-Toolkit naming).", advanced=True),
-    P("CONTEXT_LORA_STRENGTH", "Context LoRA strength", FLOAT, 1.0, "Training Parameters",
-      "The context LoRA's strength during training and previews.", minimum=0.0, maximum=2.0, advanced=True),
+    P("CONTEXT_LORA_STRENGTH", "Companion LoRA strength", FLOAT, 1.0, "Training Parameters",
+      "The companion LoRA's strength during training and previews.", minimum=0.0, maximum=2.0, advanced=True),
     P("FAMILY_EDIT", "Edit LoRA (before/after pairs)", BOOL, False, "Training Parameters",
       "Train an edit (e.g. a colour grade) from pairs: the dataset folder holds the edited images, the originals "
       "folder holds the matching originals with the same file names.", family_only="edit"),
@@ -147,7 +147,7 @@ PARAMS: tuple[Param, ...] = (
       "Train a slider: at strength +1 the LoRA pushes one way, at -1 the other, 0 is the base model. From image pairs "
       "(the dataset folder is the +1 end, the -1 end folder holds the same pictures changed the other way, same file "
       "names) or from prompts (no dataset: the model renders practice pictures of a base prompt). A slider is always "
-      "a plain LoRA; Adaptive LR, EMA, the loss watch and gradient accumulation are off for it. Previews show the "
+      "a plain LoRA; Adaptive LR, EMA, hard-image tracking and gradient accumulation are off for it. Previews show the "
       "dial at -1, 0 and +1 side by side.", family_only="slider"),
     P("FAMILY_SLIDER_SOURCE", "Slider from", CHOICE, "pairs", "Training Parameters",
       "pairs = image pairs (the dataset folder and the -1 end folder); prompts = a base prompt and what each end "
@@ -162,11 +162,11 @@ PARAMS: tuple[Param, ...] = (
       "Prompt sliders: what the +1 end adds to the base prompt, e.g. 'smiling'.", preset=False, family_only="slider"),
     P("FAMILY_SLIDER_NEG", "-1 end adds", TEXT, "", "Training Parameters",
       "Prompt sliders: what the -1 end adds to the base prompt, e.g. 'frowning'.", preset=False, family_only="slider"),
-    P("FAMILY_SLIDER_GUIDANCE", "Slider push strength", FLOAT, 0.0, "Training Parameters",
+    P("FAMILY_SLIDER_GUIDANCE", "Slider guidance", FLOAT, 0.0, "Training Parameters",
       "Prompt sliders: how far each end is pushed past the plain prompt (0 = the family's default: 3 on Krea 2, 2 "
       "elsewhere). Higher makes a stronger dial, too high turns the picture into something else.", minimum=0.0,
       maximum=20.0, family_only="slider"),
-    P("FAMILY_SLIDER_ULTRA", "Slider Ultra mode", BOOL, False, "Training Parameters",
+    P("FAMILY_SLIDER_ULTRA", "Train composition blocks only", BOOL, False, "Training Parameters",
       "Krea 2 sliders: train only the composition blocks (blocks 0-7 and the text-fusion blocks), so the slider "
       "holds up at far higher strengths.", advanced=True, family_only="slider_ultra"),
     # Full fine-tune (Fizgig 8.7.3's FAMILY_FT_* keys, families/form.py:65-66 and :466-486): the base model itself
@@ -176,7 +176,7 @@ PARAMS: tuple[Param, ...] = (
       "base, loaded in place of it. The frozen part stays in 4-bit (NF4) and the model trains one window of its parts "
       "at a time, so it fits cards a whole-model fine-tune would not. Needs a 16-bit (bf16 / fp16) or fp32 model "
       "file - not an fp8 or pre-quantised one - plenty of system memory, and a roomy drive (every save is a full "
-      "model). Rank, alpha, network type, Adaptive LR, EMA, the timestep range, the Context LoRA and Resume from a "
+      "model). Rank, alpha, network type, Adaptive LR, EMA, the timestep range, the companion LoRA and Resume from a "
       "state folder are not used. Ticking it sets the learning rate to the family's fine-tune rate. Not yet run on "
       "AMD hardware.", family_only="finetune"),
     P("FAMILY_FT_ROTATIONS", "Rotations", INT, 10, "Fine-tune",
@@ -195,7 +195,7 @@ PARAMS: tuple[Param, ...] = (
       "so nothing rotates. A smaller cap means more windows and more memory to spare, if Auto runs too close to "
       "your card's limit.", options=tuple(lab for lab, _ in FT_WINDOW_SIZES), strict=True, advanced=True,
       family_only="finetune"),
-    P("FAMILY_FT_FUSED", "Free each gradient as soon as it's used (less memory - recommended)", BOOL, True,
+    P("FAMILY_FT_FUSED", "Step each weight as its gradient arrives (less memory, recommended)", BOOL, True,
       "Fine-tune",
       "Each weight is stepped the moment its gradient arrives and the gradient is freed at once, so only one "
       "gradient is ever held (several GB saved on the large models). Gradient clipping and gradient accumulation "
@@ -208,13 +208,13 @@ PARAMS: tuple[Param, ...] = (
     P("FAMILY_FT_REG_MULT", "Regularisation LR x", CHOICE, "0.2", "Fine-tune",
       "The regularisation photos train at this fraction of the learning rate: 0.1-0.3 keeps them a light anchor; "
       "at 1.0 they are a second subject set.", options=FT_REG_MULT, family_only="finetune_reg"),
-    P("FAMILY_FAST_ID", "Fast Identity Mode", BOOL, False, "Training Parameters",
+    P("FAMILY_FAST_ID", "Train identity blocks only", BOOL, False, "Training Parameters",
       "Train only the blocks measured to carry a character's identity (Qwen Image 2.1: blocks 10-14). About 1.5x "
       "faster per step, with likeness very close to a full-model LoRA. For characters and faces, not styles. Not "
       "used for an Edit LoRA.", family_only="fast_id"),
     # Edit LoRAs with extra reference pictures (Fizgig 8.1.1 / 8.1.2), for families whose description has
     # edit_references > 1 (Klein 4, Qwen Image 2.1 10); the strings are pipeline.EDIT_PHOTO_ONLY / EDIT_WITH_EXTRAS
-    P("FAMILY_EDIT_PICTURES", "What the edit uses", CHOICE, EDIT_PHOTO_ONLY, "Training Parameters",
+    P("FAMILY_EDIT_PICTURES", "Edit inputs", CHOICE, EDIT_PHOTO_ONLY, "Training Parameters",
       "The photo only: an edit that changes how a photo looks (a grade, a relight, a retouch). The photo + extra "
       "pictures: an edit that brings something from other pictures into it (a person, an object, a place).\n"
       "Your edited photos and their captions are in the dataset folder (photo.png, photo.txt). The Originals folder "
@@ -234,21 +234,20 @@ PARAMS: tuple[Param, ...] = (
       "extras are test_1.png, test_2.png ... in this folder (for test.png). Names are not case-sensitive.",
       family_only="edit_multi"),
     # ---- loss watch -------------------------------------------------------------------------------
-    P("KREA2_LOSS_WATCH", "Detect problem images", BOOL, False, "Loss watch",
+    P("KREA2_LOSS_WATCH", "Track hard images", BOOL, False, "Hard images",
       "Watch each image's loss through the run (normalised for the noise level) and flag images that never learn "
-      "(stuck), learn oddly (suspect) or are done early (exhausted). See them in Problem Images. Batch size 1 only."),
-    P("KREA2_PER_IMAGE_LR", "Per-image adaptive LR", BOOL, False, "Loss watch",
+      "(stuck), learn oddly (suspect) or are done early (exhausted). See them in Hard images. Batch size 1 only."),
+    P("KREA2_PER_IMAGE_LR", "Per-image learning rate", BOOL, False, "Hard images",
       "Also scale each image's step by its verdict: stuck images train gentler (x0.5 down to x0.1), easy ones a "
-      "little harder (x1.1). Needs Detect problem images."),
-    P("KREA2_AUTO_RECAPTION", "Auto-recaption stuck images", BOOL, False, "Loss watch",
+      "little harder (x1.1). Needs Track hard images."),
+    P("KREA2_AUTO_RECAPTION", "Recaption images that stay hard", BOOL, False, "Hard images",
       "Between epochs, re-caption stuck images with the captioner chosen below, re-encode them, and continue. Two "
       "failed attempts and an image is set aside. Captions are saved (with backups)."),
-    P("KREA2_WARMUP_LOOK", "Warm up look outliers", BOOL, False, "Loss watch",
-      "Images marked as look outliers in a look-score file (tagscriber_look_scores.json or Fizgig's "
-      "fizgig_look_scores.json) start at x0.4 learning rate and ramp to x1.0 over four epochs.", advanced=True),
+    P("KREA2_WARMUP_LOOK", "Ease in visual outliers", BOOL, False, "Hard images",
+      "Images marked as look outliers in a look-score file (tagscriber_look_scores.json) start at x0.4 learning rate and ramp to x1.0 over four epochs.", advanced=True),
     # ---- optimizer --------------------------------------------------------------------------------
     P("OPTIMIZER_TYPE", "Optimizer", CHOICE, "adamw8bit", "Optimizer",
-      "How the weights are updated. AdamW 8-bit is Fizgig's validated recipe (it needs the bitsandbytes package; "
+      "How the weights are updated. AdamW 8-bit is the recipe validated upstream, not by TagScribeR (it needs the bitsandbytes package; "
       "without it the run falls back to AdamW with a warning).", options=tuple(OPTIMIZER_NOTES), strict=True),
     P("OPTIMIZER_ARGS", "Optimizer args", TEXT, "", "Optimizer",
       "Extra optimizer settings as key=value pairs, e.g. weight_decay=0.01 betas=0.9,0.99", advanced=True),
@@ -276,7 +275,7 @@ PARAMS: tuple[Param, ...] = (
     P("COMPILE_BLOCKS", "Compile blocks (torch.compile)", CHOICE, "Auto", "Memory & Precision",
       "Auto turns torch.compile on only when this run is long enough to repay it. It fuses the per-matmul quantise / "
       "dequantise work that bounds the quantised paths but costs a compile pause first, so a short run is slower "
-      "overall. Krea 2 (measured by Fizgig on NVIDIA): about 2x per step on INT8, 1.28x on 4-bit, break-even about "
+      "overall. Krea 2 (measured upstream on NVIDIA, not by TagScribeR): about 2x per step on INT8, 1.28x on 4-bit, break-even about "
       "600 steps on INT8, 1200 on 4-bit. Qwen Image 2.1: 1.43x on INT8, 1.15x on bf16, no extra memory; Auto compiles "
       "runs of 300+ steps on INT8 and 800+ on bf16, never 4-bit (On still does). It mainly benefits NVIDIA cards: "
       "on AMD ROCm Auto leaves it OFF (it recompiles for every bucket shape on HIP; On overrides that). Needs Triton "
@@ -323,11 +322,11 @@ PARAMS: tuple[Param, ...] = (
       family_only="option"),
     P("TRAINING_BLOCKS", "Custom blocks", TEXT, "", "Training Parameters",
       "Model area Custom only: comma-separated blocks, e.g. double_0, double_1, single_5 (8 "
-      "double blocks 0-7, 24 single blocks 0-23). Empty trains the full model, as Fizgig does.", advanced=True,
+      "double blocks 0-7, 24 single blocks 0-23). Empty trains the full model.", advanced=True,
       family_only="option"),
     P("TIMESTEP_SAMPLING", "Timestep sampling", CHOICE, "flux2_shift", "Timesteps",
       "How noise levels are drawn each step. flux2_shift (default) is the resolution-shifted sigmoid Klein uses; "
-      "the others are Fizgig's alternatives: sigma, uniform, sigmoid, shift, flux_shift, logsnr, qinglong_flux.",
+      "the others are alternatives: sigma, uniform, sigmoid, shift, flux_shift, logsnr, qinglong_flux.",
       options=("sigma", "uniform", "sigmoid", "shift", "flux_shift", "flux2_shift", "logsnr", "qinglong_flux"),
       strict=True, advanced=True, family_only="option"),
     P("DISCRETE_FLOW_SHIFT", "Flow shift", FLOAT, 3.0, "Timesteps",
@@ -354,27 +353,27 @@ PARAMS: tuple[Param, ...] = (
       "MiniMax H3: the model the LoRA trains on. First/last frame (fl2va) is the standard base. Reference (ref2va) "
       "is a different fine-tune, the one ComfyUI's Reference-to-Video workflow loads: pick it if the LoRA will be "
       "used there (set the DiT (reference) file under Model files).", options=H3_BASES, family_only="option"),
-    P("H3_STRUCTURE", "Training structure", CHOICE, H3_STRUCTURES[0], "Timesteps",
+    P("H3_STRUCTURE", "Noise emphasis", CHOICE, H3_STRUCTURES[0], "Timesteps",
       "MiniMax H3: how the run spreads its steps over the noise range. Likeness and Style puts 60% of the steps on "
       "nearly clean images (the tuned default for stills). Model default is the reference trainer's schedule, "
-      "weighted to movement and composition (8%). Custom uses the Clean-end share below.", options=H3_STRUCTURES,
+      "weighted to movement and composition (8%). Custom uses the Low-noise share below.", options=H3_STRUCTURES,
       family_only="option"),
-    P("H3_LOWNOISE_PCT", "Clean-end share (%)", FLOAT, 60.0, "Timesteps",
-      "MiniMax H3, Training structure Custom only: the share of steps drawn from the clean half of the noise range "
-      "(below sigma 0.5), where detail and identity are learned. 50 is the plain uniform schedule. Fizgig maps it to "
+    P("H3_LOWNOISE_PCT", "Low-noise share (%)", FLOAT, 60.0, "Timesteps",
+      "MiniMax H3, Noise emphasis Custom only: the share of steps drawn from the clean half of the noise range "
+      "(below sigma 0.5), where detail and identity are learned. 50 is the plain uniform schedule. It maps to "
       "the schedule shift (1 - P) / P.", minimum=1.0, maximum=99.0, family_only="option"),
-    P("H3_HIGHNOISE_LR_PCT", "Medium to High Noise LR (%)", FLOAT, 100.0, "Timesteps",
+    P("H3_HIGHNOISE_LR_PCT", "High-noise learning rate (%)", FLOAT, 100.0, "Timesteps",
       "MiniMax H3: scales the learning rate of the steps in the noisy half (sigma 0.5 and above): pose, framing, "
-      "face shape. Best left at 100 unless you are experimenting. Values outside 0-100 are clamped, as in Fizgig. "
+      "face shape. Best left at 100 unless you are experimenting. Values outside 0-100 are clamped. "
       "No effect with Automagic v3, which sets its own rate.", advanced=True, family_only="option"),
-    P("H3_LIKENESS_MODE", "Training mode", CHOICE, "Default", "Training Parameters",
+    P("H3_LIKENESS_MODE", "Blocks preset", CHOICE, "Default", "Training Parameters",
       "MiniMax H3: which of the 50 blocks the LoRA trains. Default = blocks 20-49: high quality, versatile, best at "
       "keeping the model's priors, and the quickest steps. More Blocks = 6-49: less preservation of the priors; may "
       "help a motion concept, not a likeness upgrade. Blocks 0-5 stay out either way (they deform anatomy and "
       "colour). Off = the blocks you type in Blocks to train.",
       options=("Default", "More Blocks", "Off · hand-pick the blocks in Blocks to train"), family_only="option"),
     P("H3_BLOCKS", "Blocks to train", TEXT, "all", "Training Parameters",
-      "MiniMax H3, training mode Off only: blocks as numbers and ranges, e.g. 6-49 or 3-12, 14-15, 22, 31-33 "
+      "MiniMax H3, Blocks preset Off only: blocks as numbers and ranges, e.g. 6-49 or 3-12, 14-15, 22, 31-33 "
       "(0-49; 'all' = every block, h3blk_N ids work too). Measured answers: 6-49 for the whole model (More Blocks) "
       "and 20-49 for likeness (Default). A typo stops the run instead of training a different set.", advanced=True,
       family_only="option"),
@@ -383,15 +382,15 @@ PARAMS: tuple[Param, ...] = (
       "step, off for previews, never in your saved file. Circlestone (one file for both bases) trains sharper LoRAs "
       "from photos. Ostris learns a video look faster; for a still-image dataset Circlestone is the better pick. Set "
       "the file under Model files.", options=H3_ADAPTERS, family_only="option"),
-    P("H3_ADAPTER_RAMP", "Adapter-relative LR", CHOICE, H3_RAMPS[0], "Optimizer",
+    P("H3_ADAPTER_RAMP", "LoRA-size-relative learning rate", CHOICE, H3_RAMPS[0], "Optimizer",
       "MiniMax H3: makes the learning rate a ceiling the run climbs toward. Each step is held at this fraction of "
       "the LoRA's current size, starting at 10% of the rate and rising as the LoRA grows (a new LoRA is easily "
       "damaged by a full step). Set the learning rate where you want to end up. No effect with Automagic v3.",
       options=H3_RAMPS, advanced=True, family_only="option"),
     P("H3_TRAIN_REFINER", "Train the text token refiner", BOOL, False, "Training Parameters",
       "MiniMax H3, recommended off: the refiner sets how every prompt is read; training it softens output and makes "
-      "previews judder between epochs. It does not affect trigger words. As in Fizgig, it trains only with Training "
-      "mode Off and Blocks to train 'all' (the other modes stop the backward before it).", advanced=True,
+      "previews judder between epochs. It does not affect trigger words. It trains only with Blocks preset "
+      "Off and Blocks to train 'all' (the other modes stop the backward before it).", advanced=True,
       family_only="option"),
     # MOSS-Image's two options (Fizgig 8.7.3 families/moss_image.py:260-271, its keys and labels)
     P("MOSS_LORA_SFT", "Train attention only", BOOL, False, "Training Parameters",
@@ -399,9 +398,9 @@ PARAMS: tuple[Param, ...] = (
       "Recommended when the model you train on is MOSS-Image SFT or a fine-tune of it, where training the "
       "feed-forward layers breaks anatomy. Uses less VRAM, so a fine-tune fits a smaller card. On the Base model "
       "(the usual choice) leave it off: there it may cost quality or slow convergence.", family_only="option"),
-    P("MOSS_LOWNOISE_PCT", "Clean-end share (% of steps)", TEXT, "30", "Timesteps",
+    P("MOSS_LOWNOISE_PCT", "Low-noise share (% of steps)", TEXT, "30", "Timesteps",
       "MOSS-Image: the share of training steps on nearly-clean images (noise below half), where faces and fine "
-      "detail are refined. 30 is Fizgig's default and an experimental figure; empty = the model's own schedule, "
+      "detail are refined. 30 is the default, an experimental figure from upstream; empty = the model's own schedule, "
       "about 11%. A number strictly between 0 and 100.", family_only="option"),
     # ---- dataset ----------------------------------------------------------------------------------
     P("DATASET_MEGAPIXELS", "Target megapixels", CHOICE, "0.25", "Dataset",
@@ -410,7 +409,7 @@ PARAMS: tuple[Param, ...] = (
       options=("0.25", "0.37", "0.5", "0.75", "1.0", "1.5", "2.0", "2.4", "3.0", "4.2")),
     P("DATASET_BATCH_SIZE", "Batch size", INT, 1, "Dataset",
       "Images per step. Families with variable-length conditioning (Qwen Image) train at 1 - use Gradient "
-      "accumulation for a bigger effective batch. The loss watch needs 1.", minimum=1, maximum=64),
+      "accumulation for a bigger effective batch. Hard-image tracking needs 1.", minimum=1, maximum=64),
     P("DATASET_CAPTION_EXT", "Caption extension", TEXT, ".txt", "Dataset",
       "The caption file next to each image (image.png + image.txt).", advanced=True),
     P("ENABLE_BUCKET", "Aspect-ratio buckets", BOOL, True, "Dataset",
@@ -418,7 +417,7 @@ PARAMS: tuple[Param, ...] = (
     P("BUCKET_NO_UPSCALE", "Never upscale", BOOL, True, "Dataset",
       "Images smaller than the target keep their own size instead of being enlarged.", advanced=True),
     P("DATASET_REPEATS", "Repeats", INT, 1, "Dataset",
-      "Show each image this many times per epoch (Fizgig keeps this at 1).", minimum=1, maximum=100, advanced=True),
+      "Show each image this many times per epoch.", minimum=1, maximum=100, advanced=True),
     # ---- caption augmentation (TagScribeR extension, off by default) ----------------------------------
     P("CAPTION_SHUFFLE_VARIANTS", "Shuffled tag variants", INT, 0, "Caption augmentation (extension)",
       "TagScribeR extension (off = 0). Cache this many shuffled-tag versions of each caption and pick one at random "
@@ -428,8 +427,8 @@ PARAMS: tuple[Param, ...] = (
       "With shuffling: the first N comma-separated tags (e.g. your trigger word) stay in front.", minimum=0,
       maximum=32, advanced=True),
     P("CAPTION_DROPOUT", "Caption dropout", FLOAT, 0.0, "Caption augmentation (extension)",
-      "TagScribeR extension (off = 0). The fraction of steps trained with an empty caption (MiniMax H3 uses 0.05 "
-      "in Fizgig). Helps a LoRA work without its exact caption.", minimum=0.0, maximum=0.5, advanced=True),
+      "TagScribeR extension (off = 0). The fraction of steps trained with an empty caption (MiniMax H3's reference "
+      "trainer uses 0.05). Helps a LoRA work without its exact caption.", minimum=0.0, maximum=0.5, advanced=True),
     # ---- metadata ---------------------------------------------------------------------------------
     P("METADATA_TITLE", "Title", TEXT, "", "Metadata", "Shown by model browsers. Empty = the LoRA name.",
       advanced=True),
@@ -487,7 +486,7 @@ PARAMS: tuple[Param, ...] = (
       "simple schedule, so they look like ComfyUI renders of your LoRA. The training model steps aside while they "
       "render. Ticking it (with its file set) moves Steps and CFG to the Distilled's own 4 and 1; unticking it moves "
       "them back to the training model's. A Steps or CFG you typed is kept, unless it equals one of the two defaults "
-      "(the plain model's or the Distilled's), which the tab and the trainer treat as untouched, as Fizgig does. "
+      "(the plain model's or the Distilled's), which the tab and the trainer treat as untouched. "
       "CFG above 1 brings the negative prompt. Without the file, previews use the training model.", preset=False, family_only="preview_ckpt"),
     P("CACHE_SAMPLE_MODEL", "Keep the sample model in RAM", CHOICE, "auto", "Samples",
       "Keeps the ~10 GB Distilled model in system RAM between epochs so it isn't read from disk every time (a few "

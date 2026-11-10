@@ -248,11 +248,11 @@ MOSS_IMAGE = FamilyDescription(
         # to get there (Peter, 18 Oct 2026). A fixed learning rate: Adaptive LR walks to its floor on MOSS-Image's flat
         # loss (@Murf-Code's runs, PR #195; Peter's runs agree that 1e-4 suits it). Adaptive LR stays on the Training
         # tab, off by default.
-        ("✨ MOSS-Image Standard (rank 32, 1e-4)", _preset(32, epochs=70)),
-        ("✨ MOSS-Image Fast (rank 16, 0.25 MP)", _preset(16, epochs=70, mp="0.25")),
-        ("✨ MOSS-Image Style (rank 16, 5e-5)", {**_preset(16, lr=5e-5, epochs=50), "FAMILY_EMA": "Off"}),   # no EMA: a style at 5e-5 is slow enough
-        ("✨ MOSS-Image Slider (rank 8, 2e-4)", _preset(8, lr=2e-4, epochs=20, slider=True)),
-        ("✨ MOSS-Image Fine-tune (1e-5)", _preset(16, lr=1e-5, ft=True)),
+        ("◆ Balanced (rank 32, 1e-4)", _preset(32, epochs=70)),
+        ("◆ Quick start (rank 16, 0.25 MP)", _preset(16, epochs=70, mp="0.25")),
+        ("◆ Style (rank 16, 5e-5)", {**_preset(16, lr=5e-5, epochs=50), "FAMILY_EMA": "Off"}),   # no EMA: a style at 5e-5 is slow enough
+        ("◆ Slider (rank 8, 2e-4)", _preset(8, lr=2e-4, epochs=20, slider=True)),
+        ("◆ Full fine-tune (1e-5)", _preset(16, lr=1e-5, ft=True)),
     ),
 
     notes=(

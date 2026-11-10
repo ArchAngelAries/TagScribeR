@@ -190,9 +190,9 @@ def test_clean_end_share_is_checked_before_the_run(moss, tmp_path):
     desc, models, vals, _tmp = moss
     data = make_dataset(str(tmp_path / "scratch_dataset"))
     for bad in ("3o", "0", "100", "-5"):
-        assert "Clean-end share" in _errors(desc, {**vals, "MOSS_LOWNOISE_PCT": bad}, data, models), bad
+        assert "Low-noise share" in _errors(desc, {**vals, "MOSS_LOWNOISE_PCT": bad}, data, models), bad
     for good in ("", "30", "11.5", "60%"):
-        assert "Clean-end share" not in _errors(desc, {**vals, "MOSS_LOWNOISE_PCT": good}, data, models), good
+        assert "Low-noise share" not in _errors(desc, {**vals, "MOSS_LOWNOISE_PCT": good}, data, models), good
 
 
 def test_base_check_bounds_what_it_reads(tmp_path):

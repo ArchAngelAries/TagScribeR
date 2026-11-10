@@ -80,7 +80,7 @@ def test_preset_keys_are_known_or_migrated(desc):
 
 def test_first_preset_is_the_ultra_fast_default(desc):
     tp = presets.TrainingPresets(desc)
-    assert tp.default_name == "✨ Krea 2 Ultra Fast (rank 8, adaptive LR)"
+    assert tp.default_name == "◆ Quick start (rank 8, adaptive LR)"
     new, rep = presets.apply(tp.load(tp.default_name), P.defaults(), desc)
     assert (new["NETWORK_DIM"], new["NETWORK_ALPHA"], new["MAX_TRAIN_EPOCHS"]) == (8, 8, 30)
     assert new["ADAPTIVE_LR"] is True and P.first_token(new["ADAPTIVE_LR_MIN"]) == "2e-4"
@@ -88,9 +88,9 @@ def test_first_preset_is_the_ultra_fast_default(desc):
     assert new["FAMILY_PRECISION"] == P.PRECISION_LABELS["auto"]
     assert (new["MIN_TIMESTEP"], new["MAX_TIMESTEP"]) == (0.0, 1.0)         # Fizgig's blank boxes
     assert new["DATASET_MEGAPIXELS"] == "0.25" and new["KREA2_PER_IMAGE_LR"] is True
-    std = dict(desc.presets)["✨ Krea 2 Standard (rank 32, full model)"]
+    std = dict(desc.presets)["◆ Balanced (rank 32, full model)"]
     assert (std["NETWORK_DIM"], std["MAX_TRAIN_EPOCHS"], std["ADAPTIVE_LR"]) == (32, 64, False)
-    sty = dict(desc.presets)["✨ Krea 2 Style (rank 16, gentle LR)"]
+    sty = dict(desc.presets)["◆ Style (rank 16, gentle LR)"]
     assert (sty["NETWORK_DIM"], sty["ADAPTIVE_LR_MIN"], sty["ADAPTIVE_LR_MAX"]) == (16, "5e-5", "2e-4")
 
 

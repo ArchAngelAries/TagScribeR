@@ -57,14 +57,14 @@ KREA2 = FamilyDescription(
                   "The Qwen-Image VAE (16 latent channels, 8x) used by Krea 2.", role="vae"),
         ModelFile("krea2_text_encoder", "Qwen3-VL-4B text encoder", True, _REPO,
                   "text_encoders/qwen3vl_4b_fp8_scaled.safetensors", 5.2,
-                  "Used for caching and preview prompts only, then unloaded. Either the fp8_scaled file (what Fizgig "
-                  "downloads) or text_encoders/qwen3vl_4b_bf16.safetensors (8.9 GB) works. The tokenizer files "
+                  "Used for caching and preview prompts only, then unloaded. Either the fp8_scaled file (the "
+                  "default download) or text_encoders/qwen3vl_4b_bf16.safetensors (8.9 GB) works. The tokenizer files "
                   "come from the Hugging Face cache, or a qwen3vl_tokenizer/ folder next to this file.",
                   role="text_encoder"),
         ModelFile("krea2_turbo_lora", "Krea 2 Turbo LoRA (previews)", False, _REPO,
                   "loras/krea2_turbo_lora_rank_64_bf16.safetensors", 0.47,
                   "Optional: previews run on the training model itself with this LoRA at 0.7 (10 steps, no CFG), "
-                  "Fizgig's preview setup. Frozen, off during training.", role="speed_lora",
+                  "the reference preview setup. Frozen, off during training.", role="speed_lora",
                   fetch_optional=False),                     # FZ 8.7.1 families/krea2.py:49-51
     ),
     text_encoder_label="Qwen3-VL-4B",
@@ -185,16 +185,16 @@ KREA2 = FamilyDescription(
     presets=(
         # THE DEFAULT (the first visit applies it): rank 8 with Adaptive LR at an aggressive floor. Rank 8 is more than
         # enough for a character on a 12.9B model and lands the right result more reliably than 32 (Peter, 16 Sep 2026).
-        ("✨ Krea 2 Ultra Fast (rank 8, adaptive LR)", _preset(8, 30, True, "2e-4", "4e-4")),
-        ("✨ Krea 2 Standard (rank 32, full model)", _preset(32, 64, False, "1e-4", "4e-4")),
+        ("◆ Quick start (rank 8, adaptive LR)", _preset(8, 30, True, "2e-4", "4e-4")),
+        ("◆ Balanced (rank 32, full model)", _preset(32, 64, False, "1e-4", "4e-4")),
         # Style: rank 16 (broad global direction; the one published datapoint is "rank 16 for simple styles"), LR
         # ceiling 2e-4 because the watcher probes up on steady descent and style overbakes at 4e-4 (the start is 1e-4,
         # the LR the Krea 2 ecosystem defaults to). Every epoch is saved: scrub for the sweet spot.
-        ("✨ Krea 2 Style (rank 16, gentle LR)", _preset(16, 64, True, "5e-5", "2e-4")),
+        ("◆ Style (rank 16, gentle LR)", _preset(16, 64, True, "5e-5", "2e-4")),
         # Slider (FZ 8.7.1 families/krea2.py:177-180, rank 8 since v7.3.0, its keys and values verbatim): hot and short,
         # as Qwen's (2e-4, 0.5 MP); a happy/sad prompt slider (16 practice pictures, guidance 2) was right at 20 epochs and had
         # turned +1 into an illustration by 25. The loss watch and Adaptive LR stand down for sliders
-        ("✨ Krea 2 Slider (rank 8, 2e-4)", {
+        ("◆ Slider (rank 8, 2e-4)", {
             "NETWORK_DIM": 8, "NETWORK_ALPHA": 8, "NETWORK_TYPE": "LoRA (standard)", "LEARNING_RATE": 2e-4,
             "MAX_TRAIN_EPOCHS": 20, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42, "FAMILY_SLIDER": True,
             "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-4", "ADAPTIVE_LR_MAX": "4e-4",

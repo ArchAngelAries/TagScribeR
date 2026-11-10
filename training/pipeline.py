@@ -171,15 +171,20 @@ def ft_continuation(path) -> tuple[int, int, int]:
         pass
 
     def num(k):
-        try:
-            return int(float(md.get(k) or 0))
-        except (TypeError, ValueError):
-            return 0
-    epochs = num("fizgig_ft_epochs_done")
+        # TagScribeR's own key first; the older fizgig_* key (an earlier build or another trainer wrote the file) after it
+        for key in (f"tagscriber_{k}", f"fizgig_{k}"):
+            try:
+                v = int(float(md.get(key) or 0))
+            except (TypeError, ValueError):
+                v = 0
+            if v:
+                return v
+        return 0
+    epochs = num("ft_epochs_done")
     m = re.search(r"-(\d{6})\.safetensors$", os.path.basename(path or ""))
     if m:
         epochs = int(m.group(1))
-    return num("fizgig_next_start_window"), epochs, num("fizgig_ft_n_windows")
+    return num("next_start_window"), epochs, num("ft_n_windows")
 
 
 def ft_rotations_left(path, rotations, rotate_every) -> tuple[int, int, dict]:
@@ -507,7 +512,7 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
                  "and a batch that mixes a regularisation image with yours trains at the full rate. Batch size 1 is "
                  "the tested path.")
         if str(values.get("CONTEXT_LORA_PATH") or "").strip():
-            warn("Fine-tune: the Context LoRA is not used - a fine-tune trains the base model itself.")
+            warn("Fine-tune: the Companion LoRA is not used - a fine-tune trains the base model itself.")
         if values.get("ADAPTIVE_LR"):
             info("Fine-tune: Adaptive LR is off - a fine-tune trains at the Learning Rate box's rate.")
         info("Fine-tune: every save is a full checkpoint the size of the model file - keep the output folder on a "
@@ -520,7 +525,7 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
             if raw and not 0.0 < float(raw) < 100.0:
                 raise ValueError
         except ValueError:
-            err(f"Clean-end share: '{raw}' is not a number strictly between 0 and 100 (leave it empty for the "
+            err(f"Low-noise share: '{raw}' is not a number strictly between 0 and 100 (leave it empty for the "
                 f"model's own schedule).")
     if prompt_slider:
         image_folder = ""
@@ -550,7 +555,7 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
         err("The dataset folder has no images.")
     elif missing:
         err(f"{len(missing)} image(s) have no {ext} caption (e.g. {', '.join(missing[:3])}). Caption them (Gallery: "
-            f"filter missing:caption) or move them out - Fizgig refuses to start in this case too.")
+            f"filter missing:caption) or move them out - training will not start without a caption for every image.")
     else:
         info(f"{len(imgs)} captioned image(s).")
     if slider_on(desc, values, "pairs"):
@@ -597,11 +602,11 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
     watch_on = any(values.get(k) for k in ("KREA2_LOSS_WATCH", "KREA2_PER_IMAGE_LR", "KREA2_AUTO_RECAPTION",
                                             "KREA2_WARMUP_LOOK"))
     if watch_on and bs > 1:
-        warn("Problem-image detection, per-image LR and auto-recaption need batch size 1 - they are skipped.")
+        warn("Hard-image tracking, per-image learning rate and recaptioning need batch size 1 - they are skipped.")
     if values.get("KREA2_AUTO_RECAPTION") and not (captioner or {}).get("model"):
-        warn("Auto-recaption is on but no captioner is chosen - it will be off for this run.")
+        warn("Recaption images that stay hard is on but no captioner is chosen - it will be off for this run.")
     if values.get("KREA2_PER_IMAGE_LR") and not values.get("KREA2_LOSS_WATCH"):
-        info("Per-image LR uses the problem-image detector; it runs even with 'Detect problem images' off.")
+        info("Per-image learning rate uses hard-image tracking; it runs even with 'Track hard images' off.")
     opt = str(values.get("OPTIMIZER_TYPE") or "")
     if "8bit" in opt and not bitsandbytes_available():
         warn(f"{opt} needs the bitsandbytes package, which isn't installed - the run will fall back to AdamW "

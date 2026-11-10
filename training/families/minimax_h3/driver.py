@@ -148,7 +148,7 @@ class MiniMaxH3Driver(FamilyDriver):
         if "lownoise_pct" in options or "structure" in options:
             pct = float(str(pct).rstrip("%"))
             if S.lownoise_to_shift(pct) is None:
-                raise ValueError(f"The clean-end share must be strictly between 0 and 100 % (got {pct:g})")
+                raise ValueError(f"The low-noise share must be strictly between 0 and 100 % (got {pct:g})")
             self.lownoise_pct = pct
         if "highnoise_lr_pct" in options:
             raw = options["highnoise_lr_pct"]
@@ -168,11 +168,11 @@ class MiniMaxH3Driver(FamilyDriver):
             self.train_refiner = str(options["train_token_refiner"]).strip().lower() in ("1", "true", "yes", "on")
         self._block_index = None
         self.trained_blocks()            # a bad block list fails here, before anything loads
-        logger.info(f"[h3] clean-end share {self.lownoise_pct:g}% -> schedule shift {self.shift:.4g}; training mode "
+        logger.info(f"[h3] low-noise share {self.lownoise_pct:g}% -> schedule shift {self.shift:.4g}; blocks preset "
                     f"{self.likeness_mode}: blocks {self.trained_blocks_spec()}"
                     + (f"; steps above sigma 0.5 at {self.highnoise_lr * 100:.0f}% of the LR"
                        if self.highnoise_lr != 1.0 else "")
-                    + (f"; adapter-relative LR {self.adapter_ramp:g}" if self.adapter_ramp else "")
+                    + (f"; LoRA-size-relative learning rate {self.adapter_ramp:g}" if self.adapter_ramp else "")
                     + ("; the token refiner trains" if self.trains_refiner() else ""))
 
     def trains_refiner(self) -> bool:
@@ -312,8 +312,7 @@ class MiniMaxH3Driver(FamilyDriver):
             raise RuntimeError("MiniMax H3 has no reference / edit training in this port")
         if (min_t > 0.0 or max_t < 1.0) and not self._warned_range:
             self._warned_range = True
-            logger.info(f"[h3] noise range {min_t:g}-{max_t:g}: the Training structure's schedule is squeezed into it "
-                        f"(Fizgig 7.0.1)")
+            logger.info(f"[h3] noise range {min_t:g}-{max_t:g}: the Noise emphasis schedule is squeezed into it")
         self._patch = tuple(dit.patch_size)
         self._audio_dim = int(dit.config.audio_latents_dim)
         st = self._draw(latents, generator, min_t, max_t)
@@ -446,7 +445,7 @@ class MiniMaxH3Driver(FamilyDriver):
         self._audio_dim = int(dit.config.audio_latents_dim)     # calls training_loss before them)
         self._ramp = _AdapterRamp(net, self.adapter_ramp) if self.adapter_ramp > 0 else None
         if self._ramp is not None:
-            logger.info(f"[ramp] adapter-relative LR ON - each step held at {100 * self.adapter_ramp:.3f}% of the "
+            logger.info(f"[ramp] LoRA-size-relative learning rate ON - each step held at {100 * self.adapter_ramp:.3f}% of the "
                         f"adapter's current size, starting at 10% of the learning rate")
 
     def step_policy(self, batch, epoch):

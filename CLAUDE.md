@@ -30,6 +30,14 @@ first. The current work plan is `docs/dev/PORT_PLAN.md`; the parity audits it is
    honest in docs about what has and has not been run on real hardware.
 9. **Report faithfully.** Say what was verified, what was only unit-tested, and what only a real run can confirm.
    List differences from Fizgig as questions for the owner. Do not overstate.
+10. **TagScribeR is its own program** (the owner, 2026-11-10). It is not affiliated with Fizgig and must not read as
+    a copy of it: Fizgig is the inspiration for good features and model support (rule 1), not a source of names.
+    Everything a user sees or reads (labels, preset names, tooltips, help, messages, the README outside its credits)
+    uses TagScribeR's own names and never mentions Fizgig; the credit is given once, in the Help Center's Credits
+    topic, the README's credits and `THIRD_PARTY_NOTICES.md`. The licence headers of adapted files and the developer
+    notes under `docs/dev/` keep their source references (the licence requires the former). Hidden setting keys stay
+    Fizgig's so its preset files import. The rules and the rename tables are in `docs/dev/NAMING.md`: follow it for
+    every new label, preset or message, and give a newly ported feature a TagScribeR name before it ships.
 
 ## Layout
 

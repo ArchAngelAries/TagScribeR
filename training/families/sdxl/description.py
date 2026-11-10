@@ -68,20 +68,20 @@ def _presets(name):
         # Fizgig's (Peter, 5 Oct 2026): the first is a first visit's preset. alpha at half the rank ("SDXL LoRAs gain
         # from the halved alpha"); 5e-5 "clearly better results than 1e-4 in his comparisons".
         # 50 epochs for both (FZ 8.7.1 families/sdxl.py:170-171; the _preset default stays 20, the Slider keeps 30)
-        (f"✨ {name} Strong (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16, epochs=50)),
-        (f"✨ {name} Standard (rank 16, alpha 8, 5e-5)", _fizgig_preset(16, 8, epochs=50)),
+        ("◆ High capacity (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16, epochs=50)),
+        ("◆ Balanced (rank 16, alpha 8, 5e-5)", _fizgig_preset(16, 8, epochs=50)),
         # Slider: the default's rank 32 / alpha 16 at 5e-5 (Fizgig, 5 Oct 2026; "not yet measured on SDXL")
-        (f"✨ {name} Slider (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16, epochs=30, slider=True)),
+        ("◆ Slider (rank 32, alpha 16, 5e-5)", _fizgig_preset(32, 16, epochs=30, slider=True)),
         # full fine-tune at the shared fine-tune rate (Fizgig), and at OneTrainer's: its "#sdxl 1.0" preset takes the
         # TrainConfig default 3e-6 (modules/util/config/TrainConfig.py), text encoders frozen as here (FZ 8.7.3
         # families/sdxl.py:174-181). Not measured on SDXL by Fizgig
-        (f"✨ {name} Fine-tune (1e-5)", _ft_preset(1e-5)),
-        (f"✨ {name} Fine-tune Official (3e-6)", _ft_preset(3e-6)),
+        ("◆ Full fine-tune (1e-5)", _ft_preset(1e-5)),
+        ("◆ Full fine-tune, conservative (3e-6)", _ft_preset(3e-6)),
         # TagScribeR's earlier presets, community starting points (not measured)
-        (f"✨ {name} Fast (rank 16, adaptive LR)", _preset(16, 16, 20, "5e-5", "2e-4")),
-        (f"✨ {name} Cosine (rank 32, community)", _preset(32, 16, 30, "1e-4", "4e-4", adaptive=False,
-                                                           scheduler="cosine")),
-        (f"✨ {name} Style (rank 16, gentle LR)", _preset(16, 8, 40, "5e-5", "1e-4")),
+        ("◆ Community: fast (rank 16, adaptive LR)", _preset(16, 16, 20, "5e-5", "2e-4")),
+        ("◆ Community: cosine (rank 32)", _preset(32, 16, 30, "1e-4", "4e-4", adaptive=False,
+                                                  scheduler="cosine")),
+        ("◆ Community: style (rank 16, gentle LR)", _preset(16, 8, 40, "5e-5", "1e-4")),
     )
 
 

@@ -514,7 +514,7 @@ def _replacements() -> list[tuple[re.Pattern, str]]:
 REPL = _replacements()
 
 
-GLYPHS = {"✨ ": "", "◌ ": "", "▫ ": "", "✂ ": "", "⟲ ": "", "⟳ ": "", "⇋ ": "",
+GLYPHS = {"✨ ": "", "◆ ": "", "◌ ": "", "▫ ": "", "✂ ": "", "⟲ ": "", "⟳ ": "", "⇋ ": "",
           "⇵ ": "", "◀": "<", "▶": ">", "✘ ": ""}  # glyphs the offscreen font renders as empty boxes
 
 
@@ -1289,7 +1289,7 @@ def shot_help(c: Ctx) -> Scene:
     dlg.show()
     dlg.show_topic("train")
     title, grp, body = dlg.topics["train"]
-    dlg.topics["train"] = (title, grp, body.replace("✨ ", ""))     # sparkle glyph renders as a box offscreen
+    dlg.topics["train"] = (title, grp, body.replace("✨ ", "").replace("◆ ", ""))     # these glyphs render as a box offscreen
     dlg._render("train")
     c.pump(0.8)
     c.keep = dlg
@@ -1472,7 +1472,7 @@ def build_shots() -> None:
     ], after=reset_train))
     S(Shot("12_problem_images.png", shot_problem_images, [
         Note(lambda s: row_rect(s.base.table, s.base.stuck_row),
-             "Images the loss watch flags. Stuck and suspect images usually have a wrong or too short caption.",
+             "Images that are not learning. Stuck and suspect images usually have a wrong or too short caption.",
              (0.28, 0.75)),
         Note(lambda s: s.base.edit,
              "Fix the caption here and click Save fix. The running training picks it up at the next epoch.", (0.74, 0.18)),

@@ -164,14 +164,17 @@ class TrainTab(QWidget):
         tf.addRow("Family:", self.combo_family)
         row = QHBoxLayout()
         self.combo_preset = QComboBox()
-        self.combo_preset.setToolTip("✨ = built-in presets (Fizgig's measured recipes). Your own presets follow. "
-                                     "Loading a preset changes only the settings it contains.")
+        self.combo_preset.setToolTip("◆ = built-in presets; the ones marked Community are starting points, not "
+                                     "measured recipes. Your own presets follow. Loading a preset changes only the "
+                                     "settings it contains. (Where the recipes come from: Help, Credits and "
+                                     "licences.)")
         self.combo_preset.setMinimumWidth(260)
         row.addWidget(self.combo_preset, 1)
         for label, tip, fn in (("Load", "Apply the selected preset", self._load_preset),
                                ("Save…", "Save the current settings as your own preset", self._save_preset),
                                ("Delete", "Delete the selected user preset (to the Recycle Bin)", self._delete_preset),
-                               ("Import…", "Import a preset file (TagScribeR or Fizgig .json)", self._import_preset),
+                               ("Import…", "Import a preset file (.json): TagScribeR's own, or one from another trainer that uses "
+                                           "the same setting names", self._import_preset),
                                ("Last run", "Load the settings of the last training run", self._load_last_run)):
             b = QPushButton(label)
             b.setToolTip(tip)
@@ -183,7 +186,7 @@ class TrainTab(QWidget):
         self.chk_all = QCheckBox("Show all settings")
         self.chk_all.setChecked(bool(self.cfg.get("training.show_all", False)))
         self.chk_all.setToolTip("Off: only the essentials are shown and the preset decides everything else - the "
-                                "simple way to train. On: every setting (optimizer, memory, loss watch, timesteps, "
+                                "simple way to train. On: every setting (optimizer, memory, hard images, timesteps, "
                                 "metadata, resume...) for full control. Hidden settings keep their values.")
         self.chk_all.toggled.connect(self._toggle_all)
         tf.addRow(self.chk_all)
@@ -658,9 +661,10 @@ class TrainTab(QWidget):
         for m in rep.messages():
             self._console(m)
         if rep.blocked:
-            QMessageBox.warning(self, "Preset", f"'{name}' is a Fizgig preset for "
+            QMessageBox.warning(self, "Preset", f"'{name}' is a preset for "
                                 f"{' and '.join(sorted({w for _, w in rep.blocked}))}, which TagScribeR cannot train "
-                                "yet.\n\nNothing was changed: applied anyway, it would train an ordinary LoRA.")
+                                "for this model yet.\n\nNothing was changed: applied anyway, it would train an "
+                                "ordinary LoRA.")
             return
         self._apply_values(new)
         if not quiet:
@@ -675,7 +679,7 @@ class TrainTab(QWidget):
 
     def _save_preset(self):
         name, ok = QInputDialog.getText(self, "Save preset", "Preset name:",
-                                        text=self.combo_preset.currentText().replace("✨ ", ""))
+                                        text=self.combo_preset.currentText().replace("◆ ", ""))
         if not ok or not name.strip():
             return
         try:
@@ -787,8 +791,8 @@ class TrainTab(QWidget):
             row.addWidget(b)
         lay.addLayout(row)
         row = QHBoxLayout()
-        for label, tip, fn in (("Problem Images", "Images the loss watch flags, with a caption editor",
-                                self.open_problem_images),
+        for label, tip, fn in (("Hard images", "Images that are not learning (per-image loss), with a caption "
+                                "editor", self.open_problem_images),
                                ("Preview override…", "Render a different prompt at the next preview",
                                 self.open_override),
                                ("📂 Open run folder", "Checkpoints, samples and logs of this run", self.open_run_folder)):

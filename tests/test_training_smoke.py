@@ -388,7 +388,7 @@ def test_qwen_fast_identity_mode_trains_the_identity_blocks_only(tmp_path):
     assert P.family_shows(P.BY_KEY["FAMILY_FAST_ID"], qwen) and not P.family_shows(P.BY_KEY["FAMILY_FAST_ID"],
                                                                                    get("krea2"))
     name, fast_id = qwen.presets[1]
-    assert "Fast Identity" in name and fast_id["FAMILY_FAST_ID"] and fast_id["DATASET_MEGAPIXELS"] == "0.25"
+    assert "Identity blocks only" in name and fast_id["FAMILY_FAST_ID"] and fast_id["DATASET_MEGAPIXELS"] == "0.25"
     vals, rep = presets.apply(fast_id, P.defaults(), qwen)
     assert not rep.refused and not rep.blocked
     kw, _ = pipeline.train_kwargs(qwen, vals, tmp_path / "run", {})

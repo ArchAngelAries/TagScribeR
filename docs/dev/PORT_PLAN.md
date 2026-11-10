@@ -84,7 +84,86 @@ Center Credits topic, README credits, `THIRD_PARTY_NOTICES.md`, the adapted file
 "measured upstream, not by TagScribeR". Rules and rename tables: `NAMING.md`. Every port from here on names its
 features TagScribeR's way before it ships. Left for later: a display-text layer over stored option values.
 
-Questions waiting for the owner (each audit ends with the full list and a recommendation):
+### Decisions made for the owner (2026-11-10)
+
+The owner: "Choose the answers to the decisions for me that are best for the app and user comfort / user
+friendliness." So every open question below is decided, by one rule: a new user gets the best experience without
+choosing anything, and nobody who already uses the app has something moved under them without being told and
+without a way back. Later sessions do not ask these again.
+
+Interface (`UI_UX_REDESIGN.md`, its question numbers):
+
+1. **Layout:** the Studio layout (rail, top bar, job chips) is the default for new installs when stage 3 ships.
+   An existing install keeps the Classic layout and gets a one-time, dismissible "New layout available: Try it /
+   Keep classic" offer. "Layout: Studio / Classic" stays in Settings; Classic is not retired.
+2. **Navigation order:** today's order and Ctrl+1..7 stay; Help and Settings sit at the foot of the rail.
+3. **Memory:** two small meters in the top bar by default; the full strip one click away and as a setting.
+4. **Default theme:** TagScribeR dark is the default for new installs once stage 1 (the image grid follows the
+   theme) is in. An existing install keeps the theme it has, including the classic `dark_teal` it never chose
+   explicitly, and gets the same one-time offer. The classic themes stay.
+5. **Outlines:** softer by default, with a "Stronger outlines" switch under Accessibility.
+6. **Violet** marks only what the machine wrote or is working on; it leaves the Auto Tag button and health marks.
+7. **Demo pictures:** "Try the demo pictures" on the first screen, generated on the user's PC (no download).
+8. **Resolution pill:** on the hovered card and in the "Details" view (remembered per tab), not on every card.
+9. **Window before the AI runtime:** built behind a setting, off by default, until the owner has run it on the
+   real card (the preload exists because a first import on a worker thread once failed halfway); then it becomes
+   the default.
+10. **Train while running:** the form folds into "Recipe of this run" and the dashboard shows, with one button to
+    bring the form back.
+11. **Notifications:** a system notification when a job ends while the window is not active, on by default, no
+    sound, with a switch.
+12. **Mockup:** kept in `docs/dev/mockups/`.
+13. **Message boxes:** undoable actions confirm in place and offer Undo in a toast; a dialog stays wherever data
+    would be lost for good (overwriting originals, anything that bypasses the Recycle Bin).
+
+Training (`audit/12`, its question numbers):
+
+1. **Muon:** port it and give each family its current upstream recipe on Muon, named as a preset of its own. The
+   FIRST preset of each family (what a new user gets) stays the recipe that has run on real hardware here (AdamW
+   8-bit for Krea 2) until a Muon run on an AMD card has been reported good; then the Muon recipe moves first.
+2. **MOSS-Image** moves to the current recipes (low-noise schedule that changes during the run, the newer preview
+   recipe, the extra presets), with the "smaller, faster previews" tick for cards under 20 GB.
+3. **Kromoss:** no longer offered as a download; a file the user picks by hand still loads.
+4. A companion LoRA that matches nothing stops the run (done). 5. Previews keep their size on small cards (done).
+6. **Transparent PNGs** are laid on white (Qwen Image 2.1 keeps its alpha); affected caches re-encode once and the
+   release notes say so.
+7. **Batch size:** the upstream driver hooks for Qwen Image 2.1, MOSS-Image and H3 stills, TagScribeR's own
+   batching kept everywhere it works today, and no lower maximum than today.
+8. **Order of new trainer features:** resume with a new learning rate and preview / save schedules, then caption
+   dropout, then masked training together with the mask tools.
+
+Families and tools (`audit/13`, its question numbers):
+
+1. Z-Image Turbo and Base before Flux 3 Image Klein. 2. Fibo 2.0 after Flux 3, its non-commercial licence stated on
+the model row and in Help. 3. Vimoo 1.0 Lite: not now (after video clips exist, and if users ask).
+4. Masked training and mask tools before DOP / Multi Concept / LoRA Isolation, starting with mask awareness.
+5. Masks are made and edited in the Editor tab (a mode), with an overlay toggle in the Gallery inspector.
+6. SAM 3.1: optional, downloaded on first use, after the CPU person segmenter; never while a run trains.
+7. One embedding model if it serves search well enough (compare DINOv2-base first), otherwise two downloads.
+8. **Uncaptioned pictures at Start:** still refused (it prevents the commonest silent mistake), with a button in
+   the message that filters the Gallery to exactly those pictures.
+9. Sub-folder training gets its own tick in the Train tab. 10. Colour-blind-safe, high-contrast and dim themes:
+yes, with the token themes. 11. A second GPU for previews: after the render tool exists.
+
+Security and privacy (`audit/14`):
+
+- IPTC place names and time-zone offsets count as location; by-lines, owners and serial numbers as identity (done).
+- `run.log` and the run folder keep full paths (the run needs them); sharing goes through "Copy log for sharing"
+  and "Export for sharing" (done).
+- A dotted `module.Class` optimizer can be typed by hand; a preset, queue or pause file cannot bring one in (done
+  for the pause file; presets already refuse optimizers the family does not offer).
+- **Very large pictures (above 300 megapixels):** never refused. They are opened reduced for thumbnails, captioning
+  and previews; editing or exporting one at full size asks first.
+- **Storage:** Settings gets a Storage section with the size of the thumbnail cache, the training caches and the
+  caption backups and a Clear button for each. The thumbnail cache is capped (2 GB, adjustable; it rebuilds itself).
+  Caption backups are never deleted automatically: they are the safety net.
+- An imported preset that sets paths asks first and applies without them by default (done).
+
+Still the owner's alone (not decided here): the personal e-mail address in the public commit history. Removing it
+means rewriting history with a force push; using a private address for future commits is a setting on the owner's
+own git and GitHub account.
+
+Questions as they stood before these decisions (each audit ends with the full list and a recommendation):
 
 - Muon as the default optimizer of the Fizgig-named presets, keeping one AdamW 8-bit preset per family.
 - Kromoss: drop the offered download (Fizgig withdrew it), keep a hand-picked file loadable.

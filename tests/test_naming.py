@@ -53,6 +53,8 @@ def test_built_in_presets_carry_tagscribers_names():
     from training import registry
     old_words = ("Ultra Fast", "Old Reliable", "Flavour", "Fast Identity", "Multi-Character", "✨")
     for d in registry.FAMILIES.values():
+        if d.key.startswith("_"):                       # the tiny test families other tests register
+            continue
         names = [n for n, _ in d.presets]
         assert len(names) == len(set(names)), (d.key, names)
         for n in names:

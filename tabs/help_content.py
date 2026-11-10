@@ -477,7 +477,8 @@ family and Anima): the base model itself trains instead of a LoRA, and the resul
 fine-tune</i>. A run is one kind of training: ticking Edit, Slider or Fine-tune unticks the other two.</li>
 <li>A <b>Companion LoRA</b> (Show all settings) stays frozen and active while you train, so the new LoRA learns on top
 of it; it is never saved into the output. LoRA, LoKR and LoHa files load, in kohya, diffusers, OneTrainer or
-AI-Toolkit naming.</li>
+AI-Toolkit naming. A companion LoRA that matches none of the model's layers (a LoRA made for another model) stops
+the run with a message, instead of training on as if it were not there.</li>
 <li>Tokenizers are read from the local Hugging Face cache first, so once the model downloader has fetched them, a
 run starts without an internet connection.</li>
 </ul>
@@ -485,7 +486,9 @@ run starts without an internet connection.</li>
 <ul>
 <li><b>Pause</b> finishes the current epoch, saves a resumable state and exits cleanly; <b>Resume</b> continues exactly
 there. <b>Stop</b> ends the run immediately (saved epochs stay). Only state folders written by TagScribeR's trainer
-can be resumed (they are loaded as plain tensors, never as arbitrary Python objects).</li>
+can be resumed (they are loaded as plain tensors, never as arbitrary Python objects). If you resume with a
+different <i>Optimizer</i> than the run used, the LoRA's weights and the epoch carry on and the optimizer starts
+fresh (the console says so); to carry its state on too, resume with the optimizer the run used.</li>
 <li>To train more epochs on a finished LoRA: raise <i>Epochs</i>, click <i>Latest</i> under Resume, Start. The
 finished LoRA is also saved under its epoch number (for example <code>name-000030.safetensors</code>), so extending a
 run never overwrites its last epoch.</li>
@@ -648,7 +651,9 @@ epoch.</li>
 seed, CFG). <i>Preview before training</i> shows the base model for comparison.</li>
 <li>They use the averaged (EMA) weights and leave the family's training adapter off, so you see what your saved file
 will do.</li>
-<li>On cards under 20 GB the preview size is capped at 768 px and the model steps aside for decoding.</li>
+<li>On cards under 20 GB the model steps aside while a preview is decoded. Krea 2 previews are also rendered
+on a 768 px canvas there; every other model keeps the preview size you set (shrunk previews made some models look
+soft or broken).</li>
 <li>A failed preview (e.g. out of memory) turns previews off for the rest of the run. Training continues.</li>
 <li><b>Preview override…</b> renders a different prompt at the next preview round without restarting.</li>
 <li>Each saved checkpoint carries its own epoch's preview as its thumbnail (shown by ComfyUI's model browser),

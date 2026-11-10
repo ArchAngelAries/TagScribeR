@@ -374,7 +374,7 @@ class MiniMaxH3Driver(FamilyDriver):
         return h.to(device=device, dtype=self.compute_dtype)
 
     # ---- frozen files' full-model AdaLN rows (Fizgig 7.0.1 MiniMaxDriver.frozen_file_added / _patch_adaln) ----------
-    def frozen_file_added(self, dit, path, strength, role) -> None:
+    def frozen_file_added(self, dit, path, strength, role) -> int:
         """A frozen file's full-model AdaLN rows (the Turbo LoRA, an older H3 LoRA trained with AdaLN on as a Context
         LoRA, a training adapter): the pruned base has no AdaLN Linears that wide to wrap, so they are injected at run
         time from the bundled silu(t_emb) grid - the training set (adapter + context) on every training step, the
@@ -385,13 +385,14 @@ class MiniMaxH3Driver(FamilyDriver):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[{role}] could not read the AdaLN rows of {path} ({type(e).__name__}: {e}) - they are "
                            f"left out")
-            return
+            return 0
         if not pairs:
-            return
+            return 0
         self._frozen_adaln[role] = pairs
         logger.info(f"[{role}] {len(pairs)} AdaLN rows injected at run time"
                     + (" (previews only)" if role == "speed" else ""))
         self._patch_adaln(dit, ("adapter", "context"))
+        return len(pairs)
 
     def _patch_adaln(self, dit, roles) -> None:
         """One patch for the union of the active roles' rows (a patch replaces the module forward wholesale, so every

@@ -173,6 +173,7 @@ KREA2 = FamilyDescription(
     preview_cfg=4.5,
     preview_width=1024,                                      # audit 4.4: SAMPLE_WIDTH per-family default Krea 2 1024
     preview_height=1024,
+    preview_small_card_cap=768,                              # cards under 20 GB: the 768 px preview canvas (upstream #123)
 
     # full fine-tune (the driver's ft_spec, training/ft.py): FZ 8.7.3 families/krea2.py:112 finetune=True; the shared
     # 1e-5 rate choosing Fine-tune sets (docs/FINETUNE.md "Krea 2 and Qwen Image 2.1: 1e-5"). Not run on AMD hardware

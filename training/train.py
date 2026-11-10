@@ -272,7 +272,8 @@ def _save_state(output_dir, output_name, net, optimizer, *, epoch, global_step, 
         rng["cuda"] = torch.cuda.get_rng_state_all()
     torch.save(rng, os.path.join(state_dir, "rng.pt"))
     with open(os.path.join(state_dir, "training_state.json"), "w", encoding="utf-8") as f:   # commit marker, last
-        json.dump({"epoch": epoch, "global_step": global_step, "architecture": arch_id, **(extra or {})}, f)
+        json.dump({"epoch": epoch, "global_step": global_step, "architecture": arch_id,
+                   "optimizer": optimizer.__class__.__name__, **(extra or {})}, f)
     logger.info(f"[state] saved -> {state_dir}")
     return state_dir
 
@@ -295,7 +296,25 @@ def _load_state(state_dir, net, optimizer, device):
     if net.load_trainable(os.path.join(state_dir, "lora.safetensors")) == 0:
         raise RuntimeError(f"[resume] {state_dir} matched none of this LoRA's modules - different rank or "
                            f"target modules?")
-    optimizer.load_state_dict(_torch_load(os.path.join(state_dir, "optimizer.pt"), device))
+    with open(os.path.join(state_dir, "training_state.json"), encoding="utf-8") as f:
+        meta = json.load(f)
+    sd = _torch_load(os.path.join(state_dir, "optimizer.pt"), device)
+    # another Optimizer than the run trained with: its saved moments do not fit this one, so the LoRA's weights and
+    # the epoch carry on with a fresh optimizer (a state from before the type was recorded: as its groups tell)
+    was, now = meta.get("optimizer"), optimizer.__class__.__name__
+    if was and was != now:
+        why = f"it trained with {was}, and this resume uses {now}"
+    elif isinstance(sd, dict) and len(sd.get("param_groups") or []) != len(optimizer.param_groups):
+        why = "it trained with another Optimizer than this resume uses"
+    else:
+        why = ""
+    if why:
+        meta["fresh_optimizer"] = True
+        logger.info(f"[resume] {why}: continuing from the state's LoRA weights and epoch with a fresh optimizer "
+                    f"(it settles within a few steps). To carry the optimizer's state on too, resume with "
+                    f"{was or 'the optimizer the run used'}.")
+    else:
+        optimizer.load_state_dict(sd)
     rng_path = os.path.join(state_dir, "rng.pt")
     if os.path.exists(rng_path):
         try:
@@ -305,8 +324,6 @@ def _load_state(state_dir, net, optimizer, device):
                 torch.cuda.set_rng_state_all(rng["cuda"])
         except Exception:
             logger.warning("[state] RNG restore failed; continuing with fresh RNG", exc_info=True)
-    with open(os.path.join(state_dir, "training_state.json"), encoding="utf-8") as f:
-        meta = json.load(f)
     return int(meta.get("epoch", 0)), int(meta.get("global_step", 0)), meta
 
 
@@ -333,9 +350,9 @@ def _preview_vram(tag, reset_peak=False):
 
 
 def _small_card_previews():
-    """Cards under 20 GB get the low-memory preview treatment: the training model parks on CPU for the VAE decode and
-    the preview canvas caps at 768 px. TAGSCRIBER_PREVIEW_LOWMEM=1/0 forces it; TAGSCRIBER_SIM_VRAM_GB simulates a
-    smaller card."""
+    """Cards under 20 GB get the low-memory preview treatment: the training model parks on CPU for the VAE decode,
+    and a family that says so (description.preview_small_card_cap: Krea 2, 768 px) renders on a smaller canvas.
+    TAGSCRIBER_PREVIEW_LOWMEM=1/0 forces it; TAGSCRIBER_SIM_VRAM_GB simulates a smaller card."""
     ov = os.environ.get("TAGSCRIBER_PREVIEW_LOWMEM", "").strip()
     if ov in ("0", "1"):
         return ov == "1"
@@ -820,10 +837,16 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     sample_width = sample_width or desc.preview_width
     sample_height = sample_height or desc.preview_height
     lowmem = _small_card_previews()
-    if lowmem and max(sample_width, sample_height) > 768:
-        sample_width, sample_height = _cap_canvas(sample_width, sample_height)
+    # the canvas cap was one model's memory fix (Krea 2); applied to every family it shrank previews a model renders
+    # badly at the smaller size. Only a family that declares a cap gets one; every small card still parks for the decode
+    small_cap = int(getattr(desc, "preview_small_card_cap", 0) or 0)
+    if lowmem and small_cap and max(sample_width, sample_height) > small_cap:
+        sample_width, sample_height = _cap_canvas(sample_width, sample_height, small_cap)
         logger.info(f"[sample] card under 20 GB: preview canvas capped to {sample_width}x{sample_height} and the "
                     f"model parks on CPU for the decode. TAGSCRIBER_PREVIEW_LOWMEM=0 turns this off.")
+    elif lowmem:
+        logger.info("[sample] card under 20 GB: the model parks on CPU for the preview decode; previews keep their "
+                    "size. TAGSCRIBER_PREVIEW_LOWMEM=0 turns this off.")
     device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     quant.apply_vram_cap()
     torch.manual_seed(seed)
@@ -1054,7 +1077,11 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         logger.warning("[adapter] no training adapter for this run")
     if context_lora_path:
         n = net.add_file(context_lora_path, CONTEXT, context_lora_strength)
-        driver.frozen_file_added(dit, context_lora_path, context_lora_strength, "context")
+        if n + int(driver.frozen_file_added(dit, context_lora_path, context_lora_strength, "context") or 0) == 0:
+            # it would otherwise train on as if the file were not there, and the result would not be what was asked
+            raise RuntimeError(f"The companion LoRA {os.path.basename(context_lora_path)} matched no "
+                               f"{desc.display_name} layers: is it a {desc.display_name} LoRA? Clear the Companion "
+                               f"LoRA box to train without it.")
         logger.info(f"[context] {os.path.basename(context_lora_path)} frozen + active at {context_lora_strength:g} "
                     f"({n} modules)")
     if speed_lora and encoded is not None:
@@ -1294,8 +1321,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 sd, prompts = ov["seed"], [ov["prompt"]]
                 if not ref_imgs:        # an edit keeps the reference's canvas: its latents are already encoded
                     w, h = ov["width"], ov["height"]
-                    if lowmem and max(w, h) > 768:
-                        w, h = _cap_canvas(w, h)
+                    if lowmem and small_cap and max(w, h) > small_cap:
+                        w, h = _cap_canvas(w, h, small_cap)
             except Exception:
                 logger.exception("[sample override] could not encode the override prompt - using the configured ones")
                 conds = encoded

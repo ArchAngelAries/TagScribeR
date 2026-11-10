@@ -231,6 +231,9 @@ class FamilyDescription:
     # rate choosing Fine-tune sets; ft_regularisation: a regularisation set of the broad class is offered (Fizgig
     # 8.7.3 families/description.py:404-408)
     finetune: bool = False
+    # on a card under 20 GB, previews render with their long side capped to this many pixels (0 = never: previews keep
+    # their size). One model's memory fix, so it is a family's to declare (Krea 2: 768)
+    preview_small_card_cap: int = 0
     ft_learning_rate: float = 1e-5
     ft_regularisation: bool = True
     # Multi Concept (several dataset folders, one subject each) and the Subjects card's DOP / Isolation are offered

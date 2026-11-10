@@ -97,9 +97,11 @@ class FamilyDriver:
         family that keeps its own cache layout maps its keys here."""
         return {k[len("cond__"):]: v.to(device) for k, v in batch.items() if k.startswith("cond__")}
 
-    def frozen_file_added(self, dit, path: str, strength: float, role: str) -> None:
+    def frozen_file_added(self, dit, path: str, strength: float, role: str) -> int:
         """A frozen LoRA file (role "adapter", "context" or "speed") has been added to the family LoRA. A family whose
-        LoRAs carry weights the family LoRA cannot wrap applies them here. Default: nothing."""
+        LoRAs carry weights the family LoRA cannot wrap applies them here and returns how many it applied (so a file
+        that matched nothing at all can be told from one that only had such weights). Default: nothing, 0."""
+        return 0
 
     # ---- room beside the training model (preview decode) -----------------------------------------------
     def park_for(self, dit, device, need_gb, purpose: str):

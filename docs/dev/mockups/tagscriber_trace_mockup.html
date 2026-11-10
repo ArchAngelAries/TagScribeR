@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TagScribeR - "Trace" look, design mockup</title>
+<style>
+/* Design mockup for docs/dev/UI_UX_REDESIGN.md. Made-up data only. No external requests.
+   Everything here is flat fills, 1 px lines, rounded rectangles, text and painted pictures:
+   all of it can be done with QSS, QPainter delegates and QPropertyAnimation in Qt widgets. */
+:root{
+  --app:#131518; --surface:#1b1e22; --raised:#23272c; --hover:#2b3036; --sunken:#0f1113; --overlay:#262b31;
+  --line:#2a2f36; --line-strong:#3d444d; --text:#e6e8eb; --text2:#a3abb4; --text3:#757d87;
+  --accent:#19b394; --accent-hover:#2cc9a8; --on-accent:#06110e; --accent-subtle:rgba(25,179,148,.15);
+  --ai:#a78bfa; --ai-subtle:rgba(167,139,250,.16);
+  --ok:#3fb950; --warn:#e3b341; --danger:#f7766f; --info:#58a6ff;
+  --warn-subtle:rgba(227,179,65,.14); --danger-subtle:rgba(247,118,111,.14); --info-subtle:rgba(88,166,255,.14);
+  --focus:#5eead4; --well:#0b0c0e; --shadow:0 10px 28px rgba(0,0,0,.45);
+  --ui:"Segoe UI","Segoe UI Variable","Noto Sans",system-ui,sans-serif;
+  --mono:"Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace;
+}
+html[data-theme="light"]{
+  --app:#e7eaee; --surface:#f5f6f8; --raised:#ffffff; --hover:#e7ebef; --sunken:#dde1e6; --overlay:#ffffff;
+  --line:#d8dde3; --line-strong:#b4bcc6; --text:#1b1f24; --text2:#525b65; --text3:#7a838d;
+  --accent:#0b7b65; --accent-hover:#0a6f5b; --on-accent:#ffffff; --accent-subtle:rgba(11,123,101,.12);
+  --ai:#6846d2; --ai-subtle:rgba(104,70,210,.11);
+  --ok:#17712f; --warn:#8a5a00; --danger:#bd1e2a; --info:#0860c8;
+  --warn-subtle:rgba(138,90,0,.11); --danger-subtle:rgba(189,30,42,.09); --info-subtle:rgba(8,96,200,.09);
+  --focus:#06483a; --well:#c9ced5; --shadow:0 10px 28px rgba(30,40,55,.20);
+}
+*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:5px;border:2px solid transparent;background-clip:content-box}::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}::-webkit-scrollbar-button{display:none}
+html,body{height:100%;margin:0}
+body{background:var(--app);color:var(--text);font:13px/1.4 var(--ui);overflow:hidden;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer}
+svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.num{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--mono);font-size:12px}
+.app{display:grid;grid-template-columns:72px 1fr;height:100vh;min-height:560px;min-width:760px}
+
+/* ---- navigation rail ---- */
+.rail{background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:stretch;padding:8px 6px;gap:2px}
+.brand{height:44px;display:grid;place-items:center;margin-bottom:6px;border:0;background:none;border-radius:8px}
+.brand:hover{background:var(--hover)}
+.brand svg{width:28px;height:28px}
+.nav{border:0;background:none;border-radius:8px;padding:7px 2px 6px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--text2);font-size:10.5px;line-height:1.15;position:relative;text-align:center}
+.nav svg.i{width:20px;height:20px}
+.nav:hover{background:var(--hover);color:var(--text)}
+.nav.on{background:var(--accent-subtle);color:var(--text)}
+.nav.on::before{content:"";position:absolute;left:-6px;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.nav.on svg.i{color:var(--accent)}
+.nav.off{opacity:.45;cursor:default}
+.nav.off:hover{background:none;color:var(--text2)}
+.nav .live{position:absolute;top:6px;right:15px;width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--surface)}
+.rail .grow{flex:1}
+.rail hr{border:0;border-top:1px solid var(--line);margin:6px 8px}
+.support{display:flex;flex-direction:column;gap:2px;margin-top:2px}
+.support button{border:0;background:none;color:var(--text3);font-size:10px;padding:4px 0;border-radius:6px;display:flex;gap:4px;align-items:center;justify-content:center}
+.support button:hover{background:var(--hover);color:var(--text)}
+.support svg.i{width:12px;height:12px}
+
+/* ---- top bar ---- */
+.main{display:grid;grid-template-rows:44px 1fr;min-width:0;min-height:0}
+.top{background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 12px;min-width:0}
+.ds{display:flex;align-items:center;gap:8px;border:1px solid transparent;background:none;border-radius:6px;padding:5px 8px;font-weight:600;white-space:nowrap}
+.ds:hover{background:var(--hover)}
+.ds small{font-weight:400;color:var(--text3)}
+.counts{display:flex;gap:6px;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--raised);border-radius:999px;padding:2px 9px;font-size:12px;color:var(--text2);white-space:nowrap}
+.chip b{color:var(--text);font-weight:600}
+.chip .dot{width:7px;height:7px;border-radius:50%}
+button.chip:hover{border-color:var(--line-strong);color:var(--text)}
+.cmd{flex:1 1 200px;max-width:420px;min-width:120px;margin:0 auto;height:28px;border:1px solid var(--line);background:var(--sunken);border-radius:6px;color:var(--text3);display:flex;align-items:center;gap:8px;padding:0 8px;overflow:hidden;white-space:nowrap}
+.cmd:hover{border-color:var(--line-strong)}
+.kbd{font:11px var(--mono);border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:4px;padding:0 5px;color:var(--text2);background:var(--raised);white-space:nowrap}
+.cmd .kbd{margin-left:auto}
+.iconbtn{width:28px;height:28px;border:1px solid transparent;border-radius:6px;background:none;display:grid;place-items:center;color:var(--text2);flex:none}
+.iconbtn:hover{background:var(--hover);color:var(--text)}
+.iconbtn[disabled]{opacity:.4}
+.btn{height:28px;border:1px solid var(--line-strong);background:var(--raised);border-radius:6px;padding:0 12px;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.btn:hover{background:var(--hover)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.btn.ghost{border-color:transparent;background:none;color:var(--text2)}
+.btn.ghost:hover{background:var(--hover);color:var(--text)}
+.btn.danger{border-color:var(--danger);color:var(--danger);background:none}
+.btn.danger:hover{background:var(--danger-subtle)}
+.btn.lg{height:36px;padding:0 18px;font-size:14px}
+.job{position:relative;display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border:1px solid var(--line);border-radius:6px;background:var(--raised);white-space:nowrap;overflow:hidden}
+.job:hover{border-color:var(--line-strong)}
+.job .bar{position:absolute;left:0;bottom:0;height:2px;background:linear-gradient(90deg,#6ee7a8,var(--accent) 55%,var(--ai))}
+.job .spin{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.job.ai .spin{background:var(--ai)}
+.job small{color:var(--text2)}
+.meters{display:flex;gap:10px;font-size:11px;color:var(--text2);white-space:nowrap}
+.meter{display:flex;flex-direction:column;gap:3px;min-width:92px}
+.meter i{display:block;height:4px;border-radius:2px;background:var(--sunken);position:relative;overflow:visible}
+.meter i b{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--text2)}
+.meter i u{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--text)}
+.meter.hot i b{background:var(--warn)}
+
+/* ---- views ---- */
+.view{display:none;min-height:0;min-width:0}
+.view.on{display:grid}
+.pane{background:var(--surface);min-width:0;min-height:0}
+.sect{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text3)}
+h2{font-size:15px;font-weight:600;margin:0}
+h3{font-size:13px;font-weight:600;margin:0}
+
+/* Gallery */
+#v-gallery{grid-template-columns:1fr 344px}
+.work{display:grid;grid-template-rows:auto 1fr auto;min-width:0;min-height:0;background:var(--sunken);position:relative}
+.fbar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border-bottom:1px solid var(--line);min-width:0}
+.filter{flex:1;min-width:140px;height:30px;border:1px solid var(--line-strong);border-radius:6px;background:var(--raised);display:flex;align-items:center;gap:6px;padding:0 6px 0 8px;overflow:hidden}
+.filter:focus-within{outline:2px solid var(--focus);outline-offset:-1px}
+.tok{font:12px var(--mono);background:var(--accent-subtle);color:var(--text);border-radius:4px;padding:1px 4px 1px 6px;display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
+.tok.neg{background:var(--danger-subtle)}
+.tok x{color:var(--text3);cursor:pointer}
+.filter input{flex:1;min-width:40px;border:0;background:none;color:var(--text);font:13px var(--ui);outline:0}
+.filter input::placeholder{color:var(--text3)}
+.seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:6px;overflow:hidden;background:var(--raised);flex:none}
+.seg button{border:0;background:none;height:28px;padding:0 10px;color:var(--text2);display:inline-flex;gap:6px;align-items:center;white-space:nowrap}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button:hover{background:var(--hover);color:var(--text)}
+.seg button.on{background:var(--accent-subtle);color:var(--text);font-weight:600}
+.gridwrap{overflow:auto;padding:10px 12px 76px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:10px}
+.card{position:relative;border-radius:8px;padding:3px;border:2px solid transparent;cursor:default}
+.card:hover{background:var(--hover)}
+.card.sel{border-color:var(--accent);background:var(--accent-subtle)}
+.card.cur{outline:2px solid var(--focus);outline-offset:2px}
+.thumb{aspect-ratio:1;border-radius:5px;background:var(--well);display:grid;place-items:center;overflow:hidden;position:relative}
+.pic{border-radius:2px}
+.card .nm{font-size:11px;color:var(--text3);margin:5px 3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .cap{font-size:12px;color:var(--text2);margin:1px 3px 3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:33px;line-height:1.36}
+.card .cap.none{color:var(--text3);font-style:italic}
+.check{position:absolute;top:8px;left:8px;width:18px;height:18px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:none;place-items:center}
+.check svg{width:12px;height:12px;stroke-width:2.4}
+.card.sel .check{display:grid}
+.marks{position:absolute;left:7px;bottom:7px;display:flex;gap:4px;flex-wrap:wrap}
+.mark{font:600 10px/1 var(--ui);letter-spacing:.02em;padding:3px 6px;border-radius:4px;background:rgba(10,11,13,.82);color:#e6e8eb;display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
+.mark::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--c,#a3abb4)}
+.mark.warn{--c:#e3b341}.mark.info{--c:#58a6ff}.mark.ai{--c:#a78bfa}.mark.bad{--c:#f7766f}
+.edited{position:absolute;top:9px;right:9px;width:9px;height:9px;border-radius:50%;background:#e3b341;box-shadow:0 0 0 2px rgba(10,11,13,.7)}
+.ring{position:absolute;inset:0;border:2px solid var(--ai);border-radius:5px}
+.selbar{position:absolute;left:50%;transform:translateX(-50%);bottom:40px;background:var(--overlay);border:1px solid var(--line-strong);border-radius:10px;box-shadow:var(--shadow);display:flex;align-items:center;gap:6px;padding:6px 8px 6px 14px;white-space:nowrap;max-width:calc(100% - 24px);overflow:hidden}
+.selbar b{margin-right:6px}
+.status{display:flex;gap:14px;align-items:center;padding:5px 12px;border-top:1px solid var(--line);background:var(--surface);color:var(--text3);font-size:12px;white-space:nowrap;overflow:hidden}
+.status .sp{flex:1}
+.insp{border-left:1px solid var(--line);display:grid;grid-template-rows:auto 1fr;min-height:0}
+.insp .tabs{display:flex;gap:2px;padding:8px 10px 0;border-bottom:1px solid var(--line)}
+.tab{border:0;background:none;color:var(--text2);padding:6px 9px 8px;border-bottom:2px solid transparent;display:inline-flex;gap:6px;align-items:center}
+.tab:hover{color:var(--text)}
+.tab.on{color:var(--text);border-bottom-color:var(--accent);font-weight:600}
+.ibody{overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.preview{background:var(--well);border-radius:8px;height:210px;display:grid;place-items:center;flex:none}
+.fileline{display:flex;gap:8px;align-items:center;color:var(--text2);font-size:12px;flex-wrap:wrap}
+.fileline b{color:var(--text);font-weight:600}
+.editor{border:1px solid var(--line-strong);background:var(--raised);border-radius:6px;padding:8px 10px;min-height:86px;line-height:1.5}
+.tm{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2)}
+.tm i{flex:1;height:4px;background:var(--sunken);border-radius:2px;position:relative}
+.tm i b{position:absolute;inset:0 auto 0 0;border-radius:2px;background:var(--accent)}
+.tags{display:flex;flex-wrap:wrap;gap:6px}
+.tag{border:1px solid var(--line-strong);border-radius:999px;padding:2px 6px 2px 10px;background:var(--raised);font-size:12px;display:inline-flex;gap:6px;align-items:center}
+.tag x{color:var(--text3)}
+.tag.trig{border-color:var(--accent);background:var(--accent-subtle)}
+.field{height:28px;border:1px solid var(--line-strong);background:var(--raised);border-radius:6px;padding:0 8px;color:var(--text3);display:flex;align-items:center}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px;color:var(--text2)}
+.kv b{color:var(--text);font-weight:400}
+
+/* Auto Caption */
+#v-caption{grid-template-columns:minmax(260px,1fr) minmax(420px,560px)}
+.queue{display:grid;grid-template-rows:auto 1fr;min-height:0;background:var(--sunken);min-width:0}
+.queue .grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.queue .card .cap{display:none}
+.state{position:absolute;right:7px;top:7px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:rgba(10,11,13,.82);color:#e6e8eb}
+.state svg{width:11px;height:11px;stroke-width:2.4}
+.state.done{background:var(--ai);color:#14101f}
+.state.fail{background:#f7766f;color:#1d0b0a}
+.card.dim .thumb{opacity:.55}
+.run{border-left:1px solid var(--line);display:grid;grid-template-rows:auto auto 1fr auto;min-height:0}
+.run .head{padding:14px 16px 10px;display:flex;flex-direction:column;gap:10px}
+.steps{display:flex;gap:6px;flex-wrap:wrap}
+.pbar{height:8px;border-radius:4px;background:var(--sunken);position:relative;overflow:hidden}
+.pbar b{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:4px}
+.pbar.ai b{background:var(--ai)}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:0 16px 12px}
+.tile{border:1px solid var(--line);background:var(--raised);border-radius:8px;padding:8px 10px;min-width:0}
+.tile span{display:block;font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile b{display:block;font-size:20px;font-weight:600;line-height:1.25;white-space:nowrap}
+.tile small{color:var(--text2);font-size:11px;white-space:nowrap}
+.feed{overflow:auto;border-top:1px solid var(--line);padding:6px 8px}
+.row{display:grid;grid-template-columns:52px 1fr auto;gap:10px;padding:8px;border-radius:8px;align-items:start}
+.row:hover{background:var(--hover)}
+.row .t{width:52px;height:52px;border-radius:5px;background:var(--well);display:grid;place-items:center;overflow:hidden}
+.row .n{font-size:11px;color:var(--text3);display:flex;gap:8px;align-items:center}
+.row p{margin:2px 0 0;color:var(--text);line-height:1.45}
+.row.live{background:var(--ai-subtle)}
+.caret{display:inline-block;width:7px;height:14px;background:var(--ai);vertical-align:-2px;margin-left:2px}
+.row .acts{display:flex;gap:2px}
+.pill{font-size:10.5px;font-weight:600;border-radius:999px;padding:1px 7px;border:1px solid currentColor}
+.pill.ai{color:var(--ai)}.pill.ok{color:var(--ok)}.pill.bad{color:var(--danger)}.pill.warn{color:var(--warn)}.pill.mute{color:var(--text3)}
+.foot{border-top:1px solid var(--line);padding:10px 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.foot small{color:var(--text3);flex:1;min-width:160px}
+
+/* Train dashboard */
+#v-train{grid-template-rows:auto 1fr;overflow:hidden}
+.rhead{background:var(--surface);border-bottom:1px solid var(--line);padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+.rtitle{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.rtitle .sp{flex:1}
+.stages{display:flex;align-items:center;gap:0;font-size:12px;color:var(--text2);flex-wrap:wrap}
+.stage{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.node{width:10px;height:10px;border-radius:50%;border:2px solid var(--line-strong);background:var(--surface)}
+.stage.done .node{background:var(--accent);border-color:var(--accent)}
+.stage.now .node{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-subtle)}
+.stage.now{color:var(--text);font-weight:600}
+.trace{width:34px;height:2px;background:var(--line-strong);margin:0 8px}
+.trace.done{background:var(--accent)}
+.t6{grid-template-columns:repeat(6,1fr);padding:0}
+.dash{overflow:auto;padding:12px;display:grid;gap:12px;grid-template-columns:minmax(0,1.7fr) minmax(300px,1fr);grid-auto-rows:min-content;background:var(--app)}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:10px;min-width:0}
+.box>header{display:flex;align-items:center;gap:8px;padding:10px 12px 0}
+.box>header .sp{flex:1}
+.box>div.b{padding:10px 12px 12px}
+.legend{display:flex;gap:12px;font-size:11px;color:var(--text2);flex-wrap:wrap}
+.legend i{display:inline-block;width:16px;height:0;border-top:2px solid var(--c);vertical-align:middle;margin-right:5px}
+.legend i.d{border-top-style:dashed}
+.chart{width:100%;height:250px;display:block;background:var(--sunken);border-radius:6px}
+.strip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.ep{border:2px solid transparent;border-radius:8px;padding:3px;min-width:0}
+.ep.on{border-color:var(--accent);background:var(--accent-subtle)}
+.ep .two{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+.ep .two div{aspect-ratio:1;border-radius:4px}
+.ep span{display:flex;justify-content:space-between;font-size:11px;color:var(--text2);padding:4px 2px 1px}
+.hard{display:grid;grid-template-columns:40px 1fr auto auto;gap:10px;align-items:center;padding:6px 4px;border-radius:6px}
+.hard:hover{background:var(--hover)}
+.hard .t{width:40px;height:40px;border-radius:5px}
+.hard small{color:var(--text3);display:block}
+.q{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:8px 4px;border-top:1px solid var(--line)}
+.q:first-child{border-top:0}
+.q small{color:var(--text3);display:block}
+.console{font:12px/1.5 var(--mono);color:var(--text2);background:var(--sunken);border-radius:6px;padding:8px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.span2{grid-column:1 / -1}
+
+/* First run */
+#v-start{place-items:center;overflow:auto;background:var(--app);padding:24px}
+.hero{width:min(820px,100%);display:flex;flex-direction:column;gap:22px;align-items:center;text-align:center}
+.hero h1{font-size:24px;font-weight:600;margin:0}
+.hero p{margin:0;color:var(--text2);max-width:560px}
+.drop{width:100%;border:1.5px dashed var(--line-strong);border-radius:12px;padding:26px 20px;background:var(--surface);display:flex;flex-direction:column;gap:14px;align-items:center}
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:0;width:100%;text-align:left}
+.stepc{padding:4px 16px;border-left:1px solid var(--line)}
+.stepc:first-child{border-left:0}
+.stepc .n{display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:4px}
+.stepc .n i{width:20px;height:20px;border-radius:50%;border:2px solid var(--accent);display:grid;place-items:center;font:600 11px var(--ui);font-style:normal;color:var(--accent)}
+.stepc p{font-size:12px;color:var(--text2)}
+.recent{width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px}
+.recent .r{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:7px 8px;border-radius:6px}
+.recent .r:hover{background:var(--hover)}
+.recent small{color:var(--text3)}
+.sys{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+
+/* ---- narrower windows ---- */
+@media (max-width:1280px){.meters{display:none}.counts .chip:nth-child(n+3){display:none}}
+@media (max-width:1100px){#v-gallery{grid-template-columns:1fr}#v-gallery .insp{display:none}.counts{display:none}
+  .dash{grid-template-columns:1fr}.t6{grid-template-columns:repeat(3,1fr)}
+  #v-caption{grid-template-columns:1fr}#v-caption .queue{display:none}}
+@media (max-width:900px){.cmd span{display:none}.ds small{display:none}.three{grid-template-columns:1fr}.stepc{border-left:0;border-top:1px solid var(--line);padding:10px 4px}
+  .tiles{grid-template-columns:repeat(2,1fr)}.t6{grid-template-columns:repeat(3,1fr)}.strip{grid-template-columns:repeat(2,1fr)}.fbar .seg.opt{display:none}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-grid" viewBox="0 0 20 20"><rect x="3" y="3" width="6" height="6" rx="1.2"/><rect x="11" y="3" width="6" height="6" rx="1.2"/><rect x="3" y="11" width="6" height="6" rx="1.2"/><rect x="11" y="11" width="6" height="6" rx="1.2"/></symbol>
+  <symbol id="i-cap" viewBox="0 0 20 20"><path d="M3.5 5.5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-3.5 3v-3a2 2 0 0 1-2-2z"/><path d="M7 7.5h6M7 10h4"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 20 20"><path d="M5 2.5v10.5a2 2 0 0 0 2 2h10.5M2.5 5h10.5a2 2 0 0 1 2 2v10.5"/></symbol>
+  <symbol id="i-stack" viewBox="0 0 20 20"><path d="M10 3l7 3.5-7 3.5-7-3.5z"/><path d="M3 10l7 3.5 7-3.5M3 13.5L10 17l7-3.5"/></symbol>
+  <symbol id="i-info" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6.3v.2"/></symbol>
+  <symbol id="i-train" viewBox="0 0 20 20"><path d="M3 16.5h14M3.5 13l3.5-4 3 2.5 3.5-6 3 3"/></symbol>
+  <symbol id="i-help" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="M7.9 8a2.2 2.2 0 1 1 3 2c-.6.3-.9.8-.9 1.5M10 14v.2"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 20 20"><path d="M4 6h5M13 6h3M4 14h3M11 14h5"/><circle cx="11" cy="6" r="2"/><circle cx="9" cy="14" r="2"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 20 20"><path d="M2.5 6a1.5 1.5 0 0 1 1.5-1.5h3.5l2 2H16A1.5 1.5 0 0 1 17.5 8v6.5A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 20 20"><circle cx="9" cy="9" r="5"/><path d="M13 13l4 4"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 20 20"><path d="M7 5L3.5 8.5 7 12"/><path d="M4 8.5h8a4 4 0 0 1 0 8H9"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 20 20"><path d="M13 5l3.5 3.5L13 12"/><path d="M16 8.5H8a4 4 0 0 0 0 8h3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 20 20"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></symbol>
+  <symbol id="i-x" viewBox="0 0 20 20"><path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/></symbol>
+  <symbol id="i-star" viewBox="0 0 20 20"><path d="M10 3l2.2 4.5 4.9.7-3.5 3.5.8 4.9L10 14.3l-4.4 2.3.8-4.9L2.9 8.2l4.9-.7z"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 20 20"><path d="M6 4v12M6 16l-2.5-2.5M6 16l2.5-2.5M11 6h6M11 10h4.5M11 14h3"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2"/><path d="M12.5 4v12"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 20 20"><path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h5l7.5 7.5-6.5 6.5L3 9.5z"/><circle cx="7" cy="7" r="1"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 20 20"><path d="M10 16.5S3.5 12.6 3.5 8.2A3.4 3.4 0 0 1 10 6.8a3.4 3.4 0 0 1 6.5 1.4c0 4.4-6.5 8.3-6.5 8.3z"/></symbol>
+  <symbol id="i-cup" viewBox="0 0 20 20"><path d="M4 7h10v4.5a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4zM14 8.5h1.5a2 2 0 0 1 0 4H14M7 3.5v1.5M10.5 3.5v1.5"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 20 20"><path d="M7 5v10M13 5v10"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 20 20"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5"/></symbol>
+  <symbol id="i-cam" viewBox="0 0 20 20"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H6l1.2-1.8h5.6L14 6h1.5A1.5 1.5 0 0 1 17 7.5v7A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5z"/><circle cx="10" cy="11" r="2.6"/></symbol>
+  <symbol id="i-save" viewBox="0 0 20 20"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3h7.5L16.5 6.5v9A1.5 1.5 0 0 1 15 17H5.5A1.5 1.5 0 0 1 4 15.5z"/><path d="M7 3v4h5M7 17v-5h6v5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.2"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 20 20"><path d="M7 4.5l8.5 5.5L7 15.5z"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 20 20"><path d="M5 10h.2M10 10h.2M15 10h.2" stroke-width="2.6"/></symbol>
+</defs></svg>
+
+<div class="app">
+  <!-- ============================== navigation rail ============================== -->
+  <nav class="rail" aria-label="Main">
+    <button class="brand" data-view="start" title="Start (the Gallery with no folder open)">
+      <svg viewBox="0 0 28 28" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6ee7a8"/><stop offset=".55" stop-color="#19b394"/><stop offset="1" stop-color="#a78bfa"/></linearGradient></defs>
+        <path d="M19.5 7.5L14 4.5l-7 4v5l7 3.5 7 3v-4.5" stroke="url(#lg)"/><path d="M8.5 20.5L14 23.5l7-4" stroke="url(#lg)"/>
+        <circle cx="19.5" cy="7.5" r="1.5" fill="#6ee7a8" stroke="none"/><circle cx="8.5" cy="20.5" r="1.5" fill="#a78bfa" stroke="none"/><circle cx="14" cy="13.5" r="1.4" fill="#19b394" stroke="none"/>
+      </svg>
+    </button>
+    <button class="nav on" data-view="gallery" title="Gallery (Ctrl+1)"><svg class="i"><use href="#i-grid"/></svg>Gallery</button>
+    <button class="nav" data-view="caption" title="Auto Caption (Ctrl+2)"><svg class="i"><use href="#i-cap"/></svg>Auto Caption</button>
+    <button class="nav off" title="Image Editor (Ctrl+3) - not in this mockup"><svg class="i"><use href="#i-edit"/></svg>Image Editor</button>
+    <button class="nav off" title="Datasets (Ctrl+4) - not in this mockup"><svg class="i"><use href="#i-stack"/></svg>Datasets</button>
+    <button class="nav off" title="Metadata (Ctrl+5) - not in this mockup"><svg class="i"><use href="#i-info"/></svg>Metadata</button>
+    <button class="nav" data-view="train" title="Train (Ctrl+6)"><svg class="i"><use href="#i-train"/></svg>Train<span class="live" id="trainlive"></span></button>
+    <div class="grow"></div>
+    <button class="nav off" title="Help Center (F1) - not in this mockup"><svg class="i"><use href="#i-help"/></svg>Help</button>
+    <button class="nav off" title="Settings (Ctrl+7) - not in this mockup"><svg class="i"><use href="#i-gear"/></svg>Settings</button>
+    <hr>
+    <div class="support">
+      <button title="Support TagScribeR's development on Patreon (opens your browser; nothing is sent from the app)"><svg class="i"><use href="#i-heart"/></svg>Patreon</button>
+      <button title="Buy the developer a coffee on Ko-fi (opens your browser; nothing is sent from the app)"><svg class="i"><use href="#i-cup"/></svg>Ko-fi</button>
+    </div>
+  </nav>
+
+  <div class="main">
+    <!-- ============================== top bar ============================== -->
+    <header class="top">
+      <button class="ds" id="ds" title="The open folder. Click for recent folders (Ctrl+O opens another)"><svg class="i"><use href="#i-folder"/></svg><span id="dsname">demo_dataset</span> <small id="dspath">D:\Datasets</small></button>
+      <div class="counts" id="counts">
+        <button class="chip" title="Show all images"><b class="num">1,284</b> images</button>
+        <button class="chip" title="Filter: missing:caption"><span class="dot" style="background:var(--warn)"></span><b class="num">37</b> no caption</button>
+        <button class="chip" title="Filter: is:unsaved"><span class="dot" style="background:var(--warn)"></span><b class="num">12</b> unsaved</button>
+      </div>
+      <button class="cmd" title="Command palette: every action, filter, setting and help topic"><svg class="i"><use href="#i-search"/></svg><span>Search or run a command</span><span class="kbd">Ctrl K</span></button>
+      <button class="iconbtn" id="undo" title="Undo: Add tag 'ohwx' (5)  Ctrl+Z"><svg class="i"><use href="#i-undo"/></svg></button>
+      <button class="iconbtn" id="redo" title="Redo  Ctrl+Y" disabled><svg class="i"><use href="#i-redo"/></svg></button>
+      <button class="btn primary" id="save" title="Save changed captions (Ctrl+S). Previous versions are backed up."><svg class="i"><use href="#i-save"/></svg>Save <span class="num">12</span></button>
+      <button class="job" id="job" title="Running jobs. Click to open the run."></button>
+      <div class="meters" title="Memory in use; the mark is the peak of this run. Click for the full strip.">
+        <div class="meter hot"><span>VRAM <b class="num" style="color:var(--text)">16.4</b> / 24 GB</span><i><b style="width:68%"></b><u style="left:74%"></u></i></div>
+        <div class="meter"><span>RAM <b class="num" style="color:var(--text)">19.2</b> / 64 GB</span><i><b style="width:30%"></b><u style="left:34%"></u></i></div>
+      </div>
+      <button class="iconbtn" id="theme" title="Mockup control: switch between the dark and the light theme"><svg class="i"><use href="#i-sun"/></svg></button>
+    </header>
+
+    <!-- ============================== (a) Gallery ============================== -->
+    <section class="view on" id="v-gallery">
+      <div class="work">
+        <div class="fbar">
+          <div class="filter" title="Filter language: tag:  -tag:  missing:  res:  ar:  flag:  (Ctrl+F)">
+            <svg class="i" style="color:var(--text3)"><use href="#i-search"/></svg>
+            <span class="tok">tag:scenery <x>&times;</x></span><span class="tok neg">-tag:blurry <x>&times;</x></span><span class="tok">res:&ge;800 <x>&times;</x></span>
+            <input placeholder="add a filter term" aria-label="Filter">
+          </div>
+          <button class="iconbtn" title="Saved filters for this folder"><svg class="i"><use href="#i-star"/></svg></button>
+          <button class="btn ghost" title="Sort order"><svg class="i"><use href="#i-sort"/></svg>Name</button>
+          <div class="seg opt" title="Thumbnail size (Ctrl + wheel)"><button>S</button><button class="on">M</button><button>L</button></div>
+          <div class="seg opt"><button class="on" title="Show caption text under the pictures">Captions</button><button title="Show size, megapixels and health marks on every picture">Details</button></div>
+          <button class="iconbtn" title="Show or hide the inspector (F4)"><svg class="i"><use href="#i-panel"/></svg></button>
+        </div>
+        <div class="gridwrap"><div class="grid" id="grid"></div></div>
+        <div class="selbar" id="selbar">
+          <b><span class="num" id="seln">5</span> selected</b>
+          <button class="btn"><svg class="i"><use href="#i-tag"/></svg>Add tag</button>
+          <button class="btn"><svg class="i"><use href="#i-cap"/></svg>Caption</button>
+          <button class="btn"><svg class="i"><use href="#i-stack"/></svg>Copy to collection</button>
+          <button class="btn ghost" title="Move to the Recycle Bin (Shift+Del)">Recycle Bin</button>
+          <button class="btn ghost" id="clearsel">Clear <span class="kbd">Esc</span></button>
+        </div>
+        <div class="status"><span>Showing <b class="num">164</b> of 1,284</span><span>sorted by name</span><span class="sp"></span><span class="mono">D:\Datasets\demo_dataset</span><span>Design mockup, made-up data</span></div>
+      </div>
+      <aside class="pane insp">
+        <div class="tabs">
+          <button class="tab on"><svg class="i"><use href="#i-info"/></svg>Inspect</button>
+          <button class="tab"><svg class="i"><use href="#i-stack"/></svg>Batch</button>
+          <button class="tab"><svg class="i"><use href="#i-tag"/></svg>Tags</button>
+          <button class="tab">Health <span class="pill warn">9</span></button>
+        </div>
+        <div class="ibody">
+          <div class="preview"><div class="pic" id="prev" style="width:92%;aspect-ratio:3/2"></div></div>
+          <div class="fileline"><b>green_hills_017.jpg</b><span class="num">1280 &times; 853</span><span class="num">1.09 MP</span><span class="num">68 KB</span></div>
+          <div class="editor">ohwx, hills, grass, blue sky, clouds, scenery, no humans, countryside, daylight</div>
+          <div class="tm"><span class="num">22 / 75 tokens</span><i><b style="width:29%"></b></i><span class="num">9 tags</span></div>
+          <div class="sect">Tags</div>
+          <div class="tags">
+            <span class="tag trig" title="The trigger word of this folder">ohwx <x>&times;</x></span><span class="tag">hills <x>&times;</x></span><span class="tag">grass <x>&times;</x></span><span class="tag">blue sky <x>&times;</x></span><span class="tag">clouds <x>&times;</x></span><span class="tag">scenery <x>&times;</x></span><span class="tag">no humans <x>&times;</x></span><span class="tag">countryside <x>&times;</x></span><span class="tag">daylight <x>&times;</x></span>
+          </div>
+          <div class="field">Add a tag and press Enter</div>
+          <div class="sect">This picture</div>
+          <div class="kv"><span>Health</span><b>no problems found</b><span>Bucket</span><b class="num">1216 &times; 832 (landscape 1.46), 3 pictures</b><span>Last run</span><b>learned normally (not a hard image)</b></div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- ============================== (b) Auto Caption, mid-run ============================== -->
+    <section class="view" id="v-caption">
+      <div class="queue">
+        <div class="fbar">
+          <div class="seg"><button title="Only the selected pictures">Selected <span class="num">12</span></button><button class="on">Shown <span class="num">480</span></button><button>No caption <span class="num">37</span></button><button>All <span class="num">1,284</span></button></div>
+          <span style="flex:1"></span>
+          <span class="chip"><span class="dot" style="background:var(--ai)"></span>proposal waiting</span>
+        </div>
+        <div class="gridwrap" style="padding-bottom:12px"><div class="grid" id="qgrid"></div></div>
+      </div>
+      <div class="pane run">
+        <div class="head">
+          <div class="rtitle"><h2>Captioning 480 pictures</h2><span class="pill ai">running</span><span class="sp" style="flex:1"></span><span class="num" style="color:var(--text2)">started 6:49 ago</span></div>
+          <div class="steps">
+            <span class="chip" title="Step 1: the model"><b>Model</b> local, demo-vlm-4b on GPU 0</span>
+            <span class="chip" title="Step 2: what to write"><b>Instructions</b> Detailed description, subject "ohwx" first</span>
+            <span class="chip" title="Step 3: where the text goes"><b>Output</b> proposals for review</span>
+          </div>
+          <div class="pbar ai"><b style="width:27.5%"></b></div>
+        </div>
+        <div class="tiles">
+          <div class="tile"><span>Done</span><b class="num">132 <small>/ 480</small></b><small>27 %</small></div>
+          <div class="tile"><span>Speed</span><b class="num">3.1 <small>s / picture</small></b><small class="num">19 pictures a minute</small></div>
+          <div class="tile"><span>Time left</span><b class="num">17:59</b><small>from the last 20 pictures</small></div>
+          <div class="tile"><span>Needs a look</span><b class="num">2 <small>failed</small></b><small>kept in the list below</small></div>
+        </div>
+        <div class="feed" id="feed"></div>
+        <div class="foot">
+          <button class="btn danger" title="Stops after the picture in progress. Finished captions are kept."><svg class="i"><use href="#i-stop"/></svg>Stop <span class="kbd">Esc</span></button>
+          <button class="btn"><svg class="i"><use href="#i-check"/></svg>Review 130 proposals</button>
+          <small>Each finished caption is saved as a proposal at once. Nothing replaces your captions until you accept it.</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== (c) Train dashboard, mid-run ============================== -->
+    <section class="view" id="v-train">
+      <div class="rhead">
+        <div class="rtitle">
+          <h2>my_lora</h2><span class="pill ok">training</span>
+          <span class="chip"><b>Krea 2</b></span><span class="chip" title="The preset this run started from">&#9670; Quick start (rank 8, adaptive LR)</span><span class="chip">16 pictures, trigger "ohwx"</span>
+          <span class="sp"></span>
+          <button class="btn" title="Render a preview after the next step"><svg class="i"><use href="#i-cam"/></svg>Sample now</button>
+          <button class="btn" title="Save a checkpoint after the next step"><svg class="i"><use href="#i-save"/></svg>Save now</button>
+          <button class="btn" title="Saves a resumable state at the end of this epoch"><svg class="i"><use href="#i-pause"/></svg>Pause after epoch</button>
+          <button class="btn danger" title="Stops now. Epochs already saved are kept."><svg class="i"><use href="#i-stop"/></svg>Stop</button>
+        </div>
+        <div class="stages">
+          <div class="stage done"><span class="node"></span>Checks</div><span class="trace done"></span>
+          <div class="stage done"><span class="node"></span>Latents cached</div><span class="trace done"></span>
+          <div class="stage done"><span class="node"></span>Captions cached</div><span class="trace done"></span>
+          <div class="stage now"><span class="node"></span>Training, epoch 9 of 30</div><span class="trace"></span>
+          <div class="stage"><span class="node"></span>Finished</div>
+        </div>
+        <div class="pbar"><b style="width:28.5%"></b></div>
+        <div class="tiles t6">
+          <div class="tile"><span>Epoch</span><b class="num">9 <small>/ 30</small></b></div>
+          <div class="tile"><span>Step</span><b class="num">171 <small>/ 600</small></b></div>
+          <div class="tile"><span>Time left</span><b class="num">21:27</b></div>
+          <div class="tile"><span>Speed</span><b class="num">3.02 <small>s / step</small></b></div>
+          <div class="tile"><span>Loss, smoothed</span><b class="num">0.1259</b></div>
+          <div class="tile"><span>Learning rate</span><b class="num">2.0e-4</b></div>
+        </div>
+      </div>
+      <div class="dash">
+        <div class="box">
+          <header><h3>Loss</h3><span class="sp"></span>
+            <div class="legend"><span><i style="--c:var(--text3)"></i>every step</span><span><i style="--c:var(--text)"></i>smoothed</span><span><i style="--c:var(--accent)"></i>epoch average</span><span><i class="d" style="--c:var(--warn)"></i>learning rate</span></div>
+          </header>
+          <div class="b"><svg class="chart" id="chart" viewBox="0 0 760 250" preserveAspectRatio="none"></svg>
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;color:var(--text2);font-size:12px">
+              <span class="chip">&#9650; epoch 4: learning rate up, loss still improving</span><span class="chip">&#9650; epoch 6: up again</span><span class="chip">&#9660; epoch 8: halved after two flat epochs</span>
+            </div>
+          </div>
+        </div>
+        <div class="box">
+          <header><h3>Hard images</h3><span class="pill warn">2 flagged</span><span class="sp"></span><button class="btn ghost">Open all</button></header>
+          <div class="b" id="hard"></div>
+        </div>
+        <div class="box">
+          <header><h3>Previews</h3><span style="color:var(--text3);font-size:12px">2 prompts, every 2 epochs</span><span class="sp"></span><button class="btn ghost">Compare epochs</button><button class="btn">Use epoch 8</button></header>
+          <div class="b"><div class="strip" id="strip"></div>
+            <div style="margin-top:8px;color:var(--text2);font-size:12px">Prompt 1: <span class="mono">ohwx, mountain lake at dawn, mist</span> &nbsp; Rendered with the base model, 28 steps. Companion LoRA: none.</div></div>
+        </div>
+        <div class="box">
+          <header><h3>Queue</h3><span class="sp"></span><button class="btn ghost">Add this recipe</button></header>
+          <div class="b">
+            <div class="q"><span class="num" style="color:var(--text3)">1</span><div><b>my_lora_style</b><small>Krea 2 &middot; &#9670; Style (rank 16, gentle LR) &middot; 40 epochs</small></div><button class="iconbtn"><svg class="i"><use href="#i-dots"/></svg></button></div>
+            <div class="q"><span class="num" style="color:var(--text3)">2</span><div><b>my_lora_r32</b><small>Krea 2 &middot; &#9670; Balanced (rank 32, full model) &middot; 30 epochs</small></div><button class="iconbtn"><svg class="i"><use href="#i-dots"/></svg></button></div>
+          </div>
+        </div>
+        <div class="box span2">
+          <header><h3>Recipe of this run</h3><span style="color:var(--text3);font-size:12px">frozen when the run started</span><span class="sp"></span><button class="btn ghost">Show all settings</button><button class="btn ghost">Open run folder</button></header>
+          <div class="b" style="display:flex;flex-direction:column;gap:10px">
+            <div class="steps"><span class="chip"><b>Rank</b> 8</span><span class="chip"><b>Epochs</b> 30</span><span class="chip"><b>Target</b> 0.25 MP, batch 1</span><span class="chip"><b>Adaptive LR</b> 2e-4 to 4e-4</span><span class="chip"><b>Track hard images</b> on</span><span class="chip"><b>Companion LoRA (frozen)</b> none</span><span class="chip"><b>Base</b> fp8</span></div>
+            <div class="console">[adaptive_lr] epoch 8: loss=0.1398 lr=2.00e-04 clip=0% | HOLD (loss improving, streak 1/2) &nbsp;&nbsp; [save] my_lora-000008.safetensors</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== (d) first run / empty ============================== -->
+    <section class="view" id="v-start">
+      <div class="hero">
+        <div>
+          <h1>Open a folder of pictures to begin</h1>
+          <p style="margin:8px auto 0">TagScribeR works inside your folder. Captions are plain text files beside the pictures, and nothing is written until you press Save.</p>
+        </div>
+        <div class="drop">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+            <button class="btn primary lg"><svg class="i"><use href="#i-folder"/></svg>Open folder <span class="kbd" style="background:none;border-color:currentColor;color:inherit">Ctrl O</span></button>
+            <button class="btn lg" data-view="gallery" title="Makes a small set of generated pictures on this PC to try every tool on">Try the demo pictures</button>
+          </div>
+          <small style="color:var(--text3)">or drop a folder anywhere in this window</small>
+        </div>
+        <div class="three">
+          <div class="stepc"><div class="n"><i>1</i>Curate</div><p>Browse thousands of pictures, filter with <span class="mono">tag:</span> and <span class="mono">missing:caption</span>, find duplicates and blurry shots.</p></div>
+          <div class="stepc"><div class="n"><i>2</i>Caption</div><p>Let a local model or your own server write captions. You review every change before it replaces anything.</p></div>
+          <div class="stepc"><div class="n"><i>3</i>Train</div><p>Train a LoRA on this PC with built-in presets, live previews and a list of the pictures the model finds hard.</p></div>
+        </div>
+        <div class="recent">
+          <div class="sect" style="padding:6px 8px 4px">Recent folders</div>
+          <div class="r" data-view="gallery"><svg class="i" style="color:var(--text3)"><use href="#i-folder"/></svg><div><b>demo_dataset</b> <small class="mono">D:\Datasets\demo_dataset</small></div><small class="num">1,284 pictures, 37 without caption</small></div>
+          <div class="r"><svg class="i" style="color:var(--text3)"><use href="#i-folder"/></svg><div><b>landscapes_v1</b> <small class="mono">D:\Datasets\Collections\landscapes_v1</small></div><small class="num">212 pictures, all captioned</small></div>
+          <div class="r"><svg class="i" style="color:var(--text3)"><use href="#i-folder"/></svg><div><b>night_scenes</b> <small class="mono">D:\Datasets\Collections\night_scenes</small></div><small class="num">96 pictures, 4 without caption</small></div>
+        </div>
+        <div class="sys">
+          <span class="chip"><span class="dot" style="background:var(--ok)"></span>GPU found: Example GPU, 24 GB</span>
+          <span class="chip"><span class="dot" style="background:var(--ok)"></span>AI runtime ready</span>
+          <span class="chip"><span class="dot" style="background:var(--text3)"></span>No server set up: nothing leaves this PC</span>
+          <button class="chip">Take the 2 minute tour</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+/* A little script: made-up data, painted placeholder pictures (CSS gradients only), view and theme switches. */
+(function(){
+  var $ = function(s, r){ return (r || document).querySelector(s); };
+  function rng(seed){ return function(){ seed |= 0; seed = seed + 0x6D2B79F5 | 0; var t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  var SKIES = [["#3c326e","#e18aa0","#ffd9b0"],["#2d4682","#8cafd7","#e1eef8"],["#101a3a","#27406e","#5b6fa0"],["#ff9e5e","#ffd08a","#fff0c8"],
+               ["#1b2a4a","#7a4b8c","#f08a6c"],["#4d86c6","#a9cdea","#eaf5fb"],["#243b34","#5c8f6a","#cfe6b8"],["#5a2a1a","#d9793a","#f6c98a"]];
+  var LANDS = [["#6b7fa8","#3a4a70","#1c2440"],["#4f9a52","#2f7a3f","#1d5a30"],["#c79a52","#a87535","#7a4f22"],["#2a2440","#1a1730","#0e0c1c"],
+               ["#3f7f8f","#2a5f73","#184356"],["#7a5c8c","#553d6a","#33244a"]];
+  function art(seed){
+    var r = rng(seed * 7919 + 13), s = SKIES[Math.floor(r() * SKIES.length)], l = LANDS[Math.floor(r() * LANDS.length)];
+    var sx = 15 + r() * 70, sy = 18 + r() * 34, layers = [];
+    for (var i = 2; i >= 0; i--) { var cx = r() * 100, w = 55 + r() * 60, h = 22 + i * 13 + r() * 12;
+      layers.push("radial-gradient(ellipse " + w.toFixed(0) + "% " + h.toFixed(0) + "% at " + cx.toFixed(0) + "% 104%, " + l[2 - i] + " 0 98%, transparent 100%)"); }
+    layers.reverse();
+    layers.push("radial-gradient(circle at " + sx.toFixed(0) + "% " + sy.toFixed(0) + "%, rgba(255,255,255,.95) 0 4%, rgba(255,240,200,.35) 5% 13%, transparent 26%)");
+    layers.push("linear-gradient(180deg, " + s[0] + ", " + s[1] + " 58%, " + s[2] + ")");
+    return layers.join(",");
+  }
+  var NAMES = ["alpine_dawn","aurora_peaks","bokeh_lights","city_dusk","desert_dunes","green_hills","lake_sunset","misty_peaks","pine_forest","starry_night","wave_bands","harbor_fog","canyon_noon","meadow_path","river_bend","snow_ridge"];
+  var CAPS = ["ohwx, mountain, scenery, dawn, pink sky, mist, no humans","ohwx, night sky, stars, moon, mountain, silhouette","ohwx, city, skyline, lit windows, dusk, no humans",
+              "Golden dunes under a hazy orange sun, long soft shadows.","ohwx, hills, grass, blue sky, clouds, countryside","ohwx, sunset, ocean, orange sky, reflection, horizon",
+              "Layers of blue mountains fade into cold mist.","ohwx, forest, pine trees, fog, dusk, silhouette","ohwx, river, valley, morning light, scenery"];
+  var RATIOS = ["4/3","3/2","1/1","3/4","16/9","2/3","4/3","3/2"];
+  function pic(seed, size){ var ar = RATIOS[seed % RATIOS.length], p = ar.split("/"), wide = (+p[0]) >= (+p[1]);
+    return '<div class="pic" style="' + (wide ? "width:" : "height:") + (size || 100) + '%;aspect-ratio:' + ar + ';background:' + art(seed) + '"></div>'; }
+  var CHECK = '<span class="check"><svg class="i"><use href="#i-check"/></svg></span>';
+
+  /* (a) the grid */
+  var grid = $("#grid"), SEL = {2:1, 5:1, 6:1, 11:1, 17:1}, MARK = {3:'<span class="mark warn">no caption</span>', 8:'<span class="mark info">similar</span>', 9:'<span class="mark info">similar</span>',
+      14:'<span class="mark warn">soft</span>', 20:'<span class="mark ai">proposal</span>', 23:'<span class="mark warn">no caption</span>', 27:'<span class="mark bad">hard image</span>', 31:'<span class="mark info">duplicate</span>'};
+  var html = "";
+  for (var i = 0; i < 60; i++) {
+    var nm = NAMES[i % NAMES.length] + "_" + ("00" + (i * 3 + 4)).slice(-3) + (i % 3 ? ".jpg" : ".png"), none = (i === 3 || i === 23);
+    html += '<div class="card' + (SEL[i] ? " sel" : "") + (i === 5 ? " cur" : "") + '" data-i="' + i + '"><div class="thumb">' + pic(i + 3) + CHECK +
+            (i === 6 || i === 12 ? '<span class="edited" title="Edited, not saved"></span>' : "") + '<div class="marks">' + (MARK[i] || "") + '</div></div>' +
+            '<div class="nm">' + nm + '</div><div class="cap' + (none ? " none" : "") + '">' + (none ? "no caption yet" : CAPS[i % CAPS.length]) + '</div></div>';
+  }
+  grid.innerHTML = html;
+  $("#prev").style.background = art(8);
+  function countSel(){ var n = grid.querySelectorAll(".card.sel").length; $("#seln").textContent = n; $("#selbar").style.display = n ? "flex" : "none"; }
+  grid.addEventListener("click", function(e){ var c = e.target.closest(".card"); if (!c) return; c.classList.toggle("sel");
+    var cur = grid.querySelector(".cur"); if (cur) cur.classList.remove("cur"); c.classList.add("cur"); countSel(); });
+  $("#clearsel").addEventListener("click", function(){ grid.querySelectorAll(".card.sel").forEach(function(c){ c.classList.remove("sel"); }); countSel(); });
+
+  /* (b) the caption queue and the live feed */
+  var q = "";
+  for (var j = 0; j < 72; j++) {
+    var st = j < 34 ? (j === 9 || j === 21 ? "fail" : "done") : (j < 36 ? "work" : "queue");
+    q += '<div class="card' + (st === "queue" ? " dim" : "") + '"><div class="thumb">' + pic(j + 40) + (st === "work" ? '<span class="ring"></span>' : "") +
+         (st === "done" ? '<span class="state done" title="Proposal written"><svg class="i"><use href="#i-check"/></svg></span>' : st === "fail" ? '<span class="state fail" title="Failed"><svg class="i"><use href="#i-x"/></svg></span>' : "") +
+         '</div><div class="nm">' + NAMES[j % NAMES.length] + "_" + ("00" + (j + 101)).slice(-3) + '.jpg</div></div>';
+  }
+  $("#qgrid").innerHTML = q;
+  var FEED = [
+    ["river_bend_134.jpg", "live", "ohwx, a slow river bends through a green valley under a pale morning sky, mist over the far bank, a line of pines along"],
+    ["river_bend_133.jpg", "live", "ohwx, a wide river with a gravel bar in the foreground,"],
+    ["snow_ridge_132.jpg", "new", "ohwx, a snow covered ridge under a deep blue sky, wind-blown snow along the crest, long shadows from a low sun, no people."],
+    ["canyon_noon_131.jpg", "new", "ohwx, a red rock canyon at noon, layered sandstone walls, a dry river bed, hard light and short shadows."],
+    ["harbor_fog_130.jpg", "bad", "The server did not answer in 60 s. Tried twice. The picture stays in the queue; use Retry failed when the run ends."],
+    ["meadow_path_129.jpg", "ok", "ohwx, a narrow path through a summer meadow, tall grass, scattered wildflowers, soft clouds, late afternoon light."],
+    ["pine_forest_128.jpg", "new", "ohwx, a pine forest in fog at dusk, dark trunks fading into grey, a faint warm glow near the ground."]
+  ], f = "";
+  FEED.forEach(function(r, k){
+    var tag = r[1] === "live" ? '<span class="pill ai">writing</span>' : r[1] === "bad" ? '<span class="pill bad">failed</span>' : r[1] === "ok" ? '<span class="pill ok">accepted</span>' : '<span class="pill mute">proposal</span>';
+    var acts = r[1] === "new" ? '<button class="iconbtn" title="Accept (A)"><svg class="i"><use href="#i-check"/></svg></button><button class="iconbtn" title="Reject (R)"><svg class="i"><use href="#i-x"/></svg></button>' :
+               r[1] === "bad" ? '<button class="btn ghost">Retry</button>' : "";
+    f += '<div class="row' + (r[1] === "live" ? " live" : "") + '"><div class="t">' + pic(k + 90, 100) + '</div><div><div class="n"><b style="color:var(--text2)">' + r[0] + '</b>' + tag + '</div><p' +
+         (r[1] === "bad" ? ' style="color:var(--text2)"' : "") + '>' + r[2] + (r[1] === "live" ? '<span class="caret"></span>' : "") + '</p></div><div class="acts">' + acts + '</div></div>';
+  });
+  $("#feed").innerHTML = f;
+
+  /* (c) the loss chart (inline SVG), previews and hard images */
+  (function(){
+    var W = 760, H = 250, L = 46, R = 50, T = 14, B = 26, r = rng(42), n = 171, raw = [], sm = [], a = null, lo = 0.09, hi = 0.27, maxStep = 180;
+    for (var s = 1; s <= n; s++) { var v = 0.118 + 0.105 * Math.exp(-s / 62) + (r() - 0.5) * 0.045; raw.push(v); a = a === null ? v : 0.9 * a + 0.1 * v; sm.push(a); }
+    var X = function(s){ return L + (W - L - R) * s / maxStep; }, Y = function(v){ return T + (H - T - B) * (1 - (v - lo) / (hi - lo)); };
+    var LRS = [2.83, 2.83, 2.83, 3.54, 3.54, 4.0, 4.0, 2.0, 2.0], YL = function(v){ return T + (H - T - B) * (1 - (v - 1.6) / (4.4 - 1.6)); };
+    var o = "", k;
+    for (k = 0; k <= 4; k++) { var gv = lo + (hi - lo) * k / 4, gy = Y(gv); o += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + gy + '" y2="' + gy + '" stroke="var(--line)" />' +
+        '<text x="' + (L - 6) + '" y="' + (gy + 4) + '" text-anchor="end" fill="var(--text3)" font-size="11">' + gv.toFixed(3) + '</text>'; }
+    for (k = 0; k < 9; k++) { var ex = X(k * 20); o += '<line x1="' + ex + '" x2="' + ex + '" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--line)" stroke-dasharray="2 4"/>' +
+        '<text x="' + (ex + 3) + '" y="' + (H - 9) + '" fill="var(--text3)" font-size="11">e' + (k + 1) + '</text>'; }
+    var lr = "M" + X(0) + " " + YL(LRS[0]);
+    for (k = 0; k < 9; k++) { lr += " L" + X(k * 20) + " " + YL(LRS[k]) + " L" + X(Math.min((k + 1) * 20, n)) + " " + YL(LRS[k]); }
+    o += '<path d="' + lr + '" fill="none" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="5 4"/>';
+    o += '<text x="' + (W - R + 6) + '" y="' + (YL(4.0) + 4) + '" fill="var(--warn)" font-size="11">4.0e-4</text><text x="' + (W - R + 6) + '" y="' + (YL(2.0) + 4) + '" fill="var(--warn)" font-size="11">2.0e-4</text>';
+    var p1 = "", p2 = "";
+    raw.forEach(function(v, i2){ p1 += (i2 ? " L" : "M") + X(i2 + 1).toFixed(1) + " " + Y(v).toFixed(1); p2 += (i2 ? " L" : "M") + X(i2 + 1).toFixed(1) + " " + Y(sm[i2]).toFixed(1); });
+    o += '<path d="' + p1 + '" fill="none" stroke="var(--text3)" stroke-width="1" opacity=".55"/><path d="' + p2 + '" fill="none" stroke="var(--text)" stroke-width="2"/>';
+    for (k = 0; k < 8; k++) { var seg = raw.slice(k * 20, k * 20 + 20), m = seg.reduce(function(x, y){ return x + y; }, 0) / seg.length;
+      o += '<circle cx="' + X(k * 20 + 10) + '" cy="' + Y(m) + '" r="3.5" fill="var(--accent)"/>'; }
+    [[60, "\u25B2"], [100, "\u25B2"], [140, "\u25BC"]].forEach(function(mk){ o += '<text x="' + (X(mk[0]) - 5) + '" y="' + (T + 11) + '" fill="var(--warn)" font-size="12">' + mk[1] + '</text>'; });
+    var hx = X(152), hy = Y(sm[151]);
+    o += '<line x1="' + hx + '" x2="' + hx + '" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--text2)" stroke-dasharray="1 3"/><circle cx="' + hx + '" cy="' + hy + '" r="4" fill="var(--surface)" stroke="var(--text)" stroke-width="2"/>' +
+         '<rect x="' + (hx - 196) + '" y="' + (T + 20) + '" width="188" height="42" rx="6" fill="var(--overlay)" stroke="var(--line-strong)"/>' +
+         '<text x="' + (hx - 186) + '" y="' + (T + 37) + '" fill="var(--text)" font-size="12" font-weight="600">step 152, epoch 8</text>' +
+         '<text x="' + (hx - 186) + '" y="' + (T + 53) + '" fill="var(--text2)" font-size="11">loss ' + raw[151].toFixed(4) + ', smoothed ' + sm[151].toFixed(4) + '</text>';
+    var nx = X(n); o += '<line x1="' + nx + '" x2="' + nx + '" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--accent)"/><text x="' + (nx + 5) + '" y="' + (H - B - 6) + '" fill="var(--accent)" font-size="11">now</text>';
+    $("#chart").innerHTML = o;
+  })();
+  var st = "";
+  [2, 4, 6, 8].forEach(function(e, k){ st += '<div class="ep' + (e === 8 ? " on" : "") + '"><div class="two"><div style="background:' + art(200 + k) + ';opacity:' + (0.55 + k * 0.15) + '"></div><div style="background:' + art(300 + k) + ';opacity:' + (0.55 + k * 0.15) +
+        '"></div></div><span><b>epoch ' + e + '</b><span class="num">loss ' + [0.1862, 0.1612, 0.1489, 0.1398][k].toFixed(4) + '</span></span></div>'; });
+  $("#strip").innerHTML = st;
+  var hd = "";
+  [["city_dusk_040.jpg", "stuck", "bad", "+0.0312", "0.50", "harder than the rest and not improving"], ["misty_peaks_022.jpg", "suspect", "warn", "+0.0187", "0.70", "unusually high loss, check the caption"],
+   ["desert_dunes_013.jpg", "exhausted", "mute", "+0.0091", "0.80", "learned early, then stopped improving"], ["bokeh_lights_007.jpg", "learning", "mute", "+0.0042", "1.00", "hard but still improving"]].forEach(function(h, k){
+    hd += '<div class="hard"><div class="t" style="background:' + art(400 + k) + '"></div><div><b>' + h[0] + '</b><small>' + h[5] + '</small></div><span class="pill ' + h[2] + '">' + h[1] +
+          '</span><span class="num" style="color:var(--text2);font-size:12px;text-align:right">' + h[3] + '<small>LR &times; ' + h[4] + '</small></span></div>'; });
+  $("#hard").innerHTML = hd + '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn">Fix captions</button><span style="color:var(--text3);font-size:12px;align-self:center">A fixed caption is picked up at the next epoch.</span></div>';
+
+  /* the shell: views, the global job chip, theme */
+  var JOBS = {
+    train: '<span class="spin"></span><b>Training</b><small class="num">epoch 9 / 30 &middot; 21:27 left</small><span class="bar" style="width:28.5%"></span>',
+    caption: '<span class="spin"></span><b>Captioning</b><small class="num">132 / 480 &middot; 17:59 left</small><span class="bar" style="width:27.5%"></span>'
+  };
+  function show(v){
+    document.querySelectorAll(".view").forEach(function(s){ s.classList.toggle("on", s.id === "v-" + v); });
+    document.querySelectorAll(".rail [data-view]").forEach(function(b){ if (b.classList.contains("nav")) b.classList.toggle("on", b.dataset.view === v || (v === "start" && false)); });
+    var start = v === "start", job = $("#job");
+    job.style.display = start ? "none" : "flex";
+    job.className = "job" + (v === "caption" ? " ai" : "");
+    job.innerHTML = v === "caption" ? JOBS.caption : JOBS.train;
+    $("#trainlive").style.display = (start || v === "caption") ? "none" : "block";
+    $("#counts").style.display = start ? "none" : "";
+    $("#save").style.display = start ? "none" : "";
+    $("#undo").style.display = $("#redo").style.display = start ? "none" : "";
+    $("#dsname").textContent = start ? "No folder open" : "demo_dataset";
+    $("#dspath").textContent = start ? "" : "D:\\Datasets";
+    document.querySelector(".meters").style.visibility = start ? "hidden" : "visible";
+  }
+  document.addEventListener("click", function(e){ var b = e.target.closest("[data-view]"); if (b) show(b.dataset.view); });
+  $("#job").addEventListener("click", function(){ show($("#job").classList.contains("ai") ? "caption" : "train"); });
+  $("#theme").addEventListener("click", function(){ var h = document.documentElement; h.dataset.theme = h.dataset.theme === "dark" ? "light" : "dark"; });
+  show("gallery"); countSel();
+})();
+</script>
+</body>
+</html>

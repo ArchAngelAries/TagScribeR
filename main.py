@@ -70,6 +70,9 @@ class MainWindow(QMainWindow):
         btn_help.clicked.connect(lambda: self.show_help("start"))
         sidebar_layout.addWidget(self.sidebar)
         sidebar_layout.addWidget(btn_help)
+        from tabs.support_bar import SupportBar
+        self.support_bar = SupportBar()          # Patreon / Ko-fi: small, always there, opens the browser only
+        sidebar_layout.addWidget(self.support_bar)
 
         self.stack = QStackedWidget()
         self.tab_gallery = GalleryTab()
@@ -176,6 +179,10 @@ class MainWindow(QMainWindow):
                      for name, q in ctx.project.filters().items()]
         cmds += [Command(title, lambda t=tid: self.show_help(t), "Help") for tid, (title, _g, _h) in TOPICS.items()]
         cmds.append(Command("Keyboard shortcuts", lambda: self.show_help("hotkeys"), "Help"))
+        from core.support import SUPPORT_LINKS
+        from tabs.support_bar import open_link
+        cmds += [Command(f"Support TagScribeR on {label}", lambda u=url: open_link(u), "Help",
+                         keywords="donate tip sponsor patreon ko-fi kofi") for _sid, label, url, _tip in SUPPORT_LINKS]
         return cmds
 
     def open_palette(self):

@@ -164,6 +164,10 @@ LEGACY_QSS = {
     "sidebar_help": "QPushButton { background-color: #2d3436; color: #aaa; border: none; padding: 15px;"
                     " text-align: left; }"
                     "QPushButton:hover { background-color: #333; color: white; }",
+    # the two small support links under Help (new with the buttons; quieter than Help itself)
+    "support_link": "QPushButton { background-color: #232323; color: #8a8a8a; border: none; padding: 5px 6px;"
+                    " font-size: 11px; }"
+                    "QPushButton:hover { background-color: #333; color: white; }",
     "preview": "background-color: #1a1a1a; border-radius: 6px; color: #777;",
     "preview_plain": "background-color: #1a1a1a; border-radius: 6px;",
     "text_current": "QTextBrowser { color: #bbb; background-color: #1e1e1e; }",

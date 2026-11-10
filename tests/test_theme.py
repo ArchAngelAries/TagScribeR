@@ -469,7 +469,7 @@ OLD_COLORS = {      # the literals of the painters, item colours and the help pa
 
 
 def test_legacy_qss_is_pinned_to_the_old_inline_styles():
-    assert set(theme.LEGACY_QSS) == set(OLD_QSS)
+    assert set(theme.LEGACY_QSS) - {"support_link"} == set(OLD_QSS)     # support_link came with the support buttons
     for key, old in OLD_QSS.items():
         assert _flat(theme.LEGACY_QSS[key]) == _flat(old), key
 

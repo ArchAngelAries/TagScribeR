@@ -25,6 +25,7 @@ NAMES = {
     "gallery": "mdi6.view-grid-outline", "caption": "mdi6.robot-outline", "editor": "mdi6.image-edit-outline",
     "datasets": "mdi6.folder-multiple-image", "metadata": "mdi6.information-outline", "camera": "mdi6.camera-outline", "settings": "mdi6.cog-outline", "train": "mdi6.school-outline",
     "help": "mdi6.help-circle-outline",
+    "patreon": "mdi6.patreon", "kofi": "mdi6.coffee-outline",       # the sidebar's support links
     # files / editing
     "open": "mdi6.folder-open-outline", "folder": "mdi6.folder-outline", "save": "mdi6.content-save-outline",
     "undo": "mdi6.undo", "redo": "mdi6.redo", "collection": "mdi6.package-variant-closed", "refresh": "mdi6.refresh",

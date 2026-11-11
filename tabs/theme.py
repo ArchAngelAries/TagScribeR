@@ -194,6 +194,7 @@ DEFAULT_MATERIAL = "dark_teal.xml"
 _current: Tokens = LEGACY
 _saved_palette: Any = None
 _notifier: Any = None
+_pending_qss: str | None = None      # a stylesheet apply(..., defer_stylesheet=True) is holding back
 
 
 # -- colour helpers ---------------------------------------------------------------------------------------------------
@@ -754,9 +755,13 @@ def _palette(t: Tokens):
     return pal
 
 
-def apply(app, name: str) -> None:
-    """Make `name` (a token theme) the application's look: Fusion style, a palette and the generated stylesheet."""
-    global _current, _saved_palette
+def apply(app, name: str, defer_stylesheet: bool = False) -> None:
+    """Make `name` (a token theme) the application's look: Fusion style, a palette and the generated stylesheet.
+
+    With `defer_stylesheet` only the palette and the token set are applied; call finish_deferred(app) once the
+    windows are built. (Qt re-resolves a stylesheet for every widget each time a finished sub-tree is put into a
+    layout, so applying it after construction is cheaper than before; the result is the same.)"""
+    global _current, _saved_palette, _pending_qss
     if not is_token_theme(name):                    # an unknown name (a newer or mistyped setting): the default look
         from tabs.settings import apply_theme
         apply_theme(DEFAULT_MATERIAL)
@@ -767,7 +772,21 @@ def apply(app, name: str) -> None:
     app.setStyle("Fusion")
     app.setPalette(_palette(t))
     _current = t
+    if defer_stylesheet:
+        _pending_qss = build_qss(t)
+        return
+    _pending_qss = None
     app.setStyleSheet(build_qss(t))
+    _after_change(app)
+
+
+def finish_deferred(app) -> None:
+    """Apply the stylesheet that apply(..., defer_stylesheet=True) held back (does nothing when none is pending)."""
+    global _pending_qss
+    if _pending_qss is None:
+        return
+    qss, _pending_qss = _pending_qss, None
+    app.setStyleSheet(qss)
     _after_change(app)
 
 
@@ -793,7 +812,8 @@ def set_legacy(app, theme_name: str | None = "") -> str:
     """Record that a qt_material theme is in force and give QPainter code and the styled widgets the colours they had.
     tabs.settings.apply_theme calls this, then sets the qt_material stylesheet of the name this returns (`theme_name`,
     or DEFAULT_MATERIAL when that is unknown, empty or None)."""
-    global _current
+    global _current, _pending_qss
+    _pending_qss = None
     theme_name = normalize_name(theme_name)
     if _saved_palette is not None:                 # back from a token theme: qt_material expects the stock palette
         app.setPalette(_saved_palette)

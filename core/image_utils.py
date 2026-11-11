@@ -1,11 +1,11 @@
 import base64
 import logging
+import math
 
-import cv2
 from io import BytesIO
 from PIL import Image, ImageOps
-from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage, QImageReader, QPixmap
+from PySide6.QtCore import QSize
 
 from core.image_ops import to_8bit
 
@@ -24,6 +24,7 @@ class ImageTooLarge(OSError):
 def cv2_to_qpixmap(cv_img):
     """Convert OpenCV BGR image to QPixmap."""
     if cv_img is None: return QPixmap()
+    import cv2          # imported here: it is only needed by this helper and costs start-up time
     # Convert BGR to RGB
     rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
     h, w, ch = rgb_image.shape
@@ -72,11 +73,76 @@ def _open_for_display(img, size):
     return img, (w, h)
 
 
+def _thumbnail_size(w: int, h: int, size) -> tuple[int, int]:
+    """The size Image.thumbnail gives a w x h picture for the box `size`: the same arithmetic (Pillow 12), so the Qt
+    path and the Pillow path end with the same pixel dimensions."""
+    x, y = (math.floor(v) for v in size)
+    if x >= w and y >= h:
+        return w, h
+
+    def round_aspect(number, key):
+        return max(min(math.floor(number), math.ceil(number), key=key), 1)
+
+    aspect = w / h
+    if x / y >= aspect:
+        x = round_aspect(y * aspect, key=lambda n: abs(aspect - n / y))
+    else:
+        y = round_aspect(x / aspect, key=lambda n: 0 if n == 0 else abs(aspect - x / n))
+    return x, y
+
+
+# What the Qt reader is trusted with: plain 8-bit pictures of these types (see _qt_load_qimage).
+_QT_MODES = ("RGB", "L", "RGBA")
+_QT_FORMATS = ("JPEG", "PNG", "WEBP")
+
+
+def _qt_load_qimage(path, size):
+    """Fast decode with Qt (a scaled read; the reader applies the EXIF orientation) for plain 8-bit JPEG, PNG and WebP
+    files. Returns (QImage, (orig_w, orig_h)) like the Pillow path, or None for anything else (16-bit, palette,
+    CMYK, animated, a colour profile, a gamma or a transparency key that Pillow and Qt could treat differently) or
+    when Qt gives another size than expected: the caller then uses the Pillow path. Raises ImageTooLarge like it."""
+    with Image.open(path) as img:
+        if (img.format not in _QT_FORMATS or img.mode not in _QT_MODES or getattr(img, "is_animated", False)
+                or "icc_profile" in img.info or "gamma" in img.info or "transparency" in img.info):
+            return None
+        w, h = img.size
+        img.draft("RGB", (size[0] * 2, size[1] * 2))          # JPEG only; its reduced size is what the guard counts
+        dw, dh = img.size
+        if dw * dh > MAX_THUMBNAIL_PIXELS:
+            raise ImageTooLarge(f"Image is {w}×{h} ({w * h / 1e6:.0f} Mpx), too large to preview")
+        orientation = img.getexif().get(0x0112, 1)
+    swap = orientation in (5, 6, 7, 8)
+    if swap:
+        w, h, dw, dh = h, w, dh, dw                           # the sizes once the picture is upright
+    tw, th = _thumbnail_size(dw, dh, size)                    # Pillow works on the drafted picture, so do the same
+    reader = QImageReader(str(path))
+    reader.setAutoTransform(True)
+    if (tw, th) != (w, h):
+        reader.setScaledSize(QSize(th, tw) if swap else QSize(tw, th))   # scaled before the reader turns it upright
+    qimg = reader.read()
+    if qimg.isNull() or (qimg.width(), qimg.height()) != (tw, th):
+        return None
+    return qimg.convertToFormat(QImage.Format_RGBA8888), (w, h)
+
+
 def load_qimage(path, size=(300, 300)):
     """Upright, downscaled QImage for display; returns (QImage, (orig_w, orig_h)). Thread-safe.
 
     Raises ImageTooLarge instead of decoding an image above MAX_THUMBNAIL_PIXELS.
     """
+    try:
+        fast = _qt_load_qimage(path, size)
+    except ImageTooLarge:
+        raise
+    except Exception:
+        fast = None                     # anything unusual: the Pillow path below decides
+    if fast is not None:
+        return fast
+    return _pillow_load_qimage(path, size)
+
+
+def _pillow_load_qimage(path, size):
+    """The Pillow decode path: handles every format and mode, and is the reference the Qt path is tested against."""
     with Image.open(path) as img:
         img, orig = _open_for_display(img, size)
         return pil_to_qimage(img), orig

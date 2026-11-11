@@ -9,6 +9,7 @@ selection, filter, zoom) over the shared model.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -27,6 +28,81 @@ log = logging.getLogger(__name__)
 
 # Per-image job states shown as card badges.
 JOB_QUEUED, JOB_WORKING, JOB_FAILED = "queued", "working", "failed"
+
+
+# A folder with more pictures than this is checked for changed captions on a worker thread.
+ASYNC_SCAN_ROWS = 2000
+_UNKNOWN = object()             # a caption file whose state was never recorded: always re-read
+
+
+def _caption_snapshot(dirs, ext: str) -> dict:
+    """{directory: {normalised file name: (mtime_ns, size)} or None when unreadable}: one directory pass that lists
+    every file ending in the caption extension. Plain data in and out, so it can run on a worker thread."""
+    norm_ext = os.path.normcase(ext)
+    out: dict = {}
+    for d in dirs:
+        files: dict | None = {}
+        try:
+            with os.scandir(d) as it:
+                for de in it:
+                    name = os.path.normcase(de.name)
+                    if not name.endswith(norm_ext):
+                        continue
+                    try:
+                        if de.is_file():
+                            st = de.stat()
+                            files[name] = (st.st_mtime_ns, st.st_size)
+                    except OSError:
+                        continue
+        except OSError:
+            files = None
+        out[d] = files
+    return out
+
+
+def _caption_items(session: DatasetSession) -> list[tuple[str, str, str]]:
+    """(image key, its directory, normalised caption file name) for every entry."""
+    ext = session.caption_ext
+    return [(e.key, str(e.path.parent), os.path.normcase(caption_io.caption_path(e.path, ext).name))
+            for e in session.entries]
+
+
+def _changed_captions(items, sigs: dict, ext: str) -> list[tuple[str, object]]:
+    """[(key, current signature or None)] for every caption file that differs from the recorded signature
+    (changed, appeared or disappeared). A directory that cannot be listed is skipped: nothing is assumed about it."""
+    snapshot = _caption_snapshot({d for _k, d, _n in items}, ext)
+    changed = []
+    for key, d, name in items:
+        files = snapshot.get(d)
+        if files is None:
+            continue
+        now = files.get(name)
+        if sigs.get(key, _UNKNOWN) != now:
+            changed.append((key, now))
+    return changed
+
+
+class _ScanSignals(QObject):
+    result = Signal(int, list)  # generation, [(key, signature)]
+
+
+class _CaptionScan(QRunnable):
+    """Looks for caption files that changed on disk (dates and sizes only) without touching the model or any widget."""
+
+    def __init__(self, items, sigs: dict, ext: str, generation: int, signals: _ScanSignals):
+        super().__init__()
+        self.items, self.sigs, self.ext, self.generation, self.signals = items, sigs, ext, generation, signals
+
+    def run(self):
+        try:
+            changed = _changed_captions(self.items, self.sigs, self.ext)
+        except Exception as e:                      # never leave the owner waiting for a result
+            log.warning("Caption check failed: %s", e)
+            changed = []
+        try:
+            self.signals.result.emit(self.generation, changed)
+        except RuntimeError:
+            pass  # app shutting down
 
 
 class _InfoSignals(QObject):
@@ -85,6 +161,15 @@ class WorkspaceContext(QObject):
         self._info_signals.batch.connect(self._on_info_batch)
         self._info_pool = QThreadPool(self)
         self._info_pool.setMaxThreadCount(1)
+        # What the caption files looked like when each caption was last read, to find the ones that changed later
+        # without reading them all again (see pick_up_external_changes).
+        self._cap_sigs: dict[str, object] = {}
+        self._cap_items: list[tuple[str, str, str]] = []
+        self._scan_signals = _ScanSignals()
+        self._scan_signals.result.connect(self._on_caption_scan)
+        self._scan_pool = QThreadPool(self)
+        self._scan_pool.setMaxThreadCount(1)
+        self._scan_busy = False
         self.loader.ready.connect(lambda key: self.model.refresh([key]))
         self.loader.dimensions.connect(self._on_dimensions)
 
@@ -117,8 +202,16 @@ class WorkspaceContext(QObject):
         return r == QMessageBox.Discard
 
     def open_folder(self, folder: str, recursive: bool = False, parent: QWidget | None = None) -> bool:
+        ext = self.cfg.get("caption.extension")
+        # Dates and sizes of the caption files, taken just before they are read: a file that changes in between is
+        # then seen as changed at the next check and read again, never missed.
         try:
-            session = DatasetSession.open(folder, recursive=recursive, caption_ext=self.cfg.get("caption.extension"))
+            dirs = [str(Path(dp)) for dp, _dn, _fn in os.walk(folder)] if recursive else [str(Path(folder))]
+            snapshot = _caption_snapshot(dirs, ext or caption_io.DEFAULT_CAPTION_EXT)
+        except Exception:
+            snapshot = {}
+        try:
+            session = DatasetSession.open(folder, recursive=recursive, caption_ext=ext)
         except OSError as e:
             if parent is not None:
                 QMessageBox.critical(parent, "Error", f"Failed to read folder:\n{e}")
@@ -132,6 +225,11 @@ class WorkspaceContext(QObject):
         self.project = Project(folder)
         self.session = session
         self.folder = folder
+        self._cap_items = _caption_items(session)
+        self._cap_sigs = {}
+        for key, d, name in self._cap_items:
+            files = snapshot.get(d)
+            self._cap_sigs[key] = _UNKNOWN if files is None else files.get(name)
         self.model.set_session(session)
         self.cfg.update({"ui.last_folder": folder, "ui.recursive_scan": recursive,
                          "ui.recent_folders": list(dict.fromkeys([folder] + self.cfg.get("ui.recent_folders", [])))[:10]})
@@ -223,10 +321,40 @@ class WorkspaceContext(QObject):
         return changed
 
     def pick_up_external_changes(self) -> None:
-        if self.session and not any(s == JOB_WORKING for s in self.job_state.values()):
-            n = len(self.reload_from_disk([e.key for e in self.session.entries]))
-            if n:
-                log.info("Picked up %d externally changed caption(s)", n)
+        """Re-read the captions that were changed, added or removed on disk since they were last read (an AI job, a
+        text editor). Finds them by date and size in one directory pass, on a worker thread when the folder is
+        large, and reads only those files. Entries with unsaved edits are never touched."""
+        if not self.session or any(s == JOB_WORKING for s in self.job_state.values()):
+            return
+        ext = self.session.caption_ext
+        if len(self._cap_items) <= ASYNC_SCAN_ROWS:
+            self._apply_caption_changes(self.generation, _changed_captions(self._cap_items, self._cap_sigs, ext))
+            return
+        if self._scan_busy:
+            return
+        self._scan_busy = True
+        self._scan_pool.start(_CaptionScan(self._cap_items, dict(self._cap_sigs), ext, self.generation,
+                                           self._scan_signals))
+
+    def _on_caption_scan(self, generation: int, changed: list) -> None:
+        self._scan_busy = False
+        self._apply_caption_changes(generation, changed)
+
+    def _apply_caption_changes(self, generation: int, changed: list) -> None:
+        if generation != self.generation or not self.session:
+            return                                  # another folder was opened while the check ran
+        if any(s == JOB_WORKING for s in self.job_state.values()):
+            return                                  # a job started meanwhile: it will reload what it wrote
+        todo = []
+        for key, sig in changed:
+            e = self.session.get(key)
+            if e is not None and not e.dirty:       # an unsaved edit stays, and the file is looked at again next time
+                todo.append((key, sig))
+        n = len(self.reload_from_disk([k for k, _s in todo]))
+        for key, sig in todo:
+            self._cap_sigs[key] = sig
+        if n:
+            log.info("Picked up %d externally changed caption(s)", n)
 
     def images_modified(self, keys: list[str]) -> None:
         """Pixels of these files changed on disk (e.g. overwritten by the editor): refresh

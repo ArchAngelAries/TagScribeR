@@ -30,6 +30,34 @@ class CardDelegate(QStyledItemDelegate):
         self._font.setPointSizeF(8.5)
         self._small = QFont()
         self._small.setPointSizeF(7.5)
+        # What painting would otherwise recompute for every card on every repaint: the font metrics, the elided texts
+        # and the width of the small badges. Each is valid for one pair of fonts and one card width (see _metrics).
+        self._fm = self._fm_small = None
+        self._fm_key = None
+        self._elided: dict[str, tuple] = {}        # row key -> (caption text, width, elided caption)
+        self._elided_names: dict[str, tuple] = {}  # row key -> (file name, width, elided name)
+        self._adv: dict[str, int] = {}             # badge text -> advance in the small font
+        self.cache_hits = self.cache_misses = 0    # for tests
+
+    def _metrics(self):
+        """(QFontMetrics of the caption font, of the small font), rebuilt when a font or the card width changed."""
+        key = (self._font.key(), self._small.key(), self.card_width)
+        if key != self._fm_key:
+            self._fm_key = key
+            self._fm, self._fm_small = QFontMetrics(self._font), QFontMetrics(self._small)
+            self._elided.clear()
+            self._elided_names.clear()
+            self._adv.clear()
+        return self._fm, self._fm_small
+
+    def _advance(self, text: str) -> int:
+        fm_small = self._metrics()[1]
+        w = self._adv.get(text)
+        if w is None:
+            if len(self._adv) > 2048:
+                self._adv.clear()
+            w = self._adv[text] = fm_small.horizontalAdvance(text)
+        return w
 
     def set_card_width(self, w: int) -> None:
         self.card_width = w
@@ -40,9 +68,10 @@ class CardDelegate(QStyledItemDelegate):
         self._small.setPointSizeF(7.5 * scale)
 
     def text_height(self) -> int:
+        fm, fm_small = self._metrics()
         if not self.show_captions:
-            return QFontMetrics(self._small).height() + 8
-        return QFontMetrics(self._font).lineSpacing() * self.TEXT_LINES + QFontMetrics(self._small).height() + 14
+            return fm_small.height() + 8
+        return fm.lineSpacing() * self.TEXT_LINES + fm_small.height() + 14
 
     def sizeHint(self, option, index) -> QSize:
         return QSize(self.card_width, self.card_width + self.text_height())
@@ -51,6 +80,7 @@ class CardDelegate(QStyledItemDelegate):
         e = index.data(ENTRY_ROLE)
         if e is None:
             return
+        fm, fm_small = self._metrics()
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
@@ -105,13 +135,12 @@ class CardDelegate(QStyledItemDelegate):
         if getattr(e, "flags", None):
             names = {"duplicate": "DUPLICATE", "similar": "SIMILAR", "blurry": "BLURRY", "lowres": "LOW-RES",
                      "crop": "CROP"}
-            fm = QFontMetrics(self._small)
             # pills sit on the row above the size badge and wrap upwards, so they never overlap it or each other
-            row = fm.height() + 8
+            row = fm_small.height() + 8
             x, y = thumb_rect.left() + 4, thumb_rect.bottom() - 2 * row + 2
             for f in sorted(e.flags):
                 label = names.get(f, f.upper())
-                w = fm.horizontalAdvance(label) + 14
+                w = self._advance(label) + 14
                 if x + w > thumb_rect.right() - 2 and x > thumb_rect.left() + 4:
                     x, y = thumb_rect.left() + 4, y - row
                 self._pill(painter, label, QColor(155, 89, 182, 220), x, y)
@@ -121,33 +150,52 @@ class CardDelegate(QStyledItemDelegate):
                      "review": "REVIEW"}.get(job, job.upper())
             color = {"working": QColor("#b7791f"), "queued": QColor(60, 60, 60, 220), "failed": MISSING,
                      "review": QColor("#00897b")}.get(job, SUBTLE)
-            fm = QFontMetrics(self._small)
-            self._pill(painter, label, color, thumb_rect.right() - fm.horizontalAdvance(label) - 14, thumb_rect.top() + 4)
+            self._pill(painter, label, color, thumb_rect.right() - self._advance(label) - 14, thumb_rect.top() + 4)
         if e.width:
             dims = f"{e.width}×{e.height}"
-            fm = QFontMetrics(self._small)
-            self._pill(painter, dims, QColor(0, 0, 0, 150), thumb_rect.right() - fm.horizontalAdvance(dims) - 14,
-                       thumb_rect.bottom() - fm.height() - 6)
+            self._pill(painter, dims, QColor(0, 0, 0, 150), thumb_rect.right() - self._advance(dims) - 14,
+                       thumb_rect.bottom() - fm_small.height() - 6)
 
         # Text
         y = thumb_rect.bottom() + 6
-        fm_small = QFontMetrics(self._small)
         painter.setPen(SUBTLE)
         painter.drawText(QRect(r.left() + 6, y, r.width() - 12, fm_small.height()), Qt.AlignLeft | Qt.AlignVCenter,
-                         fm_small.elidedText(e.name, Qt.ElideMiddle, r.width() - 12))
+                         self._elided_name(e, fm_small, r.width() - 12))
         if self.show_captions:
             y += fm_small.height() + 2
             painter.setFont(self._font)
             painter.setPen(TEXT if e.has_caption else SUBTLE)
-            fm = QFontMetrics(self._font)
             text_rect = QRect(r.left() + 6, y, r.width() - 12, fm.lineSpacing() * self.TEXT_LINES)
             painter.drawText(text_rect, Qt.TextWordWrap | Qt.AlignTop | Qt.AlignLeft,
-                             self._elide_lines(e.text.strip() or "—", fm, text_rect.width()))
+                             self._elided_caption(e, fm, text_rect.width()))
         painter.restore()
 
+    def _elided_caption(self, e, fm: QFontMetrics, width: int) -> str:
+        """The caption cut to the card, from the cache while the text, the card width and the fonts are unchanged."""
+        hit = self._elided.get(e.key)
+        if hit is not None and hit[1] == width and (hit[0] is e.text or hit[0] == e.text):
+            self.cache_hits += 1
+            return hit[2]
+        self.cache_misses += 1
+        if len(self._elided) > 8192:
+            self._elided.clear()
+        out = self._elide_lines(e.text.strip() or "—", fm, width)
+        self._elided[e.key] = (e.text, width, out)
+        return out
+
+    def _elided_name(self, e, fm_small: QFontMetrics, width: int) -> str:
+        hit = self._elided_names.get(e.key)
+        if hit is not None and hit[1] == width and hit[0] == e.name:
+            return hit[2]
+        if len(self._elided_names) > 8192:
+            self._elided_names.clear()
+        out = fm_small.elidedText(e.name, Qt.ElideMiddle, width)
+        self._elided_names[e.key] = (e.name, width, out)
+        return out
+
     def _pill(self, painter: QPainter, text: str, color: QColor, x: int, y: int) -> None:
-        fm = QFontMetrics(self._small)
-        rect = QRectF(x, y, fm.horizontalAdvance(text) + 10, fm.height() + 2)
+        fm = self._metrics()[1]
+        rect = QRectF(x, y, self._advance(text) + 10, fm.height() + 2)
         p = QPainterPath()
         p.addRoundedRect(rect, 4, 4)
         painter.fillPath(p, color)

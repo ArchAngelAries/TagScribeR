@@ -274,9 +274,10 @@ def main():
     icon = paths.resource("logo.ico") or paths.resource("logo.png")
     if icon:
         app.setWindowIcon(QIcon(str(icon)))
-    apply_theme(settings().get("ui.theme"))
+    apply_theme(settings().get("ui.theme"), defer_stylesheet=True)   # a token theme's stylesheet waits for the window
     preload_ai_runtime(app)
     window = MainWindow()
+    theme.finish_deferred(app)          # applied once to the finished window, not re-evaluated for every widget put in
     icons.apply_icons(window)
     theme.refresh_icons(window)         # a token theme recolours the icons just made; a qt_material one leaves them
     window.show()

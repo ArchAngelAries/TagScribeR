@@ -48,8 +48,12 @@ class DatasetBrowser(QWidget):
         self.ctx = ctx
         self.size_key = size_key
 
-        self.proxy = FilterProxy(self)
-        self.proxy.setSourceModel(ctx.model)
+        self._proxy = FilterProxy(self)
+        self._proxy.deferred = True          # not shown yet: rows are worked out when the browser is shown or read
+        self._proxy.setSourceModel(ctx.model)
+        self._status_pending = False
+        self._sel_timer = QTimer(self, singleShot=True, interval=0)    # one selection signal per burst
+        self._sel_timer.timeout.connect(self._flush_selection)
         self.delegate = CardDelegate(ctx.loader, self, job_state=ctx.job_state)
 
         lay = QVBoxLayout(self)
@@ -140,7 +144,7 @@ class DatasetBrowser(QWidget):
         lay.addLayout(bar2)
 
         self.view = QListView()
-        self.view.setModel(self.proxy)
+        self.view.setModel(self._proxy)
         self.view.setItemDelegate(self.delegate)
         self.view.setViewMode(QListView.IconMode)
         self.view.setResizeMode(QListView.Adjust)
@@ -177,6 +181,35 @@ class DatasetBrowser(QWidget):
         self._setup_hotkeys()
         if ctx.session is not None:
             self._on_session_changed()
+
+    # ------------------------------------------------------------------ hidden / shown
+    @property
+    def proxy(self) -> FilterProxy:
+        """The filtered, sorted rows. Reading them brings a browser that was hidden while the data changed up to date."""
+        self.ensure_fresh()
+        return self._proxy
+
+    @property
+    def is_stale(self) -> bool:
+        return self._proxy.stale
+
+    def ensure_fresh(self) -> None:
+        """Sort and filter now if the data (or the sort / filter) changed while this browser was hidden."""
+        if self._proxy.stale:
+            self._show_filter_errors(self._proxy.configure(
+                self.combo_sort.currentText(), self.btn_desc.isChecked(), self.inp_filter.text()))
+            self.update_status()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._proxy.deferred = False
+        self.ensure_fresh()
+        if self._status_pending:
+            self.update_status()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._proxy.deferred = True
 
     # ------------------------------------------------------------------ hotkeys
     def _setup_hotkeys(self):
@@ -220,15 +253,22 @@ class DatasetBrowser(QWidget):
 
     def _on_session_changed(self):
         self.chk_recursive.setChecked(self.ctx.cfg.get("ui.recursive_scan", False))
-        self._apply_sort(self.combo_sort.currentText())
-        self.apply_filter()
+        self._sel_timer.stop()
+        self._proxy.stale = True             # the model was reset: the rows of the new folder are not worked out yet
+        if not self._proxy.deferred:         # a hidden browser waits until it is shown or read
+            self.ensure_fresh()
+        else:
+            self._status_pending = True
         self.selection_changed.emit([])
 
     def _on_dimensions(self, _keys):
-        if self.proxy.query.needs_info or "flag:" in self.proxy.query_text or self.combo_sort.currentText() in ("Width", "Height", "Megapixels",
-                                                                             "Aspect ratio"):
-            self.proxy.invalidate()
-            self.update_status()
+        if self._proxy.query.needs_info or "flag:" in self._proxy.query_text or self.combo_sort.currentText() in (
+                "Width", "Height", "Megapixels", "Aspect ratio"):
+            self._proxy.invalidate()
+            if self._proxy.deferred:
+                self._proxy.stale = True
+            else:
+                self.update_status()
 
     # ------------------------------------------------------------------ view
     def _set_card_size(self, w: int):
@@ -251,7 +291,11 @@ class DatasetBrowser(QWidget):
         self._set_card_size(self.slider.value())
 
     def _apply_sort(self, name: str):
-        self.proxy.set_sort_mode(name, self.btn_desc.isChecked())
+        if self._proxy.deferred:
+            self._proxy.set_sort_mode(name, self.btn_desc.isChecked(), apply=False)
+            self._proxy.stale = True
+        else:
+            self._proxy.set_sort_mode(name, self.btn_desc.isChecked())
 
     def set_filter(self, text: str):
         self.inp_filter.setText(text)
@@ -288,18 +332,26 @@ class DatasetBrowser(QWidget):
             self.flash(f"Saved filter '{name.strip()}' for this folder.")
 
     def apply_filter(self, *_):
-        errors = self.proxy.set_query(self.inp_filter.text())
+        deferred = self._proxy.deferred
+        errors = self._proxy.set_query(self.inp_filter.text(), apply=not deferred)
+        if deferred:
+            self._proxy.stale = True
+        self._show_filter_errors(errors)
+        self.update_status()
+
+    def _show_filter_errors(self, errors: list[str]) -> None:
         self.inp_filter.setStyleSheet("QLineEdit { border: 1px solid #d63031; }" if errors else "")
         self.inp_filter.setToolTip(("\n".join(errors) + "\n\n" if errors else "") + QUERY_HELP)
-        self.update_status()
 
     # ------------------------------------------------------------------ selection
     def selected_keys(self) -> list[str]:
+        self.ensure_fresh()
         rows = sorted(self.view.selectionModel().selectedIndexes(), key=lambda i: i.row())
         return [i.data(KEY_ROLE) for i in rows]
 
     def shown_keys(self) -> list[str]:
-        return [self.proxy.index(r, 0).data(KEY_ROLE) for r in range(self.proxy.rowCount())]
+        self.ensure_fresh()
+        return [self._proxy.index(r, 0).data(KEY_ROLE) for r in range(self._proxy.rowCount())]
 
     def keys_for_scope(self, scope: str) -> list[str]:
         if not self.ctx.session:
@@ -309,10 +361,14 @@ class DatasetBrowser(QWidget):
         return self.shown_keys() if scope == "shown" else self.selected_keys()
 
     def _on_selection(self, *_):
+        self._sel_timer.start()             # a burst of selection changes (select_matching, a drag) makes one signal
+
+    def _flush_selection(self):
         self.selection_changed.emit(self.selected_keys())
         self.update_status()
 
     def select_all(self):
+        self.ensure_fresh()
         self.view.selectAll()
 
     def deselect_all(self):
@@ -320,25 +376,28 @@ class DatasetBrowser(QWidget):
 
     def toggle_select_all(self):
         """What Ctrl+A does in the grid: select every shown image, or deselect them all when all are selected."""
+        self.ensure_fresh()
         self._select_toggle.toggle()
 
     def select_matching(self, query: str):
+        self.ensure_fresh()
         q = compile_query(query)
         sel = self.view.selectionModel()
         sel.clearSelection()
-        for r in range(self.proxy.rowCount()):
-            idx = self.proxy.index(r, 0)
+        for r in range(self._proxy.rowCount()):
+            idx = self._proxy.index(r, 0)
             if q.predicate(idx.data(ENTRY_ROLE)):
                 sel.select(idx, QItemSelectionModel.Select)
 
     def select_keys(self, keys) -> int:
         """Select exactly these images (those currently shown); returns how many were selected."""
+        self.ensure_fresh()
         wanted = set(keys)
         sel = self.view.selectionModel()
         sel.clearSelection()
         first = None
-        for r in range(self.proxy.rowCount()):
-            idx = self.proxy.index(r, 0)
+        for r in range(self._proxy.rowCount()):
+            idx = self._proxy.index(r, 0)
             if idx.data(KEY_ROLE) in wanted:
                 sel.select(idx, QItemSelectionModel.Select)
                 first = first or idx
@@ -347,12 +406,13 @@ class DatasetBrowser(QWidget):
         return len(self.selected_keys())
 
     def navigate(self, step: int):
-        n = self.proxy.rowCount()
+        self.ensure_fresh()
+        n = self._proxy.rowCount()
         if not n:
             return
         cur = self.view.currentIndex()
         row = (cur.row() + step) % n if cur.isValid() else 0
-        idx = self.proxy.index(row, 0)
+        idx = self._proxy.index(row, 0)
         self.view.setCurrentIndex(idx)
         self.view.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect)
         self.view.scrollTo(idx)
@@ -425,8 +485,14 @@ class DatasetBrowser(QWidget):
             self.lbl_status.setText("Open a folder to start.")
             self.btn_save.setText("Save")
             return
-        st = s.stats()
-        shown, selected = self.proxy.rowCount(), len(self.view.selectionModel().selectedIndexes())
+        if self._proxy.deferred:             # hidden: nobody sees the line; it is written when the browser is shown
+            self._status_pending = True
+            return
+        self._status_pending = False
+        self.ensure_fresh()                  # (writes the line itself when it had to catch up)
+        st = self.ctx.model.counts()         # running totals, not a pass over the folder
+        shown = self._proxy.rowCount()
+        selected = sum(r.height() * r.width() for r in self.view.selectionModel().selection())
         parts = [f"{shown} of {st['images']} shown" if shown != st["images"] else f"{st['images']} images",
                  f"{selected} selected", f"{st['missing']} missing captions"]
         if st["unsaved"]:

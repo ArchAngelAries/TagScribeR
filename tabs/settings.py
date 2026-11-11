@@ -5,7 +5,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
                                QScrollArea, QSpinBox, QVBoxLayout, QWidget)
-from qt_material import apply_stylesheet
 
 from core import paths
 from core.config import settings
@@ -16,13 +15,18 @@ from tabs.common import hint_label, run_in_background
 DEFAULT_THEME = "dark_teal.xml"
 
 
-def apply_theme(theme: str) -> None:
+def apply_theme(theme: str, defer_stylesheet: bool = False) -> None:
     """Make `theme` (the ui.theme setting) the look of the running app, at once: a token theme of tabs.theme
-    ("tagscriber_dark", "tagscriber_light") or a qt_material theme file name such as "dark_teal.xml"."""
+    ("tagscriber_dark", "tagscriber_light") or a qt_material theme file name such as "dark_teal.xml".
+
+    `defer_stylesheet` (start-up only): under a token theme, set the palette now and leave the stylesheet to
+    tabs.theme.finish_deferred(app) after the window is built, so Qt does not re-evaluate it for every widget as it
+    is put into a layout. A qt_material theme is applied at once either way."""
     app = QApplication.instance()
     if ui_theme.is_token_theme(theme):
-        ui_theme.apply(app, theme)
+        ui_theme.apply(app, theme, defer_stylesheet=defer_stylesheet)
         return
+    from qt_material import apply_stylesheet        # imported here: a token theme never needs it
     theme = ui_theme.set_legacy(app, theme)         # an unknown, empty or None name becomes dark_teal.xml
     apply_stylesheet(app, theme=theme)
     app.setStyleSheet(app.styleSheet() + ui_theme.overlay_qss())

@@ -1470,7 +1470,7 @@ def build_shots() -> None:
         Note(lambda s: WINDOW.tab_train.btn_start.parentWidget().findChildren(QPushButton)[0:3],
              "Start, pause after the current epoch, or stop. Pause saves a state you can resume from.", (0.3, 0.25)),
     ], after=reset_train))
-    S(Shot("12_problem_images.png", shot_problem_images, [
+    S(Shot("12_hard_images.png", shot_problem_images, [
         Note(lambda s: row_rect(s.base.table, s.base.stuck_row),
              "Images that are not learning. Stuck and suspect images usually have a wrong or too short caption.",
              (0.28, 0.75)),

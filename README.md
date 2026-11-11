@@ -59,12 +59,19 @@ is a dataset studio with training built in.
   OpenAI-compatible server, and the WD v3 taggers.
 - **A review queue** with a word-level diff, so nothing an AI writes replaces your caption until you accept it.
 - **Caption recipes and presets:** a required subject or trigger word, existing tags as hints, your own presets.
+- **Faster large jobs on API servers** (LM Studio, llama.cpp, vLLM, cloud): TagScribeR finds the best number of
+  parallel requests by measuring, prepares pictures ahead on helper threads, can shrink pictures to a pixel budget
+  and can stop a reply that repeats itself. A live line shows pictures per minute and the time left, and a job can
+  be paused and resumed. `tools/bench_caption.py` measures your own server on generated test pictures. (Tested
+  against a simulated server so far; the gain on a real model is for that benchmark to show.)
 
 **Dataset tools**
 
 - **Search-style filters** with saved filters per folder, batch tag editing and tag statistics.
 - **Dataset health:** duplicates and near-duplicates, blur, low resolution and a bucket preview.
 - **Metadata tools:** a privacy audit, lossless cleanup, authorship templates and embedded prompts to captions.
+  Cleaning removes location, device and identity data wherever a file can hide it (GPS, maker notes, IPTC, extended
+  XMP, embedded previews, content credentials, data appended after the picture) and re-reads each file to confirm.
 - **Image editor and export** built on the same workspace, with metadata-preserving edits.
 
 **Training (new)**
@@ -92,11 +99,24 @@ is a dataset studio with training built in.
 - **Edit LoRAs with extra pictures** (Klein up to 3, Qwen Image 2.1 up to 9) and Klein's Steps / CFG following the
   Distilled tick.
 
+**Privacy and safety**
+
+- **API keys** live in the OS keychain, are tied to the server they were saved for, never appear in the log file
+  and are really deleted when you clear them.
+- **Share without leaking:** "Copy log for sharing" replaces your user name and folders with placeholders, and
+  "Export for sharing" saves a training preset without paths or personal text. LoRA files carry no paths.
+- **Untrusted text stays text:** captions, file metadata and server replies are never interpreted as markup.
+- A full security and privacy review is in [docs/dev/audit](docs/dev/audit/14_security_privacy_safety_review.md).
+
 **Everyday use**
 
 - **Ctrl+K command palette, a searchable Help Center** (F1 opens help for the current tab) and tooltips on every
   control. A simple view for beginners and "Show all settings" for everything else.
-- **About 350 automated tests**, which never touch your GPU, so they are safe to run while you train.
+- **Two new themes**, TagScribeR dark and TagScribeR light (Settings, Appearance). The classic look stays the
+  default for now; the screenshots here show it.
+- **A quicker workspace:** coming back to the Gallery, reopening a folder and sorting large folders no longer
+  freeze the window (measured on generated folders of 5,000 pictures; more of this is planned).
+- **Over 1,000 automated tests**, which never touch your GPU, so they are safe to run while you train.
 
 ---
 
@@ -285,7 +305,7 @@ What you get while it runs:
 
 ![Sample previews](docs/screenshots/11_train_samples.png)
 
-![Hard images](docs/screenshots/12_problem_images.png)
+![Hard images](docs/screenshots/12_hard_images.png)
 
 Training runs as separate processes, so the app stays responsive and a crash can't take it down. Each run lives in its own folder: `<output folder>\<LoRA name>\` with checkpoints, `sample\`, `loss_log\` and `run.log`.
 

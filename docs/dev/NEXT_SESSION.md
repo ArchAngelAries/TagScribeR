@@ -6,7 +6,8 @@ questions waiting for the owner). This file is the short version; PORT_PLAN wins
 
 ## State
 
-- Work branch **`port/v8-wave2`**, pushed. `main` is untouched at `aaf604b`; merge only with the owner's go.
+- **`main` was fast-forwarded to `port/v8-wave2` on 2026-11-10 with the owner's go** (commit `31592f4`): the public
+  repo shows the current state. New work goes on a work branch again; merge to `main` only with the owner's go.
 - Upstream reference: `.claude/fizgig-src`. Committed code is adapted from v8.7.3 (`9162fb20`); the target for new
   work is just past v9.4.0 (`c11134a2`). Read files with `git -C .claude/fizgig-src show <commit>:<path>`.
 - Studies to work from: `audit/12` (training core, fixes F1-F13, port order), `audit/13` (new model families and

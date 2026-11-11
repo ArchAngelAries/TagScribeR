@@ -29,18 +29,18 @@ questions waiting for the owner). This file is the short version; PORT_PLAN wins
   "Export for sharing", preset imports that ask before applying paths, a validated pause sidecar, bounded
   safetensors header readers, atomic LoRA saves, windows / menus deleted after use, a stricter release check.
 
-## In the working tree when this was written (check `git status`)
+## Finished after that note (all pushed)
 
-1. **Captioning speed** (`inference/`, `core/config.py`, `tools/bench_caption.py`, `tests/test_caption_speed.py`,
-   `tests/test_caption_security.py`, `tests/caption_sim.py`, `docs/dev/CAPTION_SPEED.md`): a Fable agent's work on
-   the request pipeline for API servers (adaptive parallel requests, prepare-ahead, an image pixel budget, a loop
-   guard, a server probe). Before commit: read its report, run the suite, fix the redirect / key findings the
-   security review named for `inference/server_probe.py` and `inference/openai_api.py` if it has not, review, then
-   wire its options into `tabs/caption.py` with tooltips and Help Center text (the lead's job; the agent lists the
-   controls). The owner runs `tools/bench_caption.py` against their own LM Studio; no agent sends requests to it.
-2. **UI stage 0, "stop the freezes"** (`tabs/workspace/*`, `tabs/gallery.py`, `core/image_utils.py`,
-   `tabs/settings.py`, `main.py`, `tools/bench_ui.py`): a Sonnet agent's performance-only changes. Before commit:
-   its before / after benchmark, the full suite, and a Fable review for "same order, same results, no lost edits".
+- **UI stage 0, "stop the freezes":** returning to the Gallery, reopening a folder and sorting no longer re-read or
+  re-sort everything (`tools/bench_ui.py` prints the numbers). Start-up (about 3 s) and the first open of a large
+  folder are not faster yet: stages 2 and 3 of `UI_UX_REDESIGN.md`.
+- **Captioning speed:** the new request pipeline in `inference/`, wired into the Auto Caption tab (parallel requests
+  found by measuring, Picture detail, Stop a reply that repeats itself, the live speed line, Pause / Resume).
+  Simulated only. Not wired yet (`CAPTION_SPEED.md` section 7): the "Check server" button, the picture-detail hint,
+  the suggested max-tokens hint, "picture before the instruction", the tagger's images-per-run box.
+- **The app icon** rebuilt at every taskbar size (`tools/make_icon.py`); **screenshots and README** refreshed.
+- **Commit identity:** this repository commits as the owner's GitHub no-reply address. Commits pushed before
+  2026-11-10 keep the old address; the owner chose not to rewrite history.
 
 ## Verifying a commit while agents edit in parallel
 
@@ -61,7 +61,7 @@ per module; before that fix the theme tests took minutes after the tab tests).
 
 ## Next work, in order
 
-1. Commit the two pieces above (review first).
+1. The owner's checks below, then whatever they report.
 2. UI stages 1-4 of `UI_UX_REDESIGN.md` (the workspace joins the theme; sort / filter / open off the UI thread; the
    shell with job chips; the thumbnail pipeline), each after the owner's answers to its questions.
 3. Training catch-up per PORT_PLAN: F6 / F7 with one cache revision, F3, then Muon and the preset move, F9 / F10,

@@ -269,7 +269,8 @@ class GalleryTab(QWidget):
                    escape_parentheses=st["escape_parentheses"], include_rating=st["include_rating"],
                    blacklist=tuple(st["blacklist"]))
         spec = ProviderSpec.make("wd_tagger", st["model"], format=tuple(sorted(fmt.items())),
-                                 device=self.ctx.cfg.get("tagger.device"))
+                                 device=self.ctx.cfg.get("tagger.device"),
+                                 batch_size=int(self.ctx.cfg.get("tagger.batch_size", 8) or 8))
         job = BatchJob(paths=[Path(k) for k in keys], spec=spec, request=CaptionRequest(prompt="", max_image_side=0),
                        save_mode=SAVE_NONE, tag_mode=True, title="Auto tagging")
         self.ctx.commit_pending_edits()

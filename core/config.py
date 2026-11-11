@@ -61,6 +61,11 @@ DEFAULTS: dict[str, Any] = {
     "caption.last_model": "",
     "caption.custom_model_path": "",
     "api.concurrency": 1,
+    "api.auto_parallel": True,       # find the best number of parallel requests by measuring (starts at api.concurrency)
+    "api.max_parallel": 8,           # ... never more than this
+    "api.loop_guard": False,         # stream replies and stop one that repeats itself
+    "api.image_first": False,        # picture before the instruction in the request
+    "caption.max_image_pixels": 0,   # pixel budget per picture on top of caption.max_image_side; 0 = none
     "api.last_profile": "",
     "local.batch_size": 2,
     "local.thinking": False,
@@ -83,6 +88,7 @@ DEFAULTS: dict[str, Any] = {
     "tagger.include_rating": False,
     "tagger.blacklist": "",
     "tagger.device": "auto",         # auto | cpu
+    "tagger.batch_size": 8,          # images per run of the tagger model
     "tagger.mode": "append",         # ignore | append | overwrite
     "tagger.prepend": "",
     "tagger.last_preset": "",

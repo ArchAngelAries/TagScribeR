@@ -44,6 +44,8 @@ KAOMOJI = {"0_0", "(o)_(o)", "+_+", "+_-", "._.", "<o>_<o>", "<|>_<|>", "=_=", "
 
 GPU_PROVIDERS = ("CUDAExecutionProvider", "ROCMExecutionProvider", "MIGraphXExecutionProvider",
                  "DmlExecutionProvider", "CoreMLExecutionProvider")
+DEFAULT_BATCH = 8       # images per ONNX run unless the spec's ``batch_size`` says otherwise
+GENERAL_FLOOR, CHARACTER_FLOOR = 0.05, 0.2    # scores below these are never kept (TagFormat thresholds are higher)
 
 
 @dataclass
@@ -89,12 +91,14 @@ def format_tags(pred: TagPrediction, fmt: TagFormat) -> list[str]:
 
 class WDTagger(Provider):
     capabilities = frozenset({CAP_TAGS, CAP_BATCH})
-    preferred_chunk = 8
+    preferred_chunk = DEFAULT_BATCH
 
     def __init__(self, spec: ProviderSpec):
         super().__init__(spec)
         self._lock = threading.Lock()
         self.session = None
+        self.preferred_chunk = max(1, int(spec.opt("batch_size", DEFAULT_BATCH)))
+        self._index: tuple | None = None      # (tags list it was built for, rating / character / general rows)
         self.tags: list[tuple[str, int]] = []
         self.size = 448
         self.dynamic_batch = False
@@ -165,7 +169,8 @@ class WDTagger(Provider):
             self.session = None
 
     def _prep(self, img: Image.Image) -> np.ndarray:
-        img = img.convert("RGB")
+        if img.mode != "RGB":
+            img = img.convert("RGB")
         side = max(img.size)
         canvas = Image.new("RGB", (side, side), (255, 255, 255))
         canvas.paste(img, ((side - img.width) // 2, (side - img.height) // 2))
@@ -174,31 +179,54 @@ class WDTagger(Provider):
         arr = np.asarray(canvas, dtype=np.float32)
         return arr[:, :, ::-1]  # RGB -> BGR, 0-255, as the models were trained
 
-    def predict(self, images: Sequence[Image.Image]) -> list[TagPrediction]:
+    def prepare(self, image, request: CaptionRequest):
+        """Pad and resize on the worker's helper threads, while the previous batch is in the model."""
+        if self.session is None or not isinstance(image, Image.Image):
+            return image
+        return self._prep(image)
+
+    def _rows(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Row numbers of the rating, character and general tags (built once per tag list)."""
+        if self._index is None or self._index[0] is not self.tags:
+            cats = np.array([cat for _tag, cat in self.tags], dtype=np.int64)
+            rows = np.arange(len(cats))
+            self._index = (self.tags, rows[cats == RATING], rows[cats == CHARACTER],
+                           rows[(cats != RATING) & (cats != CHARACTER)])
+        return self._index[1], self._index[2], self._index[3]
+
+    def _kept(self, row: np.ndarray, rows: np.ndarray, floor: float) -> list[tuple[str, float]]:
+        """``(tag, score)`` of ``rows`` at or above ``floor``, best first; equal scores keep the file's order."""
+        rows = rows[rows < len(row)]
+        rows = rows[row[rows].astype(np.float64) >= floor]      # compared as Python floats, as the scores are kept
+        rows = rows[np.argsort(-row[rows], kind="stable")]
+        tags = self.tags
+        return [(tags[i][0], float(row[i])) for i in rows]
+
+    def read_scores(self, probs: np.ndarray) -> list[TagPrediction]:
+        """Model output (one row of scores per image) as predictions. Only the few tags above the floors are
+        touched in Python: the rest of the ~10,000 are dropped by numpy."""
+        rating, character, general = self._rows()
+        out = []
+        for row in np.asarray(probs):
+            pred = TagPrediction()
+            for i in rating[rating < len(row)]:
+                pred.rating[self.tags[i][0]] = float(row[i])
+            pred.character = self._kept(row, character, CHARACTER_FLOOR)
+            pred.general = self._kept(row, general, GENERAL_FLOOR)
+            out.append(pred)
+        return out
+
+    def predict(self, images: Sequence) -> list[TagPrediction]:
+        """``images``: pictures, or the arrays ``prepare`` made of them."""
         if self.session is None:
             raise InferenceError("Tagger not loaded.")
-        batch = np.stack([self._prep(im) for im in images])
+        batch = np.stack([im if isinstance(im, np.ndarray) else self._prep(im) for im in images])
         name = self.session.get_inputs()[0].name
         if self.dynamic_batch:
             probs = self.session.run(None, {name: batch})[0]
         else:
             probs = np.concatenate([self.session.run(None, {name: b[None]})[0] for b in batch])
-        out = []
-        for row in probs:
-            pred = TagPrediction()
-            for (tag, cat), p in zip(self.tags, row):
-                p = float(p)
-                if cat == RATING:
-                    pred.rating[tag] = p
-                elif cat == CHARACTER:
-                    if p >= 0.2:
-                        pred.character.append((tag, p))
-                elif p >= 0.05:
-                    pred.general.append((tag, p))
-            pred.general.sort(key=lambda x: -x[1])
-            pred.character.sort(key=lambda x: -x[1])
-            out.append(pred)
-        return out
+        return self.read_scores(probs)
 
     def generate(self, images: Sequence[Image.Image], request: CaptionRequest,
                  cancel: threading.Event | None = None,

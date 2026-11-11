@@ -41,6 +41,34 @@ PROMPT_PRESETS: dict[str, str] = {
 
 DEFAULT_PRESET = "Detailed Description"
 
+# A "Max tokens" that fits each built-in preset's kind of answer with room to spare (a token is about three
+# quarters of a word). The limit does not shorten a normal caption: it only bounds what a reply that runs away
+# can cost, and with it the context a server must reserve per request. A suggestion for the UI, never applied
+# on its own: the user's "Max tokens" is what is sent.
+PRESET_MAX_TOKENS: dict[str, int] = {
+    "Detailed Description": 400,
+    "Training Caption (natural)": 300,
+    "Concise Caption": 80,
+    "Booru Tags": 200,
+    "Stable Diffusion Tags": 200,
+    "Character Description": 300,
+    "Clothing & Outfit": 200,
+    "Environment & Background": 200,
+    "Art Style & Medium": 200,
+    "Composition & Camera": 200,
+    "Accessibility Caption": 100,
+    "Short Summary": 60,
+}
+
+
+def suggested_max_tokens(preset: str, tag_output: bool = False, thinking: bool = False) -> int | None:
+    """A sensible "Max tokens" for a built-in preset, or None for a custom instruction (no advice).
+    A model that reasons before it answers spends tokens on that first: it needs far more room."""
+    n = PRESET_MAX_TOKENS.get(preset)
+    if n is None:
+        return 200 if tag_output else None
+    return n * 4 if thinking else n
+
 
 def build_prompt(base: str, *, subject: str = "", start_with_subject: bool = False, tags: str = "") -> str:
     """Compose the final instruction for one image.

@@ -21,9 +21,11 @@ CAP_UNLOADABLE = "unloadable"    # holds local memory that can be freed
 class InferenceError(Exception):
     """A user-presentable failure. ``hint`` suggests a remedy."""
 
-    def __init__(self, message: str, hint: str = ""):
+    def __init__(self, message: str, hint: str = "", *, busy: bool = False, resend: bool = False):
         super().__init__(message)
         self.hint = hint
+        self.busy = busy        # the server was overloaded or unreachable: a reason to send fewer requests at once
+        self.resend = resend    # safe to send this request once more (never set for a timeout)
 
     def __str__(self) -> str:
         base = super().__str__()
@@ -52,6 +54,7 @@ class CaptionRequest:
     params: GenerationParams = field(default_factory=GenerationParams)
     max_image_side: int = 1536     # images are downscaled before inference
     strip_thinking: bool = True
+    max_image_pixels: int = 0      # pixel budget (width x height) on top of max_image_side; 0 = none
 
 
 @dataclass(frozen=True)
@@ -81,9 +84,24 @@ class Provider(ABC):
     capabilities: frozenset[str] = frozenset()
     #: How many images the worker should hand to generate() at once.
     preferred_chunk: int = 1
+    #: True when requests are independent and may overlap (a server): the worker then keeps a steady number
+    #: in flight through ``caption_prepared`` instead of waiting for whole chunks (inference/pipeline.py).
+    pipelined: bool = False
 
     def __init__(self, spec: ProviderSpec):
         self.spec = spec
+
+    def prepare(self, image: Image.Image, request: "CaptionRequest"):
+        """Per-image CPU work done ahead of inference, on a helper thread (must be thread-safe). What it
+        returns is what ``generate`` / ``caption_prepared`` receive for that image; the default is the image."""
+        return image
+
+    def caption_prepared(self, prepared, request: "CaptionRequest", cancel: threading.Event | None = None,
+                         prompt: str | None = None) -> tuple["str | Exception", dict]:
+        """One caption from one ``prepare`` result, plus timing facts for the scheduler (may be empty).
+        Called from several threads at once when ``pipelined`` is set."""
+        out = self.generate([prepared], request, cancel, [prompt] if prompt is not None else None)
+        return out[0], {}
 
     @property
     def display_name(self) -> str:

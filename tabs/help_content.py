@@ -28,6 +28,7 @@ HOTKEYS: list[tuple[str, str, str]] = [
     ("Gallery", "Ctrl+Up / Ctrl+Down", "Previous / next image (works while typing)"),
     ("Auto Caption", "Ctrl+Enter", "Caption the selected images"),
     ("Auto Caption", "Esc", "Abort (images already finished stay saved)"),
+    ("Auto Caption", "Ctrl+P", "Pause / resume the running job (nothing is lost)"),
     ("Image Editor", "Ctrl+R / Ctrl+Shift+R", "Rotate selected right / left"),
     ("Datasets", "Ctrl+N", "New collection"),
     ("Train", "Ctrl+Enter", "Start training (queues it while a run is going)"),
@@ -292,6 +293,26 @@ sources you trust.</li>
 <li>A download that stopped partway shows <i>incomplete</i>; <b>Download (resume)</b> continues it.</li>
 <li><b>Gated models</b> (Gemma): accept the licence on the model page, then run <code>hf auth login</code> or set
 <code>HF_TOKEN</code>.</li>
+<li><b>Captioning faster.</b> Three things decide how long a large job takes: how many requests the server works on
+at once, how large each picture is, and how long each caption is.
+<ul>
+<li><i>Parallel requests</i> (API server): with <b>Find the best number of parallel requests</b> ticked, TagScribeR
+measures as it goes and settles on the number that really is fastest for your server: 1 for a server that answers
+one request at a time, more for a server with parallel slots (never more than <i>At most</i>). It backs off by
+itself when the server reports overload.</li>
+<li><i>Picture detail</i> (Advanced generation): a pixel limit on top of Max image size. For models of the Qwen
+family fewer pixels mean fewer image tokens and a faster answer; keep <i>Full size</i> or <i>Detailed</i> when small
+text or fine detail matters. <i>Full size</i> changes nothing.</li>
+<li><i>Max tokens</i> bounds a reply that will not stop. <b>Stop a reply that repeats itself</b> (off by default)
+ends such a reply early and keeps the caption up to the first repeat.</li>
+<li>The line under the progress bar shows pictures per minute and the time left. <b>Pause</b> (Ctrl+P) holds the job
+without losing anything: captions being written finish and are saved; Resume continues.</li>
+<li><b>In LM Studio:</b> load the model before you start, set GPU Offload to all layers, set Max Concurrent
+Predictions to 4, and give the model a Context Length of at least 8192 (16384 for full-size pictures).</li>
+<li><code>tools/bench_caption.py</code> measures your own server on generated test pictures and prints the best
+settings it found. These options were tested here against a simulated server only; the gain on a real model is for
+that benchmark to show.</li>
+</ul></li>
 <li><b>API servers:</b> requests time out after 180 seconds and retry automatically: a local server is not retried
 after a timeout, so a slow reply is never captioned twice; a cloud service is retried twice. Changing the server address clears the API key, and a key that
 would travel over plain http to another machine is warned about. A saved key only works for the server address it was

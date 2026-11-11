@@ -36,7 +36,8 @@ def create_provider(spec: ProviderSpec) -> Provider:
 
 def _cache_key(spec: ProviderSpec) -> tuple:
     # Options that only affect per-call behaviour must not force a reload.
-    volatile = {"batch_size", "concurrency", "format"}
+    volatile = {"batch_size", "concurrency", "format",
+                "auto_parallel", "max_parallel", "image_first", "loop_guard", "jpeg_quality"}
     return (spec.kind, spec.model, tuple((k, v) for k, v in spec.options if k not in volatile))
 
 
@@ -87,8 +88,9 @@ class ModelManager:
         if spec.kind == "openai":
             prov.preferred_chunk = max(1, int(spec.opt("concurrency", 1)))
         if spec.kind == "wd_tagger":
-            from inference.wd_tagger import TagFormat
+            from inference.wd_tagger import DEFAULT_BATCH, TagFormat
             prov.fmt = TagFormat(**dict(spec.opt("format", ()) or ()))
+            prov.preferred_chunk = max(1, int(spec.opt("batch_size", DEFAULT_BATCH)))
 
     @contextmanager
     def session(self, spec: ProviderSpec, report: ProgressFn, cancel: threading.Event | None = None):

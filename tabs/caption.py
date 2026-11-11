@@ -198,6 +198,16 @@ class CaptionTab(QWidget):
         fa.addRow("Top K:", self.spin_top_k)
         fa.addRow("Repetition penalty:", self.spin_rep)
         fa.addRow("Max image size:", self.spin_max_side)
+        from inference.image_budget import BUDGET_CHOICES
+        self.combo_detail = QComboBox()
+        for label, pixels in BUDGET_CHOICES:
+            self.combo_detail.addItem(label, pixels)
+        self.combo_detail.setToolTip(
+            "Shrinks each picture to at most this many pixels before it is captioned, on top of Max image size. "
+            "Models that turn every patch of the picture into tokens (the Qwen family) answer faster with fewer "
+            "pixels; small text and fine detail are the first things lost. Models that read every picture at one "
+            "fixed size lose nothing. Full size changes nothing.")
+        fa.addRow("Picture detail:", self.combo_detail)
         fa.addRow(self.btn_model_defaults)
         self.sec_adv_gen.body_layout.addLayout(fa)
         lg.addRow(self.sec_adv_gen)
@@ -221,6 +231,21 @@ class CaptionTab(QWidget):
         self.progress_bar.setAlignment(Qt.AlignCenter)
         self.progress_bar.setFormat("%v / %m")
         rl.addWidget(self.progress_bar)
+        # live numbers of a running job (speed, time left, requests in flight) and Pause beside them
+        speed_row = QHBoxLayout()
+        self.lbl_speed = QLabel("")
+        self.lbl_speed.setTextFormat(Qt.PlainText)
+        self.lbl_speed.setToolTip("While a job runs: pictures done, pictures per minute over the latest results, the "
+                                  "time left, and how many requests are sent at a time.")
+        theme.set_role(self.lbl_speed, "secondary", legacy="status")
+        self.btn_pause = QPushButton("Pause")
+        self.btn_pause.setEnabled(False)
+        self.btn_pause.setToolTip("Pause: nothing new is started; captions being written finish and are saved. "
+                                  "Resume continues where it stopped (Ctrl+P).")
+        self.btn_pause.clicked.connect(self.toggle_pause)
+        speed_row.addWidget(self.lbl_speed, 1)
+        speed_row.addWidget(self.btn_pause)
+        rl.addLayout(speed_row)
         self.lbl_status = QLabel("Ready")
         self.lbl_status.setWordWrap(True)
         theme.set_role(self.lbl_status, "secondary", legacy="status")
@@ -363,11 +388,31 @@ class CaptionTab(QWidget):
         model_row.addWidget(self.btn_fetch_models)
         self.spin_concurrency = QSpinBox()
         self.spin_concurrency.setRange(1, 16)
-        self.spin_concurrency.setToolTip("Parallel requests. Raise for cloud APIs; keep 1 for a single local GPU.")
+        self.spin_concurrency.setToolTip("How many requests are sent at the same time. More only helps when the "
+                                         "server works on several at once. With the box below ticked this is the "
+                                         "number TagScribeR starts with.")
+        self.chk_auto_parallel = QCheckBox("Find the best number of parallel requests")
+        self.chk_auto_parallel.setToolTip(
+            "TagScribeR starts with the number above, then tries one more and keeps it only if captions really come "
+            "faster. A server that handles one request at a time ends at 1; a server with parallel slots (LM "
+            "Studio's Max Concurrent Predictions, llama.cpp's -np) ends at its slot count. It backs off by itself "
+            "when the server reports overload.")
+        self.spin_max_parallel = QSpinBox()
+        self.spin_max_parallel.setRange(1, 32)
+        self.spin_max_parallel.setToolTip("The automatic setting never sends more requests at a time than this.")
+        self.chk_auto_parallel.toggled.connect(self.spin_max_parallel.setEnabled)
+        self.chk_loop_guard = QCheckBox("Stop a reply that repeats itself")
+        self.chk_loop_guard.setToolTip(
+            "Reads the reply while it is written and stops it when the model starts repeating the same phrase. The "
+            "caption is kept up to the first repeat, and the summary says how many were cut. Saves the time a "
+            "runaway reply would take up to the token limit. Off: replies are read whole, as before.")
         form.addRow("URL:", self.inp_api_url)
         form.addRow("Key:", self.inp_api_key)
         form.addRow("Model:", model_row)
-        form.addRow("Parallel:", self.spin_concurrency)
+        form.addRow("Parallel requests:", self.spin_concurrency)
+        form.addRow(self.chk_auto_parallel)
+        form.addRow("At most:", self.spin_max_parallel)
+        form.addRow(self.chk_loop_guard)
         lay.addLayout(form)
         lay.addWidget(self.lbl_api_warn)
         lay.addWidget(hint_label("Works with LM Studio, Ollama, llama.cpp server, KoboldCpp, vLLM and cloud "
@@ -401,6 +446,12 @@ class CaptionTab(QWidget):
         self.spin_max_side.setValue(c.get("caption.max_image_side"))
         self.spin_batch.setValue(c.get("local.batch_size", 1))
         self.spin_concurrency.setValue(c.get("api.concurrency", 1))
+        self.chk_auto_parallel.setChecked(bool(c.get("api.auto_parallel", True)))
+        self.spin_max_parallel.setValue(int(c.get("api.max_parallel", 8) or 8))
+        self.spin_max_parallel.setEnabled(self.chk_auto_parallel.isChecked())
+        self.chk_loop_guard.setChecked(bool(c.get("api.loop_guard", False)))
+        i = self.combo_detail.findData(int(c.get("caption.max_image_pixels", 0) or 0))
+        self.combo_detail.setCurrentIndex(i if i >= 0 else 0)
         self.chk_thinking.setChecked(c.get("local.thinking", False))
         i = self.combo_save.findData(c.get("caption.save_mode", SAVE_OVERWRITE))
         self.combo_save.setCurrentIndex(max(0, i))
@@ -434,6 +485,10 @@ class CaptionTab(QWidget):
             "local.device": self.combo_device.currentData() or "auto",
             "local.thinking": self.chk_thinking.isChecked(),
             "api.concurrency": self.spin_concurrency.value(),
+            "api.auto_parallel": self.chk_auto_parallel.isChecked(),
+            "api.max_parallel": self.spin_max_parallel.value(),
+            "api.loop_guard": self.chk_loop_guard.isChecked(),
+            "caption.max_image_pixels": int(self.combo_detail.currentData() or 0),
         })
 
     # ------------------------------------------------------------------ hotkeys
@@ -441,6 +496,7 @@ class CaptionTab(QWidget):
         QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self.run_process)
         QShortcut(QKeySequence("Ctrl+Enter"), self).activated.connect(self.run_process)
         QShortcut(QKeySequence("Esc"), self).activated.connect(self.abort_process)
+        QShortcut(QKeySequence("Ctrl+P"), self).activated.connect(self.toggle_pause)
 
     # ------------------------------------------------------------------ devices / models
     @staticmethod
@@ -955,6 +1011,37 @@ class CaptionTab(QWidget):
             icons.set(self.btn_run, "run", "on_accent")
         self.browser.btn_open.setEnabled(self.worker is None)
 
+    def _on_job_stats(self, s) -> None:
+        """The live line under the progress bar: speed, time left, and how many requests are in flight."""
+        if not isinstance(s, dict):
+            return
+        parts = [f"{s.get('processed', 0)} / {s.get('total', 0)}"]
+        if s.get("per_minute"):
+            parts.append(f"{s['per_minute']:.1f} images/min")
+        if s.get("eta_text"):
+            parts.append(f"about {s['eta_text']} left")
+        if s.get("parallel_state"):
+            parts.append(str(s["parallel_state"]))
+        elif s.get("parallel", 0) > 1:
+            parts.append(f"{s['parallel']} at a time")
+        if s.get("paused"):
+            parts.append("paused")
+        self.lbl_speed.setText(" · ".join(parts))
+
+    def toggle_pause(self) -> None:
+        """Pause: nothing new is started, what is being written finishes and is saved. Resume continues."""
+        if self.worker is None:
+            return
+        if self.worker.paused:
+            self.worker.resume()
+            self.btn_pause.setText("Pause")
+            self.log("Resumed.")
+        else:
+            self.worker.pause()
+            self.btn_pause.setText("Resume")
+            self.set_status("Paused: captions being written finish and are saved.")
+            self.log("Paused.")
+
     def abort_process(self):
         if self.worker is not None:
             self.worker.cancel()
@@ -996,7 +1083,11 @@ class CaptionTab(QWidget):
             return None
         timeout, retries = self._api_limits(url)
         return ProviderSpec.make("openai", model, base_url=url, api_key=clean_key(self.inp_api_key.text()),
-                                 concurrency=self.spin_concurrency.value(), timeout=timeout, max_retries=retries)
+                                 concurrency=self.spin_concurrency.value(), timeout=timeout, max_retries=retries,
+                                 auto_parallel=self.chk_auto_parallel.isChecked(),
+                                 max_parallel=self.spin_max_parallel.value(),
+                                 loop_guard=self.chk_loop_guard.isChecked(),
+                                 image_first=bool(self.cfg.get("api.image_first", False)))
 
     def _api_limits(self, url: str) -> tuple[float, int]:
         """Timeout and retries from the selected profile (when the URL is still that profile's), else defaults."""
@@ -1052,7 +1143,8 @@ class CaptionTab(QWidget):
             params=GenerationParams(max_new_tokens=self.spin_tokens.value(), temperature=self.spin_temp.value(),
                                     top_p=self.spin_top_p.value(), top_k=self.spin_top_k.value(),
                                     repetition_penalty=self.spin_rep.value()),
-            max_image_side=self.spin_max_side.value(), strip_thinking=self.cfg.get("caption.strip_thinking"))
+            max_image_side=self.spin_max_side.value(), strip_thinking=self.cfg.get("caption.strip_thinking"),
+            max_image_pixels=int(self.combo_detail.currentData() or 0))
         tag_mode = self.chk_tag_output.isChecked()
         subject = self.inp_subject.text().strip()
         prompts = None
@@ -1079,6 +1171,9 @@ class CaptionTab(QWidget):
         self.worker.status.connect(self.set_status)
         self.worker.status.connect(self.log)
         self.worker.progress.connect(lambda done, total: self.progress_bar.setValue(done))
+        self.worker.stats.connect(self._on_job_stats)
+        self.btn_pause.setText("Pause")
+        self.btn_pause.setEnabled(True)
         self.worker.item_done.connect(self.on_item_done)
         self.worker.item_failed.connect(self.on_item_failed)
         self.worker.item_skipped.connect(lambda p, r: self._mark(p, None))
@@ -1198,6 +1293,8 @@ class CaptionTab(QWidget):
 
     def on_job_finished(self, summary):
         self.worker = None
+        self.btn_pause.setText("Pause")
+        self.btn_pause.setEnabled(False)
         if self._same_folder():
             leftover = [k for k in getattr(self, "_job_keys", []) if self.ctx.job_state.get(k) in (JOB_QUEUED, JOB_WORKING)]
             self.ctx.set_job_state(leftover, None)

@@ -7,9 +7,13 @@ Guarantees
 * Each result is saved (atomically, with backup) as soon as it is produced,
   so cancelling or crashing never loses completed work.
 * Cancellation is checked between images *and* inside generation.
-* The next chunk of images is decoded on a helper thread while the current
-  chunk is on the GPU.
+* The next chunk of images is decoded (and prepared for the model) on helper
+  threads while the current chunk is on the GPU.
+* A server (``Provider.pipelined``) gets a steady stream instead of chunks: a
+  new request starts the moment one finishes (inference/pipeline.py).
 * Models are reused across jobs via the ModelManager.
+* ``pause`` holds the job between images; ``stats`` reports the live rate and
+  the time left.
 """
 from __future__ import annotations
 
@@ -24,8 +28,11 @@ from PySide6.QtCore import QObject, QThread, Signal
 
 from core import caption_io, captions
 from inference.base import Cancelled, CaptionRequest, InferenceError, ProviderSpec
+from inference.concurrency import AdaptiveLimiter, RateMeter, format_eta
 from inference.image_prep import load_rgb
 from inference.manager import manager
+from inference.pipeline import PrepareError, default_prepare_threads, run_pipeline
+from inference.textsafe import plain
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +88,8 @@ class JobSummary:
     fatal: str = ""
     seconds: float = 0.0            # wall time including model load
     infer_seconds: float = 0.0      # time spent after the model was ready
+    cut_short: int = 0              # replies stopped because they repeated themselves (kept without the repeats)
+    parallel: int = 0               # requests in flight when the job ended (0: not a server job)
 
     def text(self) -> str:
         if self.fatal:
@@ -90,6 +99,8 @@ class JobSummary:
             parts.append(f"{self.skipped} skipped")
         if self.failed:
             parts.append(f"{len(self.failed)} failed")
+        if self.cut_short:
+            parts.append(f"{self.cut_short} cut short (repeating)")
         state = "cancelled" if self.cancelled else "finished"
         rate = f" ({self.infer_seconds / self.done:.1f}s/image)" if self.done else ""
         return f"{self.title} {state}: " + ", ".join(parts) + rate
@@ -102,12 +113,15 @@ class BatchWorker(QObject):
     item_failed = Signal(str, str)         # path, reason
     item_skipped = Signal(str, str)        # path, reason
     items_started = Signal(list)           # paths now being processed (for live UI badges)
+    stats = Signal(object)                 # dict, after every result: see _report
     finished = Signal(object)              # JobSummary
 
     def __init__(self, job: BatchJob):
         super().__init__()
         self.job = job
         self._cancel = threading.Event()
+        self._pause = threading.Event()
+        self._meter: RateMeter | None = None
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -115,6 +129,21 @@ class BatchWorker(QObject):
     @property
     def cancelled(self) -> bool:
         return self._cancel.is_set()
+
+    def pause(self) -> None:
+        """Start nothing new (what is being generated finishes and is saved) until ``resume``."""
+        self._pause.set()
+        if self._meter is not None:
+            self._meter.pause()
+
+    def resume(self) -> None:
+        self._pause.clear()
+        if self._meter is not None:
+            self._meter.resume()
+
+    @property
+    def paused(self) -> bool:
+        return self._pause.is_set()
 
     def run(self) -> None:
         job = self.job
@@ -155,26 +184,53 @@ class BatchWorker(QObject):
                 summary.infer_seconds = time.monotonic() - t_ready
 
     def _process(self, job: BatchJob, summary: JobSummary, provider, todo: list[Path], processed: int) -> None:
+        self._meter = RateMeter()
+        if self.paused:
+            self._meter.pause()
+        if getattr(provider, "pipelined", False):
+            self._process_stream(job, summary, provider, todo, processed)
+        else:
+            self._process_chunks(job, summary, provider, todo, processed)
+
+    @staticmethod
+    def _open(job: BatchJob, provider, path: Path):
+        """Decode, shrink to the job's image limits and let the provider do its own per-image CPU work."""
+        req = job.request
+        return provider.prepare(load_rgb(path, req.max_image_side, max_pixels=req.max_image_pixels), req)
+
+    def _report(self, summary: JobSummary, processed: int, parallel: int = 0, state: str = "") -> None:
+        """Progress plus the live numbers: images per minute over the latest results and the time left."""
+        self.progress.emit(processed, summary.total)
+        meter = self._meter
+        eta = meter.eta_seconds(summary.total - processed)
+        self.stats.emit({"processed": processed, "total": summary.total, "done": summary.done,
+                         "failed": len(summary.failed), "per_minute": meter.per_minute(),
+                         "eta_seconds": eta, "eta_text": format_eta(eta), "parallel": parallel,
+                         "parallel_state": state, "paused": self.paused})
+
+    def _process_chunks(self, job: BatchJob, summary: JobSummary, provider, todo: list[Path], processed: int) -> None:
         chunk = max(1, provider.preferred_chunk)
         chunks = [todo[i:i + chunk] for i in range(0, len(todo), chunk)]
-        max_side = job.request.max_image_side
-        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="decode") as pool:
-            def decode(paths: list[Path]) -> list:
-                out = []
-                for p in paths:
-                    try:
-                        out.append(load_rgb(p, max_side))
-                    except Exception as e:
-                        out.append(e)
-                return out
+        pool = ThreadPoolExecutor(max_workers=default_prepare_threads(), thread_name_prefix="decode")
+        try:
+            def decode(paths: list[Path]) -> list[Future]:
+                return [pool.submit(self._open, job, provider, p) for p in paths]
 
-            pending: Future = pool.submit(decode, chunks[0])
+            def opened(fut: Future):
+                try:
+                    return fut.result()
+                except Exception as e:  # noqa: BLE001 - one unreadable image fails alone
+                    return e
+
+            pending = decode(chunks[0])
             for idx, paths in enumerate(chunks):
+                while self.paused and not self.cancelled:
+                    self._cancel.wait(0.25)
                 if self.cancelled:
                     raise Cancelled()
-                decoded = pending.result()
+                decoded = [opened(f) for f in pending]
                 if idx + 1 < len(chunks):
-                    pending = pool.submit(decode, chunks[idx + 1])
+                    pending = decode(chunks[idx + 1])
 
                 ok_paths, ok_images = [], []
                 for p, img in zip(paths, decoded):
@@ -199,7 +255,53 @@ class BatchWorker(QObject):
                         continue
                     self._save(job, summary, p, res)
                 processed += len(paths)
-                self.progress.emit(processed, summary.total)
+                self._meter.tick(len(paths))
+                self._report(summary, processed)
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+
+    def _process_stream(self, job: BatchJob, summary: JobSummary, provider, todo: list[Path], processed: int) -> None:
+        """A server: keep the limiter's number of requests in flight and save each caption as it arrives."""
+        make = getattr(provider, "make_limiter", None)
+        limiter = make() if make is not None else AdaptiveLimiter(
+            start=max(1, provider.preferred_chunk), cap=max(1, provider.preferred_chunk), adaptive=False)
+        request = job.request
+
+        def caption(prepared, path, stop):
+            prompt = job.prompts.get(str(path), request.prompt) if job.prompts else None
+            return provider.caption_prepared(prepared, request, stop, prompt)
+
+        def started(path):
+            self.status.emit(f"Processing {path.name}…")
+            self.items_started.emit([str(path)])
+
+        shown = limiter.limit
+        if limiter.adaptive:
+            self.status.emit(f"Finding the best number of parallel requests (starting with {shown}, "
+                             f"at most {limiter.cap})…")
+        for out in run_pipeline(todo, lambda p: self._open(job, provider, p), caption, limiter,
+                                cancel=self._cancel, paused=self._pause, on_start=started):
+            path, res = out.key, out.result
+            if isinstance(res, PrepareError):
+                self._fail(summary, path, f"could not open image: {res}")
+            elif isinstance(res, InferenceError):
+                self._fail(summary, path, str(res))
+            elif isinstance(res, Exception):
+                log.error("%s: unexpected error from the provider: %s: %s", job.title, type(res).__name__,
+                          plain(res))
+                self._fail(summary, path, f"Unexpected error: {type(res).__name__}: {plain(res)}")
+            else:
+                if out.info.get("cut"):
+                    summary.cut_short += 1
+                    self.status.emit(f"{path.name}: the reply started repeating itself and was cut short.")
+                self._save(job, summary, path, res)
+            processed += 1
+            self._meter.tick()
+            if limiter.limit != shown:
+                shown = limiter.limit
+                self.status.emit(f"Parallel requests: {limiter.describe()}")
+            summary.parallel = limiter.limit
+            self._report(summary, processed, limiter.limit, limiter.describe())
 
     def _generate(self, provider, job: BatchJob, images: list, prompts: list[str] | None) -> list:
         """provider.generate that can only fail the image(s) it was given, never the batch."""
@@ -262,16 +364,28 @@ class BatchHandle(QObject):
     item_failed = Signal(str, str)
     item_skipped = Signal(str, str)
     items_started = Signal(list)
+    stats = Signal(object)
     finished = Signal(object)
 
     def __init__(self, worker: BatchWorker):
         super().__init__()
         self._worker = worker
-        for name in ("status", "progress", "item_done", "item_failed", "item_skipped", "items_started", "finished"):
+        for name in ("status", "progress", "item_done", "item_failed", "item_skipped", "items_started", "stats",
+                     "finished"):
             getattr(worker, name).connect(getattr(self, name))  # cross-thread signal->signal: queued
 
     def cancel(self) -> None:
         self._worker.cancel()
+
+    def pause(self) -> None:
+        self._worker.pause()
+
+    def resume(self) -> None:
+        self._worker.resume()
+
+    @property
+    def paused(self) -> bool:
+        return self._worker.paused
 
     @property
     def cancelled(self) -> bool:

@@ -691,6 +691,12 @@ epoch.</li>
 seed, CFG). <i>Preview before training</i> shows the base model for comparison.</li>
 <li>They use the averaged (EMA) weights and leave the family's training adapter off, so you see what your saved file
 will do.</li>
+<li><b>With a Turbo LoRA set</b> (Krea 2, Qwen Image 2.1, Anima ...) previews render through it: fewer steps and
+<b>CFG 1</b>, whatever the plain model's Steps and CFG boxes show, as long as you have not changed those boxes. A CFG
+you type yourself is used as typed. Turbo LoRAs are made for CFG 1: above about 1.5 the pictures come out harsh and
+over-saturated and say nothing about your LoRA, so Start warns you first. To preview on the plain model at its own
+CFG, set <i>Turbo LoRA strength</i> to 0. (An older version rendered Turbo previews at a CFG of 5.5 left over in
+saved settings; that is fixed, and it only ever affected the preview pictures, never what was trained.)</li>
 <li>On cards under 20 GB the model steps aside while a preview is decoded. Krea 2 previews are also rendered
 on a 768 px canvas there; every other model keeps the preview size you set (shrunk previews made some models look
 soft or broken).</li>

@@ -124,5 +124,7 @@ def test_turbo_previews_use_the_turbo_cfg_unless_typed(tmp_path):
         kw, _ = pipeline.train_kwargs(desc, vals, tmp_path / "run", models)
         assert kw["speed_lora"] == str(turbo) and kw["sample_cfg_scale"] == sp.settings.cfg == 1.0, key
         assert "sample_negative" not in kw and kw["sample_steps"] == desc.preview_speed_defaults()[0], key
-        kw, _ = pipeline.train_kwargs(desc, {**vals, "SAMPLE_CFG_SCALE": 5.5}, tmp_path / "run", models)
-        assert kw["sample_cfg_scale"] == 5.5, key                     # typed by the user: kept
+        # 2.5 is no family's default, now or earlier (a former default such as Krea 2's 5.5 counts as untouched:
+        # tests/test_preview_cfg.py)
+        kw, _ = pipeline.train_kwargs(desc, {**vals, "SAMPLE_CFG_SCALE": 2.5}, tmp_path / "run", models)
+        assert kw["sample_cfg_scale"] == 2.5, key                     # typed by the user: kept

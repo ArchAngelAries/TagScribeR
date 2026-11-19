@@ -300,6 +300,44 @@ def training_adapter_key(desc, values) -> str:
     return desc.training_adapter if values.get("FAMILY_TRAINING_ADAPTER", True) else ""
 
 
+def preview_cfg_untouched(desc, cfg) -> bool:
+    """The Samples CFG box was never set by the user: empty / 0, the family's default, or a value that used to be
+    the default (description.preview_cfg_retired) and is still in a saved form. An untouched box means "the recipe
+    of whatever renders the previews": the plain model's CFG, or 1 with a Turbo LoRA."""
+    try:
+        cfg = float(cfg)
+    except (TypeError, ValueError):
+        return True
+    known = (float(desc.preview_cfg), *(float(v) for v in getattr(desc, "preview_cfg_retired", ()) or ()))
+    return cfg <= 0 or any(abs(cfg - k) < 1e-9 for k in known)
+
+
+def turbo_preview_cfg_problem(desc, values, models) -> str:
+    """A warning when previews will render through a Turbo LoRA (made for CFG 1) at a CFG the user typed that is
+    well above it, or "": such previews come out harsh and over-saturated and say nothing about the LoRA."""
+    sp = desc.preview_speed()
+    path = (models.get(sp.pref_key) or "").strip() if sp and sp.pref_key else ""
+    if not (values.get("SAMPLE_ENABLED") and path and os.path.isfile(path) and sp.settings.cfg <= 1.0):
+        return ""
+    try:
+        if turbo_strength(desc, values) <= 0:
+            return ""
+        cfg = _num(values, "SAMPLE_CFG_SCALE")
+    except (TypeError, ValueError):
+        return ""
+    ck = desc.preview_checkpoint()
+    ck_path = (models.get(ck[0].pref_key) or "").strip() if ck else ""
+    if (desc.train_preview_checkpoint and ck and values.get("SAMPLE_USE_DISTILLED", True) and ck_path
+            and os.path.isfile(ck_path)):
+        return ""                               # the preview checkpoint renders, not the Turbo
+    if cfg <= 1.5 or preview_cfg_untouched(desc, cfg):
+        return ""
+    return (f"Previews render through the Turbo LoRA, which is made for CFG 1. The CFG box says {cfg:g}: at that "
+            f"value Turbo previews come out harsh and over-saturated and do not show what your LoRA really does. "
+            f"Set CFG to 1 (or clear the box) for normal previews, or set Turbo LoRA strength to 0 to preview on "
+            f"the plain model at this CFG.")
+
+
 def turbo_strength(desc, values) -> float:
     """The preview speed LoRA's strength (0 = previews without it): the Samples tab's Turbo strength (-1 = the family
     default), or for a family with the "N steps at M%" row (samples_turbo_pace) its percentage."""
@@ -647,6 +685,9 @@ def preflight(desc, values: dict, image_folder: str, models: dict, *, captioner:
                 if orphans:
                     err(f"Edit LoRA: {len(orphans)} extra picture(s) belong to no edited photo (e.g. "
                         f"{', '.join(orphans[:3])}) - name each after its photo: photo_1.png for photo.png.")
+    turbo_cfg = turbo_preview_cfg_problem(desc, values, models)
+    if turbo_cfg:
+        warn(turbo_cfg)
     if resume:
         if not os.path.isfile(os.path.join(resume, "training_state.json")):
             err(f"Resume: {resume} is not a saved training state.")
@@ -851,6 +892,8 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                 if v > 0:
                     kw[arg] = v
             cfg = _num(values, "SAMPLE_CFG_SCALE")
+            if preview_cfg_untouched(desc, cfg):    # empty, the default, or a former default left in a saved form
+                cfg = 0.0
             kw["sample_cfg_scale"] = cfg if cfg > 0 else desc.preview_cfg
             neg = str(values.get("SAMPLE_NEGATIVE") or "").strip()
             if neg and kw["sample_cfg_scale"] > 1.0:
@@ -884,7 +927,7 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                     # Turbo here (Fizgig 8.6.1: Steps / CFG follow what previews render with; "The Turbo samples
                     # always use CFG 1", families/qwen_image.py). A CFG the user typed is kept (the trainer honours
                     # CFG > 1 with the Turbo, its negative too)
-                    if (cfg <= 0 or abs(cfg - desc.preview_cfg) < 1e-9) and not ck_live:
+                    if cfg <= 0 and not ck_live:
                         kw["sample_cfg_scale"] = sp.settings.cfg
                         if kw["sample_cfg_scale"] <= 1.0:
                             kw.pop("sample_negative", None)
@@ -905,7 +948,7 @@ def train_kwargs(desc, values: dict, run_dir: Path, models: dict, *, captioner: 
                         # there either. A typed CFG above 1 is sent and brings the negative prompt with it.
                         if _num(values, "SAMPLE_STEPS", int) <= 0 or kw.get("sample_steps") == desc.preview_steps:
                             kw.pop("sample_steps", None)
-                        if cfg <= 0 or abs(cfg - desc.preview_cfg) < 1e-9:
+                        if cfg <= 0:
                             kw.pop("sample_cfg_scale", None)
                             # the checkpoint renders at its own CFG: without CFG (the Distilled's 1) there is no
                             # negative; with it (MOSS-Image's SFT, CFG 4) the Samples negative applies, as Fizgig

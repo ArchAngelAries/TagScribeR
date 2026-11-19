@@ -171,6 +171,7 @@ KREA2 = FamilyDescription(
     preview_speed_strength=0.7,
     preview_steps=28,
     preview_cfg=4.5,
+    preview_cfg_retired=(5.5,),      # the RAW default before 4.5: a saved form holding it never typed it
     preview_width=1024,                                      # audit 4.4: SAMPLE_WIDTH per-family default Krea 2 1024
     preview_height=1024,
     preview_small_card_cap=768,                              # cards under 20 GB: the 768 px preview canvas (upstream #123)

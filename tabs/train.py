@@ -603,6 +603,11 @@ class TrainTab(QWidget):
         self.lbl_family_note.setText(" · ".join(notes))
         saved = self.memory.get(self.desc.key) or self.cfg.get(f"training.values.{self.desc.key}")
         if saved:
+            saved = dict(saved)
+            # a CFG that was the family's default in an earlier version was never typed: show today's default
+            # (the trainer reads it the same way, so a Turbo preview is not rendered at a stale plain-model CFG)
+            if pipeline.preview_cfg_untouched(self.desc, saved.get("SAMPLE_CFG_SCALE") or 0):
+                saved["SAMPLE_CFG_SCALE"] = self.desc.preview_cfg
             self._apply_values({**P.defaults(), **saved})
         else:                               # first visit: Fizgig applies the family's first built-in preset
             base = {**P.defaults(), "SAMPLE_WIDTH": self.desc.preview_width,

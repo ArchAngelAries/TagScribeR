@@ -254,6 +254,9 @@ class FamilyDescription:
     speed_loras: tuple = ()           # SpeedLoRA entries
     preview_steps: int = 20
     preview_cfg: float = 1.0
+    # CFG values that were this family's preview default in an earlier version. A saved form still holding one never
+    # typed it: it is read as "untouched" (the current default, or the Turbo's own CFG when the Turbo renders).
+    preview_cfg_retired: tuple = ()
     preview_width: int = 1024
     preview_height: int = 1024
     preview_negative: str = ""        # the family's default preview negative prompt ("" = the app default); tag-

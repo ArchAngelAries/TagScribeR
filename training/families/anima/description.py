@@ -212,6 +212,7 @@ ANIMA = FamilyDescription(
     preview_speed_steps=10,
     preview_steps=20,                                        # Fizgig 7.0.1 (the community's 16-20; CFG 4.5)
     preview_cfg=4.5,
+    preview_cfg_retired=(4.0,),      # the default before 4.5: a saved form holding it never typed it
     preview_negative=("worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, "
                       "chromatic aberration"),               # the model card's, as Fizgig
     preview_width=1024,
